@@ -31,7 +31,7 @@ func main() {
 			}
 
 			if len(args) == 0 && modelName == "" {
-				return errors.New("Error: Model name is required")
+				return errors.New("Model name is required")
 			}
 
 			if modelName != "" && !hfd.IsValidModelName(modelName) {
