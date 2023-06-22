@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"regexp"
 )
 
 //To get File List Tree in Json
@@ -31,6 +32,12 @@ func DownloadModel(ModelName string, DestintionBasePath string, silent bool) err
 		// fmt.Println("Error:", err)
 		return err
 	}
-	fmt.Println(content)
+	fmt.Println(string(content))
 	return nil
+}
+
+func IsValidModelName(modelName string) bool {
+	pattern := `^[A-Za-z0-9\-]+/[A-Za-z0-9\-]+$`
+	match, _ := regexp.MatchString(pattern, modelName)
+	return match
 }

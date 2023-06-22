@@ -1,13 +1,13 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	hfd "hfdownloader/hfdownloader"
 	"io"
 	"log"
 	"net/http"
 	"os"
-	"regexp"
 
 	"github.com/spf13/cobra"
 )
@@ -19,43 +19,44 @@ func main() {
 		silent      bool
 	)
 	rootCmd := &cobra.Command{
-		Use:   "HFDownloader",
+		Use:   "hfdowloader modelname [storagepath]",
 		Short: "a Simple HuggingFace Models Downloader Utility",
-		Run: func(cmd *cobra.Command, args []string) {
-			// Perform your logic here
-			fmt.Println("Model Name:", modelName)
-			fmt.Println("Storage Path:", storagePath)
-			fmt.Println("Silent Mode:", silent)
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				modelName = args[0]
+			}
+			storagePath = "Models"
+			if len(args) > 1 {
+				storagePath = args[1]
+			}
+
+			if len(args) == 0 && modelName == "" {
+				return errors.New("Error: Model name is required")
+			}
+
+			if modelName != "" && !hfd.IsValidModelName(modelName) {
+				return fmt.Errorf("Invalid model name format '%s'. It should follow the pattern 'ModelAuthor/ModelName'", modelName)
+			}
+
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+
+			err := hfd.DownloadModel(modelName, storagePath, silent)
+			if err != nil {
+				return err
+			}
+			return nil
 		},
 	}
-	rootCmd.Flags().StringVarP(&modelName, "modelname", "m", "", "Name of the model (required)")
-	rootCmd.MarkFlagRequired("modelname")
-
-	rootCmd.Flags().StringVarP(&storagePath, "storagepath", "s", "Models", "Path for storing the models")
-
 	rootCmd.Flags().BoolVarP(&silent, "silent", "q", false, "Silent mode, no progress output")
-	cobra.OnInitialize(func() {
-		if !isValidModelName(modelName) {
-			fmt.Println("Invalid model name format. It should follow the: 'ModelAuthor/ModelName'")
-			os.Exit(1)
-		}
-	})
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Println("Error:", err)
-		os.Exit(1)
-	}
-	err := hfd.DownloadModel(modelName, storagePath, silent)
-	if err != nil {
-		log.Fatalln(err)
-		os.Exit(1)
-	}
-	os.Exit(0)
-}
 
-func isValidModelName(modelName string) bool {
-	pattern := `^[A-Za-z0-9]+/[A-Za-z0-9]+$`
-	match, _ := regexp.MatchString(pattern, modelName)
-	return match
+	if err := rootCmd.Execute(); err != nil {
+		log.Fatalln("Error:", err)
+		os.Exit(1)
+	}
+
+	os.Exit(0)
 }
 
 //To get this link, do the following
