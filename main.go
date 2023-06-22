@@ -16,7 +16,6 @@ func main() {
 	var (
 		modelName   string
 		storagePath string
-		silent      bool
 	)
 	rootCmd := &cobra.Command{
 		Use:   "hfdowloader modelname [storagepath]",
@@ -42,14 +41,13 @@ func main() {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 
-			err := hfd.DownloadModel(modelName, storagePath, silent)
+			err := hfd.DownloadModel(modelName, storagePath)
 			if err != nil {
 				return err
 			}
 			return nil
 		},
 	}
-	rootCmd.Flags().BoolVarP(&silent, "silent", "q", false, "Silent mode, no progress output")
 
 	if err := rootCmd.Execute(); err != nil {
 		log.Fatalln("Error:", err)

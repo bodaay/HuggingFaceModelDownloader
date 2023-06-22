@@ -10,23 +10,19 @@ import (
 	"net/http"
 	"os"
 	"path"
-	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 
 	"github.com/cheggaaa/pb/v3"
 )
 
 const (
-	MaxGoroutines   = 5
 	RawFileURL      = "https://huggingface.co/%s/raw/%s/%s"
 	LfsResolverURL  = "https://huggingface.co/%s/resolve/%s/%s"
 	JsonFileTreeURL = "https://huggingface.co/api/models/%s/tree/%s"
-	MinSizeForMulti = 10 * 1024 * 1024 // 10MB
 )
 
-func DownloadModel(ModelName string, DestintionBasePath string, silent bool) error {
+func DownloadModel(ModelName string, DestintionBasePath string) error {
 	modelPath := path.Join(DestintionBasePath, strings.Replace(ModelName, "/", "_", -1))
 	//Check StoragePath
 	err := os.MkdirAll(modelPath, os.ModePerm)
@@ -38,6 +34,7 @@ func DownloadModel(ModelName string, DestintionBasePath string, silent bool) err
 
 	branch := "main"
 	JsonFileListURL := fmt.Sprintf(JsonFileTreeURL, ModelName, branch)
+	fmt.Printf("Getting File Download Files List Tree from: %s\n", JsonFileTreeURL)
 	response, err := http.Get(JsonFileListURL)
 	if err != nil {
 		// fmt.Println("Error:", err)
@@ -93,6 +90,7 @@ func DownloadModel(ModelName string, DestintionBasePath string, silent bool) err
 			// File exists, get its size
 			fileInfo, _ := os.Stat(filename)
 			size := fileInfo.Size()
+			fmt.Printf("Checking Existsing file: %s\n", jsonFilesList[i].AppendedPath)
 			//  for non-lfs files, I can only compare size, I don't there is a sha256 hash for them
 			if size == int64(jsonFilesList[i].Size) {
 				jsonFilesList[i].SkipDownloading = true
@@ -103,8 +101,9 @@ func DownloadModel(ModelName string, DestintionBasePath string, silent bool) err
 						if err != nil {
 							return err
 						}
-						jsonFilesList[i].SkipDownloading = false
+						//jsonFilesList[i].SkipDownloading = false
 					}
+					fmt.Printf("Hash Matched for LFS file: %s\n", jsonFilesList[i].AppendedPath)
 				}
 			}
 
@@ -120,10 +119,11 @@ func DownloadModel(ModelName string, DestintionBasePath string, silent bool) err
 			fmt.Printf("Skipping: %s\n", jsonFilesList[i].AppendedPath)
 			continue
 		}
+		// fmt.Printf("Downloading: %s\n", jsonFilesList[i].Path)
 		if jsonFilesList[i].IsLFS {
-			downloadFile(jsonFilesList[i].DownloadLink, jsonFilesList[i].AppendedPath, jsonFilesList[i].IsLFS, jsonFilesList[i].Lfs.Oid_SHA265)
+			downloadFile(jsonFilesList[i].DownloadLink, jsonFilesList[i].AppendedPath, jsonFilesList[i].Lfs.Oid_SHA265)
 		} else {
-			downloadFile(jsonFilesList[i].DownloadLink, jsonFilesList[i].AppendedPath, jsonFilesList[i].IsLFS, "") //no checksum available for small non-lfs files
+			downloadFile(jsonFilesList[i].DownloadLink, jsonFilesList[i].AppendedPath, "") //no checksum available for small non-lfs files
 		}
 	}
 
@@ -176,119 +176,46 @@ func getRedirectLink(url string) (string, error) {
 
 	return "", fmt.Errorf("No redirect found")
 }
-func downloadFile(fileURL string, destFile string, IsLFS bool, Checksum string) error {
-	length := getFileSize(fileURL)
-	if length == -1 {
-		return fmt.Errorf("Failed to get file size")
-	}
-
-	// Create the output file
-	outFile, err := os.Create(destFile)
+func downloadFile(url string, filepath string, checksum string) error {
+	// Create the file with .tmp extension, so if the download fails, the file won't exist.
+	out, err := os.Create(filepath)
 	if err != nil {
 		return err
 	}
-	defer outFile.Close()
 
-	if length > MinSizeForMulti {
-		err = downloadMulti(fileURL, filepath.Base(destFile), length, outFile)
-	} else {
-		err = downloadSingle(fileURL, filepath.Base(destFile), outFile)
-	}
-
-	if err != nil {
-		fmt.Println("Failed to download file:", err)
-		return err
-	}
-
-	// Calculate the checksum of the downloaded file in case its LFS
-	if IsLFS {
-		err = verifyChecksum(outFile.Name(), Checksum)
-		if err != nil {
-			return fmt.Errorf("Checksum verification failed: %s", err)
-		}
-	}
-	return nil
-
-}
-func getFileSize(url string) int {
-	resp, err := http.Head(url)
-	if err != nil {
-		fmt.Println(err)
-		return -1
-	}
-
-	return int(resp.ContentLength)
-}
-
-func downloadSingle(url string, filename string, outFile *os.File) error {
+	// Get the data from the URL
 	resp, err := http.Get(url)
 	if err != nil {
+		out.Close()
 		return err
 	}
 	defer resp.Body.Close()
 
-	// Progress bar
-
-	// Create a new progress bar with the total size
+	// Create a progress bar
 	bar := pb.Full.Start64(resp.ContentLength)
-	bar.SetTemplate(pb.Full)
-	bar.Set("prefix", filename)
+	bar.Set("prefix", path.Base(filepath)+" ")
 	barReader := bar.NewProxyReader(resp.Body)
 
-	_, err = io.Copy(outFile, barReader)
+	// Write the body to file
+	_, err = io.Copy(out, barReader)
 
-	bar.Finish()
-
-	return err
-}
-
-func downloadMulti(url string, filename string, length int, outFile *os.File) error {
-	bar := pb.StartNew(length)
-	bar.Set("prefix", filename)
-	partSize := length / MaxGoroutines
-
-	var wg sync.WaitGroup
-	errChan := make(chan error, MaxGoroutines)
-	for i := 0; i < MaxGoroutines; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-
-			start := partSize * i
-			end := start + partSize
-			if i == MaxGoroutines-1 {
-				end = length
-			}
-
-			req, _ := http.NewRequest("GET", url, nil)
-			req.Header.Set("Range", fmt.Sprintf("bytes=%v-%v", start, end-1))
-			resp, err := http.DefaultClient.Do(req)
-
-			defer resp.Body.Close()
-
-			n, err := io.Copy(outFile, resp.Body)
-			if err != nil {
-				errChan <- err
-			}
-
-			// Update the progress bar
-			bar.Add(int(n))
-		}(i)
-	}
-
-	wg.Wait()
-
-	// Finish the progress bar
-	bar.Finish()
-
-	select {
-	case err := <-errChan:
+	out.Close()
+	if err != nil {
 		return err
-	default:
-		return nil
 	}
-}
 
+	// The progress bar needs to be finished explicitly
+	bar.Finish()
+	if checksum != "" { //in case its lfs file, we are passing this
+		err = verifyChecksum(filepath, checksum)
+		if err != nil {
+			fmt.Println(err)
+			return err
+		}
+	}
+
+	return nil
+}
 func verifyChecksum(fileName string, expectedChecksum string) error {
 	file, err := os.Open(fileName)
 	if err != nil {
