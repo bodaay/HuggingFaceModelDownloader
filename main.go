@@ -1,16 +1,61 @@
 package main
 
 import (
+	"fmt"
 	hfd "hfdownloader/hfdownloader"
 	"io"
+	"log"
 	"net/http"
 	"os"
+	"regexp"
+
+	"github.com/spf13/cobra"
 )
 
 func main() {
-	modelName := os.Args[1]
-	hfd.DownloadModel(modelName, "Models")
+	var (
+		modelName   string
+		storagePath string
+		silent      bool
+	)
+	rootCmd := &cobra.Command{
+		Use:   "HFDownloader",
+		Short: "a Simple HuggingFace Models Downloader Utility",
+		Run: func(cmd *cobra.Command, args []string) {
+			// Perform your logic here
+			fmt.Println("Model Name:", modelName)
+			fmt.Println("Storage Path:", storagePath)
+			fmt.Println("Silent Mode:", silent)
+		},
+	}
+	rootCmd.Flags().StringVarP(&modelName, "modelname", "m", "", "Name of the model (required)")
+	rootCmd.MarkFlagRequired("modelname")
 
+	rootCmd.Flags().StringVarP(&storagePath, "storagepath", "s", "Models", "Path for storing the models")
+
+	rootCmd.Flags().BoolVarP(&silent, "silent", "q", false, "Silent mode, no progress output")
+	cobra.OnInitialize(func() {
+		if !isValidModelName(modelName) {
+			fmt.Println("Invalid model name format. It should follow the: 'ModelAuthor/ModelName'")
+			os.Exit(1)
+		}
+	})
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Println("Error:", err)
+		os.Exit(1)
+	}
+	err := hfd.DownloadModel(modelName, storagePath, silent)
+	if err != nil {
+		log.Fatalln(err)
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+func isValidModelName(modelName string) bool {
+	pattern := `^[A-Za-z0-9]+/[A-Za-z0-9]+$`
+	match, _ := regexp.MatchString(pattern, modelName)
+	return match
 }
 
 //To get this link, do the following
