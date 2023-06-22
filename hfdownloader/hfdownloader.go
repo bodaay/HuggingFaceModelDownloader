@@ -34,7 +34,7 @@ func DownloadModel(ModelName string, DestintionBasePath string) error {
 
 	branch := "main"
 	JsonFileListURL := fmt.Sprintf(JsonFileTreeURL, ModelName, branch)
-	fmt.Printf("Getting File Download Files List Tree from: %s\n", JsonFileTreeURL)
+	fmt.Printf("Getting File Download Files List Tree from: %s\n", JsonFileListURL)
 	response, err := http.Get(JsonFileListURL)
 	if err != nil {
 		// fmt.Println("Error:", err)
@@ -85,6 +85,9 @@ func DownloadModel(ModelName string, DestintionBasePath string) error {
 	for i := range jsonFilesList {
 		//check if the file exists before
 		// Check if the file exists
+		if jsonFilesList[i].IsDirectory {
+			continue
+		}
 		filename := jsonFilesList[i].AppendedPath
 		if _, err := os.Stat(filename); err == nil {
 			// File exists, get its size
