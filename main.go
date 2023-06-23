@@ -3,9 +3,11 @@ package main
 import (
 	"errors"
 	"fmt"
-	hfd "hfdownloader/hfdownloader"
+	hfdn "hfdownloader/hfdownloadernested"
+
 	"log"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -14,9 +16,10 @@ func main() {
 	var (
 		modelName   string
 		storagePath string
+		modelBranch string
 	)
 	rootCmd := &cobra.Command{
-		Use:   "hfdowloader modelname [storagepath]",
+		Use:   "hfdowloader modelname [storagepath] [Branch]",
 		Short: "a Simple HuggingFace Models Downloader Utility",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
@@ -26,12 +29,16 @@ func main() {
 			if len(args) > 1 {
 				storagePath = args[1]
 			}
+			modelBranch = "main"
+			if len(args) > 2 {
+				modelBranch = strings.ToLower(args[2])
+			}
 
 			if len(args) == 0 && modelName == "" {
 				return errors.New("Model name is required")
 			}
 
-			if modelName != "" && !hfd.IsValidModelName(modelName) {
+			if modelName != "" && !hfdn.IsValidModelName(modelName) {
 				return fmt.Errorf("Invalid model name format '%s'. It should follow the pattern 'ModelAuthor/ModelName'", modelName)
 			}
 
@@ -39,7 +46,7 @@ func main() {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 
-			err := hfd.DownloadModel(modelName, storagePath)
+			err := hfdn.DownloadModel(modelName, storagePath, modelBranch)
 			if err != nil {
 				return err
 			}
