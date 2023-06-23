@@ -16,14 +16,22 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/fatih/color"
 )
 
 const (
-	RawFileURL         = "https://huggingface.co/%s/raw/%s/%s"
-	LfsResolverURL     = "https://huggingface.co/%s/resolve/%s/%s"
-	JsonFileTreeURL    = "https://huggingface.co/api/models/%s/tree/%s/%s"
-	NumConnections     = 5
-	SingleThreadedSize = 1024 * 1024
+	RawFileURL      = "https://huggingface.co/%s/raw/%s/%s"
+	LfsResolverURL  = "https://huggingface.co/%s/resolve/%s/%s"
+	JsonFileTreeURL = "https://huggingface.co/api/models/%s/tree/%s/%s"
+)
+
+//I may use this coloring thing later on
+var (
+	infoColor      = color.New(color.FgGreen).SprintFunc()
+	warningColor   = color.New(color.FgYellow).SprintFunc()
+	errorColor     = color.New(color.FgRed).SprintFunc()
+	NumConnections = 5
 )
 
 type hfmodel struct {
@@ -46,7 +54,8 @@ type hflfs struct {
 	PointerSize int    `json:"pointerSize"`
 }
 
-func DownloadModel(ModelName string, DestintionBasePath string, ModelBranch string) error {
+func DownloadModel(ModelName string, DestintionBasePath string, ModelBranch string, concurrentConnctionions int) error {
+	NumConnections = concurrentConnctionions
 	modelPath := path.Join(DestintionBasePath, strings.Replace(ModelName, "/", "_", -1))
 	//Check StoragePath
 	err := os.MkdirAll(modelPath, os.ModePerm)
@@ -64,7 +73,7 @@ func DownloadModel(ModelName string, DestintionBasePath string, ModelBranch stri
 }
 func processHFFolderTree(DestintionBasePath string, ModelName string, ModelBranch string, fodlerName string) error {
 	modelPath := path.Join(DestintionBasePath, strings.Replace(ModelName, "/", "_", -1))
-	tempFolder := path.Join(modelPath, "tmp")
+	tempFolder := path.Join(modelPath, fodlerName, "tmp")
 	if _, err := os.Stat(tempFolder); err == nil { //clear it if it exists before for any reason
 		err = os.RemoveAll(tempFolder)
 		if err != nil {
@@ -76,10 +85,10 @@ func processHFFolderTree(DestintionBasePath string, ModelName string, ModelBranc
 		// fmt.Println("Error:", err)
 		return err
 	}
-	// defer os.RemoveAll(tempFolder) //delete tmp folder upon returning from this function
+	defer os.RemoveAll(tempFolder) //delete tmp folder upon returning from this function
 	branch := ModelBranch
 	JsonFileListURL := fmt.Sprintf(JsonFileTreeURL, ModelName, branch, fodlerName)
-	fmt.Printf("Getting File Download Files List Tree from: %s\n", JsonFileListURL)
+	fmt.Printf("\nGetting File Download Files List Tree from: %s", JsonFileListURL)
 	response, err := http.Get(JsonFileListURL)
 	if err != nil {
 		// fmt.Println("Error:", err)
@@ -138,7 +147,7 @@ func processHFFolderTree(DestintionBasePath string, ModelName string, ModelBranc
 			// File exists, get its size
 			fileInfo, _ := os.Stat(filename)
 			size := fileInfo.Size()
-			fmt.Printf("Checking Existsing file: %s\n", jsonFilesList[i].AppendedPath)
+			fmt.Printf("\nChecking Existsing file: %s", jsonFilesList[i].AppendedPath)
 			//  for non-lfs files, I can only compare size, I don't there is a sha256 hash for them
 			if size == int64(jsonFilesList[i].Size) {
 				jsonFilesList[i].SkipDownloading = true
@@ -149,9 +158,11 @@ func processHFFolderTree(DestintionBasePath string, ModelName string, ModelBranc
 						if err != nil {
 							return err
 						}
-						//jsonFilesList[i].SkipDownloading = false
+						jsonFilesList[i].SkipDownloading = false
 					}
-					fmt.Printf("Hash Matched for LFS file: %s\n", jsonFilesList[i].AppendedPath)
+					fmt.Printf("\nHash Matched for LFS file: %s", jsonFilesList[i].AppendedPath)
+				} else {
+					fmt.Printf("\nfile size matched for non LFS file: %s", jsonFilesList[i].AppendedPath)
 				}
 			}
 
@@ -164,7 +175,7 @@ func processHFFolderTree(DestintionBasePath string, ModelName string, ModelBranc
 			continue
 		}
 		if jsonFilesList[i].SkipDownloading {
-			fmt.Printf("Skipping: %s\n", jsonFilesList[i].AppendedPath)
+			fmt.Printf("\nSkipping: %s", jsonFilesList[i].AppendedPath)
 			continue
 		}
 		// fmt.Printf("Downloading: %s\n", jsonFilesList[i].Path)
@@ -174,7 +185,7 @@ func processHFFolderTree(DestintionBasePath string, ModelName string, ModelBranc
 				return err
 			}
 			//lfs file, verify by checksum
-			fmt.Printf("Checking SHA256 Hash for LFS file: %s", jsonFilesList[i].AppendedPath)
+			fmt.Printf("\nChecking SHA256 Hash for LFS file: %s", jsonFilesList[i].AppendedPath)
 			err = verifyChecksum(jsonFilesList[i].AppendedPath, jsonFilesList[i].Lfs.Oid_SHA265)
 			if err != nil {
 				err := os.Remove(jsonFilesList[i].AppendedPath)
@@ -183,7 +194,7 @@ func processHFFolderTree(DestintionBasePath string, ModelName string, ModelBranc
 				}
 				//jsonFilesList[i].SkipDownloading = false
 			}
-			fmt.Printf("Hash Matched for LFS file: %s\n", jsonFilesList[i].AppendedPath)
+			fmt.Printf("\nHash Matched for LFS file: %s\n", jsonFilesList[i].AppendedPath)
 
 		} else {
 			err = downloadFileMultiThread(tempFolder, jsonFilesList[i].DownloadLink, jsonFilesList[i].AppendedPath) //no checksum available for small non-lfs files
@@ -191,15 +202,15 @@ func processHFFolderTree(DestintionBasePath string, ModelName string, ModelBranc
 				return err
 			}
 			//non-lfs file, verify by size matching
-			fmt.Printf("Checking file size matching: %s", jsonFilesList[i].AppendedPath)
+			fmt.Printf("\nChecking file size matching: %s", jsonFilesList[i].AppendedPath)
 			if _, err := os.Stat(jsonFilesList[i].AppendedPath); err == nil {
 				fileInfo, _ := os.Stat(jsonFilesList[i].AppendedPath)
 				size := fileInfo.Size()
 				if size != int64(jsonFilesList[i].Size) {
-					return fmt.Errorf("File size mismatch: %s, filesize: %d, Needed Size: %d", jsonFilesList[i].AppendedPath, size, jsonFilesList[i].Size)
+					return fmt.Errorf("\nFile size mismatch: %s, filesize: %d, Needed Size: %d", jsonFilesList[i].AppendedPath, size, jsonFilesList[i].Size)
 				}
 			} else {
-				return fmt.Errorf("File does not exist: %s", jsonFilesList[i].AppendedPath)
+				return fmt.Errorf("\nFile does not exist: %s", jsonFilesList[i].AppendedPath)
 			}
 		}
 	}
@@ -207,7 +218,7 @@ func processHFFolderTree(DestintionBasePath string, ModelName string, ModelBranc
 	return nil
 }
 
-// ******************************************************************   All the functions below generated by ChatGPT 3.5, and ChatGPT 4 *********************************************************************
+// ***********************************************   All the functions below generated by ChatGPT 3.5, and ChatGPT 4 , with some modifications ***********************************************
 func IsValidModelName(modelName string) bool {
 	pattern := `^[A-Za-z0-9_\-]+/[A-Za-z0-9_\-]+$`
 	match, _ := regexp.MatchString(pattern, modelName)
@@ -366,7 +377,7 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string) error {
 		go func(i int, start, end int64) {
 			err := downloadChunk(tempFolder, path.Base(outputFileName), i, url, start, end, wg, progress)
 			if err != nil {
-				fmt.Printf("Error downloading chunk %d: %v\n", i, err)
+				fmt.Printf("\nError downloading chunk %d: %v\n", i, err)
 			}
 		}(i, start, end)
 	}
@@ -374,21 +385,21 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string) error {
 	startTime := time.Now()
 	go func() {
 		var totalDownloaded int64
-		elapsed := time.Since(startTime).Seconds()
 
 		// Calculate speed in megabytes per second
-		speed := float64(totalDownloaded) / 1024 / 1024 / elapsed
 		for chunkSize := range progress {
 			totalDownloaded += chunkSize
-			fmt.Printf("\rDownloading %s, %.2f%% Speed: %.2f MB/sec", outputFileName, float64(totalDownloaded*100)/float64(contentLength), speed)
+			elapsed := time.Since(startTime).Seconds()
+			speed := float64(totalDownloaded) / 1024 / 1024 / elapsed
+			fmt.Printf("\rDownloading %s Speed: %.2f MB/sec, %.2f%% ", outputFileName, speed, float64(totalDownloaded*100)/float64(contentLength))
 		}
 	}()
 
 	wg.Wait()
 	close(progress)
 
-	fmt.Print("\nDownload completed\n")
-
+	// fmt.Print("\nDownload completed")
+	fmt.Printf("\nMerging %s Chunks", outputFileName)
 	err = mergeFiles(tempFolder, outputFileName, NumConnections)
 	if err != nil {
 		return err
@@ -414,6 +425,6 @@ func downloadSingleThreaded(url, outputFileName string) error {
 		return err
 	}
 
-	fmt.Println("Download completed")
+	// fmt.Println("\nDownload completed")
 	return nil
 }
