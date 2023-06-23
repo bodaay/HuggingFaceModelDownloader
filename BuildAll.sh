@@ -9,7 +9,7 @@
 ./BuildLinuxAmd64.sh
 
 # Build MacOSx/amd64
-./BuildMacOSxAmd64.sh
+./BuildDarwinAmd64.sh
 
 # Build arm/arm64
 ./BuildArmArm64.sh
