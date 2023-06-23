@@ -10,16 +10,20 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
-
-	"github.com/cheggaaa/pb/v3"
+	"sync"
+	"time"
 )
 
 const (
-	RawFileURL      = "https://huggingface.co/%s/raw/%s/%s"
-	LfsResolverURL  = "https://huggingface.co/%s/resolve/%s/%s"
-	JsonFileTreeURL = "https://huggingface.co/api/models/%s/tree/%s/%s"
+	RawFileURL         = "https://huggingface.co/%s/raw/%s/%s"
+	LfsResolverURL     = "https://huggingface.co/%s/resolve/%s/%s"
+	JsonFileTreeURL    = "https://huggingface.co/api/models/%s/tree/%s/%s"
+	NumConnections     = 5
+	SingleThreadedSize = 1024 * 1024
 )
 
 type hfmodel struct {
@@ -60,6 +64,19 @@ func DownloadModel(ModelName string, DestintionBasePath string, ModelBranch stri
 }
 func processHFFolderTree(DestintionBasePath string, ModelName string, ModelBranch string, fodlerName string) error {
 	modelPath := path.Join(DestintionBasePath, strings.Replace(ModelName, "/", "_", -1))
+	tempFolder := path.Join(modelPath, "tmp")
+	if _, err := os.Stat(tempFolder); err == nil { //clear it if it exists before for any reason
+		err = os.RemoveAll(tempFolder)
+		if err != nil {
+			return err
+		}
+	}
+	err := os.MkdirAll(tempFolder, os.ModePerm)
+	if err != nil {
+		// fmt.Println("Error:", err)
+		return err
+	}
+	// defer os.RemoveAll(tempFolder) //delete tmp folder upon returning from this function
 	branch := ModelBranch
 	JsonFileListURL := fmt.Sprintf(JsonFileTreeURL, ModelName, branch, fodlerName)
 	fmt.Printf("Getting File Download Files List Tree from: %s\n", JsonFileListURL)
@@ -152,11 +169,41 @@ func processHFFolderTree(DestintionBasePath string, ModelName string, ModelBranc
 		}
 		// fmt.Printf("Downloading: %s\n", jsonFilesList[i].Path)
 		if jsonFilesList[i].IsLFS {
-			downloadFile(jsonFilesList[i].DownloadLink, jsonFilesList[i].AppendedPath, jsonFilesList[i].Lfs.Oid_SHA265)
+			err := downloadFileMultiThread(tempFolder, jsonFilesList[i].DownloadLink, jsonFilesList[i].AppendedPath)
+			if err != nil {
+				return err
+			}
+			//lfs file, verify by checksum
+			fmt.Printf("Checking SHA256 Hash for LFS file: %s", jsonFilesList[i].AppendedPath)
+			err = verifyChecksum(jsonFilesList[i].AppendedPath, jsonFilesList[i].Lfs.Oid_SHA265)
+			if err != nil {
+				err := os.Remove(jsonFilesList[i].AppendedPath)
+				if err != nil {
+					return err
+				}
+				//jsonFilesList[i].SkipDownloading = false
+			}
+			fmt.Printf("Hash Matched for LFS file: %s\n", jsonFilesList[i].AppendedPath)
+
 		} else {
-			downloadFile(jsonFilesList[i].DownloadLink, jsonFilesList[i].AppendedPath, "") //no checksum available for small non-lfs files
+			err = downloadFileMultiThread(tempFolder, jsonFilesList[i].DownloadLink, jsonFilesList[i].AppendedPath) //no checksum available for small non-lfs files
+			if err != nil {
+				return err
+			}
+			//non-lfs file, verify by size matching
+			fmt.Printf("Checking file size matching: %s", jsonFilesList[i].AppendedPath)
+			if _, err := os.Stat(jsonFilesList[i].AppendedPath); err == nil {
+				fileInfo, _ := os.Stat(jsonFilesList[i].AppendedPath)
+				size := fileInfo.Size()
+				if size != int64(jsonFilesList[i].Size) {
+					return fmt.Errorf("File size mismatch: %s, filesize: %d, Needed Size: %d", jsonFilesList[i].AppendedPath, size, jsonFilesList[i].Size)
+				}
+			} else {
+				return fmt.Errorf("File does not exist: %s", jsonFilesList[i].AppendedPath)
+			}
 		}
 	}
+
 	return nil
 }
 
@@ -187,46 +234,7 @@ func getRedirectLink(url string) (string, error) {
 
 	return "", fmt.Errorf("No redirect found")
 }
-func downloadFile(url string, filepath string, checksum string) error {
-	// Create the file with .tmp extension, so if the download fails, the file won't exist.
-	out, err := os.Create(filepath)
-	if err != nil {
-		return err
-	}
-	// return nil // uncomment this if you want just to test out the creation of files and folders
-	// Get the data from the URL
-	resp, err := http.Get(url)
-	if err != nil {
-		out.Close()
-		return err
-	}
-	defer resp.Body.Close()
 
-	// Create a progress bar
-	bar := pb.Full.Start64(resp.ContentLength)
-	bar.Set("prefix", path.Base(filepath)+" ")
-	barReader := bar.NewProxyReader(resp.Body)
-
-	// Write the body to file
-	_, err = io.Copy(out, barReader)
-
-	out.Close()
-	if err != nil {
-		return err
-	}
-
-	// The progress bar needs to be finished explicitly
-	bar.Finish()
-	if checksum != "" { //in case its lfs file, we are passing this
-		err = verifyChecksum(filepath, checksum)
-		if err != nil {
-			fmt.Println(err)
-			return err
-		}
-	}
-
-	return nil
-}
 func verifyChecksum(fileName string, expectedChecksum string) error {
 	file, err := os.Open(fileName)
 	if err != nil {
@@ -244,5 +252,168 @@ func verifyChecksum(fileName string, expectedChecksum string) error {
 		return fmt.Errorf("checksums do not match")
 	}
 
+	return nil
+}
+
+func downloadChunk(tempFolder string, outputFileName string, idx int, url string, start, end int64, wg *sync.WaitGroup, progress chan<- int64) error {
+	defer wg.Done()
+
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
+
+	rangeHeader := fmt.Sprintf("bytes=%d-%d", start, end-1)
+	req.Header.Add("Range", rangeHeader)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	tmpFileName := fmt.Sprintf("%s_%d_*.tmp", outputFileName, idx)
+	tempFile, err := ioutil.TempFile(tempFolder, tmpFileName)
+	if err != nil {
+		return err
+	}
+	defer tempFile.Close()
+
+	buffer := make([]byte, 1024)
+	for {
+		bytesRead, err := resp.Body.Read(buffer)
+		if err != nil && err != io.EOF {
+			return err
+		}
+
+		if bytesRead == 0 {
+			break
+		}
+
+		_, err = tempFile.Write(buffer[:bytesRead])
+		if err != nil {
+			return err
+		}
+		progress <- int64(bytesRead)
+	}
+
+	return nil
+}
+
+func mergeFiles(tempFodler, outputFileName string, numChunks int) error {
+	outputFile, err := os.Create(outputFileName)
+	if err != nil {
+		return err
+	}
+	defer outputFile.Close()
+
+	for i := 0; i < numChunks; i++ {
+		tmpFileName := fmt.Sprintf("%s_%d_*.tmp", path.Base(outputFileName), i)
+		tempFileName := path.Join(tempFodler, tmpFileName)
+		tempFiles, err := ioutil.ReadDir(tempFodler)
+		if err != nil {
+			return err
+		}
+		for _, file := range tempFiles {
+
+			if matched, _ := filepath.Match(tempFileName, path.Join(tempFodler, file.Name())); matched {
+				tempFile, err := os.Open(path.Join(tempFodler, file.Name()))
+				if err != nil {
+					return err
+				}
+				_, err = io.Copy(outputFile, tempFile)
+				if err != nil {
+					return err
+				}
+				err = tempFile.Close()
+				if err != nil {
+					return err
+				}
+				err = os.Remove(path.Join(tempFodler, file.Name()))
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func downloadFileMultiThread(tempFolder, url, outputFileName string) error {
+	resp, err := http.Head(url)
+	if err != nil {
+		return err
+	}
+
+	contentLength, err := strconv.Atoi(resp.Header.Get("Content-Length"))
+	if err != nil {
+		return err
+	}
+
+	chunkSize := int64(contentLength / NumConnections)
+
+	progress := make(chan int64, NumConnections)
+	wg := &sync.WaitGroup{}
+	wg.Add(NumConnections)
+
+	for i := 0; i < NumConnections; i++ {
+		start := int64(i) * chunkSize
+		end := start + chunkSize
+
+		if i == NumConnections-1 {
+			end = int64(contentLength)
+		}
+		go func(i int, start, end int64) {
+			err := downloadChunk(tempFolder, path.Base(outputFileName), i, url, start, end, wg, progress)
+			if err != nil {
+				fmt.Printf("Error downloading chunk %d: %v\n", i, err)
+			}
+		}(i, start, end)
+	}
+	// Mark the start time of the download
+	startTime := time.Now()
+	go func() {
+		var totalDownloaded int64
+		elapsed := time.Since(startTime).Seconds()
+
+		// Calculate speed in megabytes per second
+		speed := float64(totalDownloaded) / 1024 / 1024 / elapsed
+		for chunkSize := range progress {
+			totalDownloaded += chunkSize
+			fmt.Printf("\rDownloading %s, %.2f%% Speed: %.2f MB/sec", outputFileName, float64(totalDownloaded*100)/float64(contentLength), speed)
+		}
+	}()
+
+	wg.Wait()
+	close(progress)
+
+	fmt.Print("\nDownload completed\n")
+
+	err = mergeFiles(tempFolder, outputFileName, NumConnections)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+func downloadSingleThreaded(url, outputFileName string) error {
+	outputFile, err := os.Create(outputFileName)
+	if err != nil {
+		return err
+	}
+	defer outputFile.Close()
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	_, err = io.Copy(outputFile, resp.Body)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("Download completed")
 	return nil
 }
