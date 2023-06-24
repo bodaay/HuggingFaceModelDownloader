@@ -28,6 +28,9 @@ Destination path (optional) (default "Storage")
 `-c, --concurrent int`  
 Number of LFS concurrent connections (optional) (default 5)
 
+`-t, --token string`  
+HuggingFace Access Token, required for some Models/Datasets, you still need to manually accept agreement on HuggingFace if model requires it,No bypass going to be implented (optional)
+
 `-h, --help`  
 Help for hfdowloader
 

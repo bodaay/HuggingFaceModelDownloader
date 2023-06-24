@@ -48,6 +48,7 @@ func main() {
 			fmt.Println("Branch:", branch)
 			fmt.Println("DestinationPath:", destinationPath)
 			fmt.Println("NumberOfConcurrentConnections:", numberOfConcurrentConnections)
+			fmt.Println("Token:", HuggingFaceAccessToken)
 
 			err := hfdn.DownloadModel(ModelOrDataSet, IsDataset, destinationPath, branch, numberOfConcurrentConnections, HuggingFaceAccessToken)
 			if err != nil {
@@ -68,7 +69,7 @@ func main() {
 
 	rootCmd.Flags().IntVarP(&numberOfConcurrentConnections, "concurrent", "c", 5, "Number of LFS concurrent connections (optional)")
 
-	rootCmd.Flags().StringVarP(&HuggingFaceAccessToken, "toekn", "t", "", "HuggingFace Access Token, required for some Models/Datasets (optional)")
+	rootCmd.Flags().StringVarP(&HuggingFaceAccessToken, "token", "t", "", "HuggingFace Access Token, required for some Models/Datasets, you still need to manually accept agreement if model requires it (optional)")
 
 	if err := rootCmd.Execute(); err != nil {
 		log.Fatalln("Error:", err)

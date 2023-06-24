@@ -11,5 +11,8 @@
 # Build MacOSx/amd64
 ./BuildDarwinAmd64.sh
 
+# Build MacOSx/arm64
+./BuildDarwinArm64.sh
+
 # Build arm/arm64
 ./BuildArmArm64.sh

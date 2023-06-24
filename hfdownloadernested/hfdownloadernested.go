@@ -22,6 +22,8 @@ import (
 )
 
 const (
+	AgreementModelURL      = "https://huggingface.co/%s"
+	AgreementDatasetURL    = "https://huggingface.co/datasets/%s"
 	RawModelFileURL        = "https://huggingface.co/%s/raw/%s/%s"
 	RawDatasetFileURL      = "https://huggingface.co/datasets/%s/raw/%s/%s"
 	LfsModelResolverURL    = "https://huggingface.co/%s/resolve/%s/%s"
@@ -87,11 +89,14 @@ func processHFFolderTree(StoragePath string, IsDataset bool, ModelDatasetName st
 	JsonTreeVaraible := JsonModelsFileTreeURL //we assume its Model first
 	RawFileURL := RawModelFileURL
 	LfsResolverURL := LfsModelResolverURL
+	AgreementURL := fmt.Sprintf(AgreementModelURL, ModelDatasetName)
 	if IsDataset {
 		JsonTreeVaraible = JsonDatasetFileTreeURL //set this to true if it its set to Dataset
 		RawFileURL = RawDatasetFileURL
 		LfsResolverURL = LfsDatasetResolverURL
+		AgreementURL = fmt.Sprintf(AgreementDatasetURL, ModelDatasetName)
 	}
+
 	modelPath := path.Join(StoragePath, strings.Replace(ModelDatasetName, "/", "_", -1))
 	tempFolder := path.Join(modelPath, fodlerName, "tmp")
 	if _, err := os.Stat(tempFolder); err == nil { //clear it if it exists before for any reason
@@ -130,13 +135,17 @@ func processHFFolderTree(StoragePath string, IsDataset bool, ModelDatasetName st
 	if resp.StatusCode == 401 && RequiresAuth == false {
 		return fmt.Errorf("This Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
 	}
+	if resp.StatusCode == 403 {
+		return fmt.Errorf("You need to manually Accept the agreement for this model/dataset: %s on HuggingFace site, No bypass will be implemeted", AgreementURL)
+	}
 	// Read the response body into a byte slice
 	content, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		// fmt.Println("Error:", err)
 		return err
+
 	}
-	// fmt.Println(string(content))
+
 	jsonFilesList := []hfmodel{}
 	err = json.Unmarshal(content, &jsonFilesList)
 	if err != nil {
@@ -285,7 +294,7 @@ func getRedirectLink(url string) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
-	log.Println(resp.Body)
+
 	if resp.StatusCode == 401 && RequiresAuth == false {
 		return "", fmt.Errorf("This Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
 	}
