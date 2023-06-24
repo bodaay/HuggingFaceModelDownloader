@@ -17,6 +17,8 @@ Git LFS was so slow for me, and I cloudn't find a single binary that I can just 
 Model/Dataset name (required if dataset not set)
 
 You can supply filters for required LFS model files, separate filters by adding commas
+
+filters will discard any LFS file ending with .bin,.act,.safetensors,.zip thats missing the supplied filter
 ```bash
 -m TheBloke/WizardLM-Uncensored-Falcon-7B-GGML:fp16 # this will download LFS file contains: fp16
 ```
