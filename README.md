@@ -11,16 +11,28 @@ Git LFS was so slow for me, and I cloudn't find a single binary that I can just 
 
   hfdowloader [flags]
 
+## Flags:
 
-Flags:
-- `-m, --model-name string`: Model name (required, pattern: ModelAuthor/ModelName)
-- `-d, --destination-path string`: Destination path (optional, default: "Models")
-- `-c, --concurrent int`: Number of LFS concurrent connections (optional, default: 5)
-- `-b, --model-branch string`: Model branch (optional, default: "main")
+`-m, --model string`  
+Model/Dataset name (required if dataset not set)
 
+`-d, --dataset string`  
+Model/Dataset name (required if model not set)
+
+`-b, --branch string`  
+Model/Dataset branch (optional) (default "main")
+
+`-s, --storage string`  
+Destination path (optional) (default "Storage")
+
+`-c, --concurrent int`  
+Number of LFS concurrent connections (optional) (default 5)
+
+`-h, --help`  
+Help for hfdowloader
 
 ```shell
-hfdowloader  -m TheBloke/WizardLM-13B-V1.0-Uncensored-GPTQ -c 10 -d MyModels
+hfdowloader  -m TheBloke/WizardLM-13B-V1.0-Uncensored-GPTQ -c 10 -s MyModels
 ```
 
 

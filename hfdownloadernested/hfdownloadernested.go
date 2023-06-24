@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"os"
 	"path"
@@ -21,9 +22,12 @@ import (
 )
 
 const (
-	RawFileURL      = "https://huggingface.co/%s/raw/%s/%s"
-	LfsResolverURL  = "https://huggingface.co/%s/resolve/%s/%s"
-	JsonFileTreeURL = "https://huggingface.co/api/models/%s/tree/%s/%s"
+	RawModelFileURL        = "https://huggingface.co/%s/raw/%s/%s"
+	RawDatasetFileURL      = "https://huggingface.co/datasets/%s/raw/%s/%s"
+	LfsModelResolverURL    = "https://huggingface.co/%s/resolve/%s/%s"
+	LfsDatasetResolverURL  = "https://huggingface.co/datasets/%s/resolve/%s/%s"
+	JsonModelsFileTreeURL  = "https://huggingface.co/api/models/%s/tree/%s/%s"
+	JsonDatasetFileTreeURL = "https://huggingface.co/api/datasets/%s/tree/%s/%s"
 )
 
 //I may use this coloring thing later on
@@ -32,6 +36,8 @@ var (
 	warningColor   = color.New(color.FgYellow).SprintFunc()
 	errorColor     = color.New(color.FgRed).SprintFunc()
 	NumConnections = 5
+	RequiresAuth   = false
+	AuthToken      = ""
 )
 
 type hfmodel struct {
@@ -54,25 +60,39 @@ type hflfs struct {
 	PointerSize int    `json:"pointerSize"`
 }
 
-func DownloadModel(ModelName string, DestintionBasePath string, ModelBranch string, concurrentConnctionions int) error {
+func DownloadModel(ModelDatasetName string, IsDataset bool, DestintionBasePath string, ModelBranch string, concurrentConnctionions int, token string) error {
 	NumConnections = concurrentConnctionions
-	modelPath := path.Join(DestintionBasePath, strings.Replace(ModelName, "/", "_", -1))
+	modelPath := path.Join(DestintionBasePath, strings.Replace(ModelDatasetName, "/", "_", -1))
+	if token != "" {
+		RequiresAuth = true
+		AuthToken = token
+	}
 	//Check StoragePath
 	err := os.MkdirAll(modelPath, os.ModePerm)
 	if err != nil {
 		// fmt.Println("Error:", err)
 		return err
 	}
+	//ok we need to add some logic here now to analyze the model/dataset before we go into downloading
+
 	//get root path files and folders
-	err = processHFFolderTree(DestintionBasePath, ModelName, ModelBranch, "") // passing empty as foldername, because its the first root folder
+	err = processHFFolderTree(DestintionBasePath, IsDataset, ModelDatasetName, ModelBranch, "") // passing empty as foldername, because its the first root folder
 	if err != nil {
 		// fmt.Println("Error:", err)
 		return err
 	}
 	return nil
 }
-func processHFFolderTree(DestintionBasePath string, ModelName string, ModelBranch string, fodlerName string) error {
-	modelPath := path.Join(DestintionBasePath, strings.Replace(ModelName, "/", "_", -1))
+func processHFFolderTree(StoragePath string, IsDataset bool, ModelDatasetName string, Branch string, fodlerName string) error {
+	JsonTreeVaraible := JsonModelsFileTreeURL //we assume its Model first
+	RawFileURL := RawModelFileURL
+	LfsResolverURL := LfsModelResolverURL
+	if IsDataset {
+		JsonTreeVaraible = JsonDatasetFileTreeURL //set this to true if it its set to Dataset
+		RawFileURL = RawDatasetFileURL
+		LfsResolverURL = LfsDatasetResolverURL
+	}
+	modelPath := path.Join(StoragePath, strings.Replace(ModelDatasetName, "/", "_", -1))
 	tempFolder := path.Join(modelPath, fodlerName, "tmp")
 	if _, err := os.Stat(tempFolder); err == nil { //clear it if it exists before for any reason
 		err = os.RemoveAll(tempFolder)
@@ -86,18 +106,32 @@ func processHFFolderTree(DestintionBasePath string, ModelName string, ModelBranc
 		return err
 	}
 	defer os.RemoveAll(tempFolder) //delete tmp folder upon returning from this function
-	branch := ModelBranch
-	JsonFileListURL := fmt.Sprintf(JsonFileTreeURL, ModelName, branch, fodlerName)
+	branch := Branch
+	JsonFileListURL := fmt.Sprintf(JsonTreeVaraible, ModelDatasetName, branch, fodlerName)
 	fmt.Printf("\nGetting File Download Files List Tree from: %s", JsonFileListURL)
-	response, err := http.Get(JsonFileListURL)
+
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", JsonFileListURL, nil)
+	if err != nil {
+		return err
+	}
+	if RequiresAuth {
+		// Set the authorization header with the Bearer token
+		bearerToken := AuthToken
+		req.Header.Add("Authorization", "Bearer "+bearerToken)
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		// fmt.Println("Error:", err)
 		return err
 	}
-	defer response.Body.Close()
-
+	defer resp.Body.Close()
+	if resp.StatusCode == 401 && RequiresAuth == false {
+		return fmt.Errorf("This Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
+	}
 	// Read the response body into a byte slice
-	content, err := ioutil.ReadAll(response.Body)
+	content, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		// fmt.Println("Error:", err)
 		return err
@@ -118,13 +152,13 @@ func processHFFolderTree(DestintionBasePath string, ModelName string, ModelBranc
 			}
 			jsonFilesList[i].SkipDownloading = true
 			//now if this a folder, this whole function will be called again recursivley
-			processHFFolderTree(DestintionBasePath, ModelName, ModelBranch, jsonFilesList[i].Path) //recursive call
+			processHFFolderTree(StoragePath, IsDataset, ModelDatasetName, Branch, jsonFilesList[i].Path) //recursive call
 			continue
 		}
-		jsonFilesList[i].DownloadLink = fmt.Sprintf(RawFileURL, ModelName, branch, jsonFilesList[i].Path)
+		jsonFilesList[i].DownloadLink = fmt.Sprintf(RawFileURL, ModelDatasetName, branch, jsonFilesList[i].Path)
 		if jsonFilesList[i].Lfs != nil {
 			jsonFilesList[i].IsLFS = true
-			resolverURL := fmt.Sprintf(LfsResolverURL, ModelName, branch, jsonFilesList[i].Path)
+			resolverURL := fmt.Sprintf(LfsResolverURL, ModelDatasetName, branch, jsonFilesList[i].Path)
 			getLink, err := getRedirectLink(resolverURL)
 			if err != nil {
 				return err
@@ -197,7 +231,8 @@ func processHFFolderTree(DestintionBasePath string, ModelName string, ModelBranc
 			fmt.Printf("\nHash Matched for LFS file: %s\n", jsonFilesList[i].AppendedPath)
 
 		} else {
-			err = downloadFileMultiThread(tempFolder, jsonFilesList[i].DownloadLink, jsonFilesList[i].AppendedPath) //no checksum available for small non-lfs files
+			// err := downloadFileMultiThread(tempFolder, jsonFilesList[i].DownloadLink, jsonFilesList[i].AppendedPath) //maybe later I'll enable multithreading for all files, even non-lfs
+			err = downloadSingleThreaded(jsonFilesList[i].DownloadLink, jsonFilesList[i].AppendedPath) //no checksum available for small non-lfs files
 			if err != nil {
 				return err
 			}
@@ -226,18 +261,34 @@ func IsValidModelName(modelName string) bool {
 }
 
 func getRedirectLink(url string) (string, error) {
+
 	client := &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if RequiresAuth {
+				bearerToken := AuthToken
+				req.Header.Add("Authorization", "Bearer "+bearerToken)
+			}
 			return http.ErrUseLastResponse
 		},
 	}
-
-	resp, err := client.Get(url)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+	if RequiresAuth {
+		// Set the authorization header with the Bearer token
+		bearerToken := AuthToken
+		req.Header.Add("Authorization", "Bearer "+bearerToken)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-
+	log.Println(resp.Body)
+	if resp.StatusCode == 401 && RequiresAuth == false {
+		return "", fmt.Errorf("This Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
+	}
 	if resp.StatusCode >= 300 && resp.StatusCode <= 399 {
 		redirectURL := resp.Header.Get("Location")
 		return redirectURL, nil
@@ -274,7 +325,11 @@ func downloadChunk(tempFolder string, outputFileName string, idx int, url string
 	if err != nil {
 		return err
 	}
-
+	if RequiresAuth {
+		// Set the authorization header with the Bearer token
+		bearerToken := AuthToken
+		req.Header.Add("Authorization", "Bearer "+bearerToken)
+	}
 	rangeHeader := fmt.Sprintf("bytes=%d-%d", start, end-1)
 	req.Header.Add("Range", rangeHeader)
 
@@ -283,6 +338,9 @@ func downloadChunk(tempFolder string, outputFileName string, idx int, url string
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == 401 && RequiresAuth == false {
+		return fmt.Errorf("This Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
+	}
 	tmpFileName := fmt.Sprintf("%s_%d_*.tmp", outputFileName, idx)
 	tempFile, err := ioutil.TempFile(tempFolder, tmpFileName)
 	if err != nil {
@@ -351,11 +409,24 @@ func mergeFiles(tempFodler, outputFileName string, numChunks int) error {
 }
 
 func downloadFileMultiThread(tempFolder, url, outputFileName string) error {
-	resp, err := http.Head(url)
+	client := &http.Client{}
+	req, err := http.NewRequest("HEAD", url, nil)
 	if err != nil {
 		return err
 	}
+	if RequiresAuth {
+		// Set the authorization header with the Bearer token
+		bearerToken := AuthToken
+		req.Header.Add("Authorization", "Bearer "+bearerToken)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode == 401 && RequiresAuth == false {
+		return fmt.Errorf("This Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
 
+	}
 	contentLength, err := strconv.Atoi(resp.Header.Get("Content-Length"))
 	if err != nil {
 		return err
@@ -409,17 +480,34 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string) error {
 }
 func downloadSingleThreaded(url, outputFileName string) error {
 	outputFile, err := os.Create(outputFileName)
+	log.Println(url)
 	if err != nil {
 		return err
 	}
 	defer outputFile.Close()
 
-	resp, err := http.Get(url)
+	// Set the authorization header with the Bearer token
+
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if RequiresAuth {
+		// Set the authorization header with the Bearer token
+		bearerToken := AuthToken
+		req.Header.Add("Authorization", "Bearer "+bearerToken)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
 
+	defer resp.Body.Close()
+	if resp.StatusCode == 401 && RequiresAuth == false {
+		return fmt.Errorf("This Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
+
+	}
 	_, err = io.Copy(outputFile, resp.Body)
 	if err != nil {
 		return err
