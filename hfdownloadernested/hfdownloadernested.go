@@ -52,6 +52,7 @@ type hfmodel struct {
 
 	AppendedPath    string
 	SkipDownloading bool
+	FilterSkip      bool
 	DownloadLink    string
 	Lfs             *hflfs `json:"lfs,omitempty"`
 }
@@ -64,7 +65,13 @@ type hflfs struct {
 
 func DownloadModel(ModelDatasetName string, IsDataset bool, DestintionBasePath string, ModelBranch string, concurrentConnctionions int, token string) error {
 	NumConnections = concurrentConnctionions
-	modelPath := path.Join(DestintionBasePath, strings.Replace(ModelDatasetName, "/", "_", -1))
+
+	//make sure we dont include dataset filter within folder creation
+	modelP := ModelDatasetName
+	if strings.Contains(modelP, ":") {
+		modelP = strings.Split(ModelDatasetName, ":")[0]
+	}
+	modelPath := path.Join(DestintionBasePath, strings.Replace(modelP, "/", "_", -1))
 	if token != "" {
 		RequiresAuth = true
 		AuthToken = token
@@ -90,13 +97,24 @@ func processHFFolderTree(StoragePath string, IsDataset bool, ModelDatasetName st
 	RawFileURL := RawModelFileURL
 	LfsResolverURL := LfsModelResolverURL
 	AgreementURL := fmt.Sprintf(AgreementModelURL, ModelDatasetName)
+	HasFilter := false
+	var FilterBinFileString []string
+	if strings.Contains(ModelDatasetName, ":") && !IsDataset {
+		HasFilter = true
+		//remove the filterd content from Model Name
+		f := strings.Split(ModelDatasetName, ":")
+		ModelDatasetName = f[0]
+		FilterBinFileString = strings.Split(strings.ToLower(f[1]), ",")
+		fmt.Printf("\nFilter Has been applied, will include LFS Model Files that contains: %s", FilterBinFileString)
+	}
 	if IsDataset {
 		JsonTreeVaraible = JsonDatasetFileTreeURL //set this to true if it its set to Dataset
 		RawFileURL = RawDatasetFileURL
 		LfsResolverURL = LfsDatasetResolverURL
 		AgreementURL = fmt.Sprintf(AgreementDatasetURL, ModelDatasetName)
 	}
-
+	_ = HasFilter
+	_ = FilterBinFileString
 	modelPath := path.Join(StoragePath, strings.Replace(ModelDatasetName, "/", "_", -1))
 	tempFolder := path.Join(modelPath, fodlerName, "tmp")
 	if _, err := os.Stat(tempFolder); err == nil { //clear it if it exists before for any reason
@@ -133,10 +151,10 @@ func processHFFolderTree(StoragePath string, IsDataset bool, ModelDatasetName st
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == 401 && RequiresAuth == false {
-		return fmt.Errorf("This Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
+		return fmt.Errorf("\nThis Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
 	}
 	if resp.StatusCode == 403 {
-		return fmt.Errorf("You need to manually Accept the agreement for this model/dataset: %s on HuggingFace site, No bypass will be implemeted", AgreementURL)
+		return fmt.Errorf("\nYou need to manually Accept the agreement for this model/dataset: %s on HuggingFace site, No bypass will be implemeted", AgreementURL)
 	}
 	// Read the response body into a byte slice
 	content, err := ioutil.ReadAll(resp.Body)
@@ -161,9 +179,13 @@ func processHFFolderTree(StoragePath string, IsDataset bool, ModelDatasetName st
 			}
 			jsonFilesList[i].SkipDownloading = true
 			//now if this a folder, this whole function will be called again recursivley
-			processHFFolderTree(StoragePath, IsDataset, ModelDatasetName, Branch, jsonFilesList[i].Path) //recursive call
+			err = processHFFolderTree(StoragePath, IsDataset, ModelDatasetName, Branch, jsonFilesList[i].Path) //recursive call
+			if err != nil {
+				return err
+			}
 			continue
 		}
+
 		jsonFilesList[i].DownloadLink = fmt.Sprintf(RawFileURL, ModelDatasetName, branch, jsonFilesList[i].Path)
 		if jsonFilesList[i].Lfs != nil {
 			jsonFilesList[i].IsLFS = true
@@ -171,6 +193,19 @@ func processHFFolderTree(StoragePath string, IsDataset bool, ModelDatasetName st
 			getLink, err := getRedirectLink(resolverURL)
 			if err != nil {
 				return err
+			}
+			//Check for filter
+			if HasFilter {
+				filenameLowerCase := strings.ToLower(jsonFilesList[i].AppendedPath)
+				if strings.HasSuffix(filenameLowerCase, ".act") || strings.HasSuffix(filenameLowerCase, ".bin") || strings.HasSuffix(filenameLowerCase, ".safetensors") || strings.HasSuffix(filenameLowerCase, ".zip") {
+					jsonFilesList[i].FilterSkip = true //we assume its skipped, unless below condition range match
+					for _, ff := range FilterBinFileString {
+						if strings.Contains(filenameLowerCase, ff) {
+							jsonFilesList[i].FilterSkip = false
+						}
+					}
+
+				}
 			}
 			jsonFilesList[i].DownloadLink = getLink
 		}
@@ -183,6 +218,9 @@ func processHFFolderTree(StoragePath string, IsDataset bool, ModelDatasetName st
 		//check if the file exists before
 		// Check if the file exists
 		if jsonFilesList[i].IsDirectory {
+			continue
+		}
+		if jsonFilesList[i].FilterSkip {
 			continue
 		}
 		filename := jsonFilesList[i].AppendedPath
@@ -219,6 +257,10 @@ func processHFFolderTree(StoragePath string, IsDataset bool, ModelDatasetName st
 		}
 		if jsonFilesList[i].SkipDownloading {
 			fmt.Printf("\nSkipping: %s", jsonFilesList[i].AppendedPath)
+			continue
+		}
+		if jsonFilesList[i].FilterSkip {
+			fmt.Printf("\nFilter Skipping: %s", jsonFilesList[i].AppendedPath)
 			continue
 		}
 		// fmt.Printf("Downloading: %s\n", jsonFilesList[i].Path)

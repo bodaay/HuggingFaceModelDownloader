@@ -1,5 +1,5 @@
 #!/bin/bash
-
+rm output/*
 # Build script for all platforms
 
 # Build Windows/amd64

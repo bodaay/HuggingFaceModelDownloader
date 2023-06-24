@@ -61,7 +61,7 @@ func main() {
 	rootCmd.SilenceUsage = true // I'll manually print help them while validating the parameters above
 	rootCmd.Flags().SortFlags = false
 	// Define flags for command-line parameters
-	rootCmd.Flags().StringVarP(&modelName, "model", "m", "", "Model/Dataset name (required if dataset not set)")
+	rootCmd.Flags().StringVarP(&modelName, "model", "m", "", "Model/Dataset name (required if dataset not set)\nYou can supply filters for required LFS model files\nex:  ModelName:q4_0,q8_1\nex:  TheBloke/WizardLM-Uncensored-Falcon-7B-GGML:fp16")
 
 	rootCmd.Flags().StringVarP(&datasetName, "dataset", "d", "", "Model/Dataset name (required if model not set)")
 

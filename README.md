@@ -16,6 +16,13 @@ Git LFS was so slow for me, and I cloudn't find a single binary that I can just 
 `-m, --model string`  
 Model/Dataset name (required if dataset not set)
 
+You can supply filters for required LFS model files, separate filters by adding commas
+```bash
+-m TheBloke/WizardLM-Uncensored-Falcon-7B-GGML:fp16 # this will download LFS file contains: fp16
+```
+```bash
+-m TheBloke/WizardLM-33B-V1.0-Uncensored-GGML:q4_K_S,q5_K_M # this will download LFS file contains: q4_K_S  or  q5_K_M
+```
 `-d, --dataset string`  
 Model/Dataset name (required if model not set)
 
@@ -51,6 +58,7 @@ hfdowloader  -d facebook/flores -c 10 -s MyDatasets
 ## Features
 - Nested File Downloading of the Model
 - Multithreaded downloading of large files (LFS)
+- Filter Downloads, specic LFS models files can be specified for downloading (Usefull for GGMLs), saving time and space
 - Simple utlity that can used as library easily or just a single binary, all functionality in one go file and can be imported in any project
 - SHA256 checksum verification for LFS downloaded models
 - Skipping previsouly downloaded files
