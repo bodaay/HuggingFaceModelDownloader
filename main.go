@@ -30,6 +30,7 @@ func main() {
 			// }
 			var IsDataset bool
 			if (modelName == "" && datasetName == "") || (modelName != "" && datasetName != "") {
+				cmd.Help()
 				return fmt.Errorf("Error: You must set either modelName or datasetName, not both or neither.")
 
 			}
@@ -57,6 +58,7 @@ func main() {
 			return nil
 		},
 	}
+	rootCmd.SilenceUsage = true // I'll manually print help them while validating the parameters above
 	rootCmd.Flags().SortFlags = false
 	// Define flags for command-line parameters
 	rootCmd.Flags().StringVarP(&modelName, "model", "m", "", "Model/Dataset name (required if dataset not set)")

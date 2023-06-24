@@ -1,7 +1,8 @@
 #!/bin/bash
 
 output_dir="output"
-version="1.0.0"
+read -r version < VERSION
+
 
 echo "Building for arm..."
 GOOS=linux GOARCH=arm go build -o "$output_dir/hfdownloader_linux_arm_$version" main.go

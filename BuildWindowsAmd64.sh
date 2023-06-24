@@ -1,7 +1,7 @@
 #!/bin/bash
 
 output_dir="output"
-version="1.0.0"
+read -r version < VERSION
 
 echo "Building for Windows/amd64..."
 GOOS=windows GOARCH=amd64 go build -o "$output_dir/hfdownloader_windows_amd64_$version.exe" main.go

@@ -237,7 +237,7 @@ func processHFFolderTree(StoragePath string, IsDataset bool, ModelDatasetName st
 				}
 				//jsonFilesList[i].SkipDownloading = false
 			}
-			fmt.Printf("\nHash Matched for LFS file: %s\n", jsonFilesList[i].AppendedPath)
+			fmt.Printf("\nHash Matched for LFS file: %s", jsonFilesList[i].AppendedPath)
 
 		} else {
 			// err := downloadFileMultiThread(tempFolder, jsonFilesList[i].DownloadLink, jsonFilesList[i].AppendedPath) //maybe later I'll enable multithreading for all files, even non-lfs
@@ -489,7 +489,7 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string) error {
 }
 func downloadSingleThreaded(url, outputFileName string) error {
 	outputFile, err := os.Create(outputFileName)
-	log.Println(url)
+
 	if err != nil {
 		return err
 	}

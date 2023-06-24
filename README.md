@@ -1,6 +1,6 @@
 # HuggingFace Model Downloader
 
-The HuggingFace Model Downloader is a utility tool for downloading models from the HuggingFace website. It provides multithreaded downloading capabilities for LFS files and ensures the integrity of the downloaded models by checking their SHA256 checksum. 
+The HuggingFace Model Downloader is a utility tool for downloading models/datasets from the HuggingFace website. It provides multithreaded downloading capabilities for LFS files and ensures the integrity of the downloaded models by checking their SHA256 checksum. 
 
 
 ## Reason
@@ -34,8 +34,16 @@ HuggingFace Access Token, required for some Models/Datasets, you still need to m
 `-h, --help`  
 Help for hfdowloader
 
+
+
+Model Example
 ```shell
 hfdowloader  -m TheBloke/WizardLM-13B-V1.0-Uncensored-GPTQ -c 10 -s MyModels
+```
+
+Dataset Example
+```shell
+hfdowloader  -d facebook/flores -c 10 -s MyDatasets
 ```
 
 
@@ -47,6 +55,7 @@ hfdowloader  -m TheBloke/WizardLM-13B-V1.0-Uncensored-GPTQ -c 10 -s MyModels
 - SHA256 checksum verification for LFS downloaded models
 - Skipping previsouly downloaded files
 - Simple File size matching for non-LFS files
+- Support HuggingFace Access Token, for restricted models/datasets
 
 
 
