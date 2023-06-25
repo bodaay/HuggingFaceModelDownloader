@@ -9,7 +9,9 @@ Git LFS was so slow for me, and I cloudn't find a single binary that I can just 
 ##One liner Install and Run examples (linux/mac)
 
 
-## Quick Download and Run Exmaples
+## Quick Download and Run Exmaples (linux/mac) only
+
+the bash script will just download the binary based on your os/arch and run it
 
 Download Model: TheBloke/orca_mini_7B-GPTQ
 ```bash
@@ -25,6 +27,7 @@ Download Model: TheBloke/vicuna-13b-v1.3.0-GGML and save them into /workspace/, 
 ```bash
 bash <(curl -sSL https://g.bodaay.io/hfd) -m TheBloke/vicuna-13b-v1.3.0-GGML:q4_0,q4_K_S -c 20 -s /workspace/
 ```
+
 
 ## Usage:
 
