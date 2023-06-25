@@ -63,36 +63,59 @@ type hflfs struct {
 	PointerSize int    `json:"pointerSize"`
 }
 
-func DownloadModel(ModelDatasetName string, IsDataset bool, DestintionBasePath string, ModelBranch string, concurrentConnctionions int, token string) error {
+func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, IsDataset bool, DestintionBasePath string, ModelBranch string, concurrentConnctionions int, token string) error {
 	NumConnections = concurrentConnctionions
 
 	//make sure we dont include dataset filter within folder creation
 	modelP := ModelDatasetName
+	HasFilter := false
 	if strings.Contains(modelP, ":") {
 		modelP = strings.Split(ModelDatasetName, ":")[0]
+		HasFilter = true
 	}
 	modelPath := path.Join(DestintionBasePath, strings.Replace(modelP, "/", "_", -1))
 	if token != "" {
 		RequiresAuth = true
 		AuthToken = token
 	}
-	//Check StoragePath
-	err := os.MkdirAll(modelPath, os.ModePerm)
-	if err != nil {
-		// fmt.Println("Error:", err)
-		return err
-	}
-	//ok we need to add some logic here now to analyze the model/dataset before we go into downloading
 
-	//get root path files and folders
-	err = processHFFolderTree(DestintionBasePath, IsDataset, ModelDatasetName, ModelBranch, "") // passing empty as foldername, because its the first root folder
-	if err != nil {
-		// fmt.Println("Error:", err)
-		return err
+	if HasFilter && AppendFilterToPath { //for this feature, I'll just simple re-run the script and apply one filter at a time
+		filters := strings.Split(strings.Split(ModelDatasetName, ":")[1], ",")
+		for _, ff := range filters {
+			//create folders
+
+			ffpath := fmt.Sprintf("%s_f_%s", modelPath, ff)
+			err := os.MkdirAll(ffpath, os.ModePerm)
+			if err != nil {
+				// fmt.Println("Error:", err)
+				return err
+			}
+			newModelDatasetName := fmt.Sprintf("%s:%s", modelP, ff)
+			err = processHFFolderTree(ffpath, IsDataset, newModelDatasetName, ModelBranch, "") // passing empty as foldername, because its the first root folder
+			if err != nil {
+				// fmt.Println("Error:", err)
+				return err
+			}
+		}
+	} else {
+		err := os.MkdirAll(modelPath, os.ModePerm)
+		if err != nil {
+			// fmt.Println("Error:", err)
+			return err
+		}
+		//ok we need to add some logic here now to analyze the model/dataset before we go into downloading
+
+		//get root path files and folders
+		err = processHFFolderTree(modelPath, IsDataset, ModelDatasetName, ModelBranch, "") // passing empty as foldername, because its the first root folder
+		if err != nil {
+			// fmt.Println("Error:", err)
+			return err
+		}
 	}
+
 	return nil
 }
-func processHFFolderTree(StoragePath string, IsDataset bool, ModelDatasetName string, Branch string, fodlerName string) error {
+func processHFFolderTree(ModelPath string, IsDataset bool, ModelDatasetName string, Branch string, fodlerName string) error {
 	JsonTreeVaraible := JsonModelsFileTreeURL //we assume its Model first
 	RawFileURL := RawModelFileURL
 	LfsResolverURL := LfsModelResolverURL
@@ -113,10 +136,8 @@ func processHFFolderTree(StoragePath string, IsDataset bool, ModelDatasetName st
 		LfsResolverURL = LfsDatasetResolverURL
 		AgreementURL = fmt.Sprintf(AgreementDatasetURL, ModelDatasetName)
 	}
-	_ = HasFilter
-	_ = FilterBinFileString
-	modelPath := path.Join(StoragePath, strings.Replace(ModelDatasetName, "/", "_", -1))
-	tempFolder := path.Join(modelPath, fodlerName, "tmp")
+
+	tempFolder := path.Join(ModelPath, fodlerName, "tmp")
 	if _, err := os.Stat(tempFolder); err == nil { //clear it if it exists before for any reason
 		err = os.RemoveAll(tempFolder)
 		if err != nil {
@@ -170,16 +191,16 @@ func processHFFolderTree(StoragePath string, IsDataset bool, ModelDatasetName st
 		return err
 	}
 	for i := range jsonFilesList {
-		jsonFilesList[i].AppendedPath = path.Join(modelPath, jsonFilesList[i].Path)
+		jsonFilesList[i].AppendedPath = path.Join(ModelPath, jsonFilesList[i].Path)
 		if jsonFilesList[i].Type == "directory" {
 			jsonFilesList[i].IsDirectory = true
-			err := os.MkdirAll(path.Join(modelPath, jsonFilesList[i].Path), os.ModePerm)
+			err := os.MkdirAll(path.Join(ModelPath, jsonFilesList[i].Path), os.ModePerm)
 			if err != nil {
 				return err
 			}
 			jsonFilesList[i].SkipDownloading = true
 			//now if this a folder, this whole function will be called again recursivley
-			err = processHFFolderTree(StoragePath, IsDataset, ModelDatasetName, Branch, jsonFilesList[i].Path) //recursive call
+			err = processHFFolderTree(ModelPath, IsDataset, ModelDatasetName, Branch, jsonFilesList[i].Path) //recursive call
 			if err != nil {
 				return err
 			}
@@ -196,8 +217,10 @@ func processHFFolderTree(StoragePath string, IsDataset bool, ModelDatasetName st
 			}
 			//Check for filter
 			if HasFilter {
-				filenameLowerCase := strings.ToLower(jsonFilesList[i].AppendedPath)
-				if strings.HasSuffix(filenameLowerCase, ".act") || strings.HasSuffix(filenameLowerCase, ".bin") || strings.HasSuffix(filenameLowerCase, ".safetensors") || strings.HasSuffix(filenameLowerCase, ".zip") {
+				filenameLowerCase := strings.ToLower(jsonFilesList[i].Path)
+				if strings.HasSuffix(filenameLowerCase, ".act") || strings.HasSuffix(filenameLowerCase, ".bin") ||
+					strings.HasSuffix(filenameLowerCase, ".safetensors") || strings.HasSuffix(filenameLowerCase, ".meta") ||
+					strings.HasSuffix(filenameLowerCase, ".zip") {
 					jsonFilesList[i].FilterSkip = true //we assume its skipped, unless below condition range match
 					for _, ff := range FilterBinFileString {
 						if strings.Contains(filenameLowerCase, ff) {

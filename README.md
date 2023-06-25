@@ -23,9 +23,14 @@ Download Model: TheBloke/vicuna-13b-v1.3.0-GGML and get GGML Variant: q4_0
 bash <(curl -sSL https://g.bodaay.io/hfd) -m TheBloke/vicuna-13b-v1.3.0-GGML:q4_0
 ```
 
-Download Model: TheBloke/vicuna-13b-v1.3.0-GGML and save them into /workspace/, 20 connections and get GGML Variant: q4_0,q4_K_S
+Download Model: TheBloke/vicuna-13b-v1.3.0-GGML and get GGML Variants: q4_0,q5_0, and save each one in a separate folder
 ```bash
-bash <(curl -sSL https://g.bodaay.io/hfd) -m TheBloke/vicuna-13b-v1.3.0-GGML:q4_0,q4_K_S -c 20 -s /workspace/
+bash <(curl -sSL https://g.bodaay.io/hfd) -f -m TheBloke/vicuna-13b-v1.3.0-GGML:q4_0,q5_0
+```
+
+Download Model: TheBloke/vicuna-13b-v1.3.0-GGML and save them into /workspace/, 8 connections and get GGML Variant: q4_0,q4_K_S
+```bash
+bash <(curl -sSL https://g.bodaay.io/hfd) -m TheBloke/vicuna-13b-v1.3.0-GGML:q4_0,q4_K_S -c 8 -s /workspace/
 ```
 
 
@@ -49,6 +54,15 @@ filters will discard any LFS file ending with .bin,.act,.safetensors,.zip thats 
 ```
 `-d, --dataset string`  
 Model/Dataset name (required if model not set)
+
+`-f, --appendFilterFolder bool`  
+Append the filter name to the folder, use it for GGML ONLY qunatizatized filterd download only (optional)
+
+```bash
+ # this will download LFS file contains: q4_K_S  or  q5_K_M, in a separate folders by appending the filder name to model folder name
+ # all other non-lfs files and not ending with one of these extension: .bin,.safetensors,.meta,.zip will be availale in each folder
+-f -m TheBloke/WizardLM-33B-V1.0-Uncensored-GGML:q4_K_S,q5_K_M
+```
 
 `-b, --branch string`  
 Model/Dataset branch (optional) (default "main")

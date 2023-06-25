@@ -18,6 +18,7 @@ func main() {
 		destinationPath               string
 		numberOfConcurrentConnections int
 		HuggingFaceAccessToken        string
+		OneFolderPerFilter            bool
 	)
 	rootCmd := &cobra.Command{
 		Use:   "hfdowloader",
@@ -49,9 +50,10 @@ func main() {
 			fmt.Println("Branch:", branch)
 			fmt.Println("DestinationPath:", destinationPath)
 			fmt.Println("NumberOfConcurrentConnections:", numberOfConcurrentConnections)
+			fmt.Println("Append Filter Names to Folder:", OneFolderPerFilter)
 			fmt.Println("Token:", HuggingFaceAccessToken)
 
-			err := hfdn.DownloadModel(ModelOrDataSet, IsDataset, destinationPath, branch, numberOfConcurrentConnections, HuggingFaceAccessToken)
+			err := hfdn.DownloadModel(ModelOrDataSet, OneFolderPerFilter, IsDataset, destinationPath, branch, numberOfConcurrentConnections, HuggingFaceAccessToken)
 			if err != nil {
 				return err
 			}
@@ -68,6 +70,8 @@ func main() {
 	rootCmd.Flags().StringVarP(&branch, "branch", "b", "main", "ModModel/Datasetel branch (optional)")
 
 	rootCmd.Flags().StringVarP(&destinationPath, "storage", "s", "Storage", "Destination path (optional)")
+
+	rootCmd.Flags().BoolVarP(&OneFolderPerFilter, "appendFilterFolder", "f", false, "This will append the filter name to the folder, use it for GGML qunatizatized filterd download only (optional)")
 
 	rootCmd.Flags().IntVarP(&numberOfConcurrentConnections, "concurrent", "c", 5, "Number of LFS concurrent connections (optional)")
 
