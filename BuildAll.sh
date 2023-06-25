@@ -16,3 +16,4 @@ rm output/*
 
 # Build arm/arm64
 ./BuildArmArm64.sh
+

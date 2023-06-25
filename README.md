@@ -6,6 +6,25 @@ The HuggingFace Model Downloader is a utility tool for downloading models/datase
 ## Reason
 
 Git LFS was so slow for me, and I cloudn't find a single binary that I can just run to download any model. In addition, this might be integrated later in my future projects for inference using golang/python combination
+##One liner Install and Run examples (linux/mac)
+
+
+## Quick Download and Run Exmaples
+
+Download Model: TheBloke/orca_mini_7B-GPTQ
+```bash
+bash <(curl -sSL https://g.bodaay.io/hfd) -m TheBloke/orca_mini_7B-GPTQ
+```
+
+Download Model: TheBloke/vicuna-13b-v1.3.0-GGML and get GGML Variant: q4_0
+```bash
+bash <(curl -sSL https://g.bodaay.io/hfd) -m TheBloke/vicuna-13b-v1.3.0-GGML:q4_0
+```
+
+Download Model: TheBloke/vicuna-13b-v1.3.0-GGML and save them into /workspace/, 20 connections and get GGML Variant: q4_0,q4_K_S
+```bash
+bash <(curl -sSL https://g.bodaay.io/hfd) -m TheBloke/vicuna-13b-v1.3.0-GGML:q4_0,q4_K_S -c 20 -s /workspace/
+```
 
 ## Usage:
 
@@ -18,7 +37,7 @@ Model/Dataset name (required if dataset not set)
 
 You can supply filters for required LFS model files, separate filters by adding commas
 
-filters will discard any LFS file ending with .bin,.act,.safetensors,.zip thats missing the supplied filter
+filters will discard any LFS file ending with .bin,.act,.safetensors,.zip thats missing the supplied filtercd out 
 ```bash
 -m TheBloke/WizardLM-Uncensored-Falcon-7B-GGML:fp16 # this will download LFS file contains: fp16
 ```
