@@ -9,7 +9,15 @@ Git LFS was so slow for me, and I cloudn't find a single binary that I can just 
 ##One liner Install and Run examples (linux/mac)
 
 
-## Quick Download and Run Exmaples (linux/mac) only
+## One Line Installer (linux/mac/windows WSL2)
+
+the script will download the correct version based on os/arch and save the binary as "hfdownloader" in the same folder
+```bash
+bash <(curl -sSL https://g.bodaay.io/hfd) -h
+```
+
+
+## Quick Download and Run Exmaples (linux/mac/windows WSL2)
 
 the bash script will just download the binary based on your os/arch and run it
 
