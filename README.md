@@ -6,7 +6,7 @@ The HuggingFace Model Downloader is a utility tool for downloading models/datase
 ## Reason
 
 Git LFS was so slow for me, and I cloudn't find a single binary that I can just run to download any model. In addition, this might be integrated later in my future projects for inference using golang/python combination
-##One liner Install and Run examples (linux/mac)
+
 
 
 ## One Line Installer (linux/mac/windows WSL2)
