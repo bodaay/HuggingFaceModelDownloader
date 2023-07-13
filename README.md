@@ -84,6 +84,14 @@ Number of LFS concurrent connections (optional) (default 5)
 `-t, --token string`  
 HuggingFace Access Token, required for some Models/Datasets, you still need to manually accept agreement on HuggingFace if model requires it,No bypass going to be implented (optional)
 
+`-i, --install bool`  
+Install the binary to the OS default bin folder (if installPath not specified), Unix-like operating systems only
+
+`-p, --installPath string`  
+used with -i to copy the binary to spceified path, default to: /usr/local/bin/ (optional)
+
+
+
 `-h, --help`  
 Help for hfdowloader
 
