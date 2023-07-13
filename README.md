@@ -16,6 +16,15 @@ the script will download the correct version based on os/arch and save the binar
 bash <(curl -sSL https://g.bodaay.io/hfd) -h
 ```
 
+to install it to default OS bin folder
+```bash
+bash <(curl -sSL https://g.bodaay.io/hfd) -i
+```
+
+it will automatically request higher 'sudo' previlages if required, you can specify the install destination by adding -p
+```bash
+bash <(curl -sSL https://g.bodaay.io/hfd) -i -p ~/.local/bin/
+```
 
 ## Quick Download and Run Exmaples (linux/mac/windows WSL2)
 
