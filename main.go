@@ -16,7 +16,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const VERSION = "1.1.9"
+const VERSION = "1.2.0"
 
 func main() {
 	var (
@@ -27,6 +27,7 @@ func main() {
 		numberOfConcurrentConnections int
 		HuggingFaceAccessToken        string
 		OneFolderPerFilter            bool
+		SkipSHA                       bool
 		install                       bool
 		installPath                   string
 	)
@@ -76,9 +77,10 @@ func main() {
 			fmt.Println("DestinationPath:", destinationPath)
 			fmt.Println("NumberOfConcurrentConnections:", numberOfConcurrentConnections)
 			fmt.Println("Append Filter Names to Folder:", OneFolderPerFilter)
+			fmt.Println("Skip SHA256 Check:", SkipSHA)
 			fmt.Println("Token:", HuggingFaceAccessToken)
 
-			err := hfdn.DownloadModel(ModelOrDataSet, OneFolderPerFilter, IsDataset, destinationPath, branch, numberOfConcurrentConnections, HuggingFaceAccessToken)
+			err := hfdn.DownloadModel(ModelOrDataSet, OneFolderPerFilter, SkipSHA, IsDataset, destinationPath, branch, numberOfConcurrentConnections, HuggingFaceAccessToken)
 			if err != nil {
 				return err
 			}
@@ -95,6 +97,8 @@ func main() {
 	rootCmd.Flags().StringVarP(&branch, "branch", "b", "main", "ModModel/Datasetel branch (optional)")
 
 	rootCmd.Flags().StringVarP(&destinationPath, "storage", "s", "Storage", "Destination path (optional)")
+
+	rootCmd.Flags().BoolVarP(&SkipSHA, "skipSHA", "k", false, "Skip SHA256 Hash Check, sometimes you just need to download missing files without wasting time waiting (optional)")
 
 	rootCmd.Flags().BoolVarP(&OneFolderPerFilter, "appendFilterFolder", "f", false, "This will append the filter name to the folder, use it for GGML qunatizatized filterd download only (optional)")
 

@@ -32,7 +32,7 @@ const (
 	JsonDatasetFileTreeURL = "https://huggingface.co/api/datasets/%s/tree/%s/%s"
 )
 
-//I may use this coloring thing later on
+// I may use this coloring thing later on
 var (
 	infoColor      = color.New(color.FgGreen).SprintFunc()
 	warningColor   = color.New(color.FgYellow).SprintFunc()
@@ -63,7 +63,7 @@ type hflfs struct {
 	PointerSize int    `json:"pointerSize"`
 }
 
-func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, IsDataset bool, DestintionBasePath string, ModelBranch string, concurrentConnctionions int, token string) error {
+func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, SkipSHA bool, IsDataset bool, DestintionBasePath string, ModelBranch string, concurrentConnctionions int, token string) error {
 	NumConnections = concurrentConnctionions
 
 	//make sure we dont include dataset filter within folder creation
@@ -91,7 +91,7 @@ func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, IsDataset b
 				return err
 			}
 			newModelDatasetName := fmt.Sprintf("%s:%s", modelP, ff)
-			err = processHFFolderTree(ffpath, IsDataset, newModelDatasetName, ModelBranch, "") // passing empty as foldername, because its the first root folder
+			err = processHFFolderTree(ffpath, IsDataset, SkipSHA, newModelDatasetName, ModelBranch, "") // passing empty as foldername, because its the first root folder
 			if err != nil {
 				// fmt.Println("Error:", err)
 				return err
@@ -106,7 +106,7 @@ func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, IsDataset b
 		//ok we need to add some logic here now to analyze the model/dataset before we go into downloading
 
 		//get root path files and folders
-		err = processHFFolderTree(modelPath, IsDataset, ModelDatasetName, ModelBranch, "") // passing empty as foldername, because its the first root folder
+		err = processHFFolderTree(modelPath, IsDataset, SkipSHA, ModelDatasetName, ModelBranch, "") // passing empty as foldername, because its the first root folder
 		if err != nil {
 			// fmt.Println("Error:", err)
 			return err
@@ -115,7 +115,7 @@ func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, IsDataset b
 
 	return nil
 }
-func processHFFolderTree(ModelPath string, IsDataset bool, ModelDatasetName string, Branch string, fodlerName string) error {
+func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDatasetName string, Branch string, fodlerName string) error {
 	JsonTreeVaraible := JsonModelsFileTreeURL //we assume its Model first
 	RawFileURL := RawModelFileURL
 	LfsResolverURL := LfsModelResolverURL
@@ -200,7 +200,7 @@ func processHFFolderTree(ModelPath string, IsDataset bool, ModelDatasetName stri
 			}
 			jsonFilesList[i].SkipDownloading = true
 			//now if this a folder, this whole function will be called again recursivley
-			err = processHFFolderTree(ModelPath, IsDataset, ModelDatasetName, Branch, jsonFilesList[i].Path) //recursive call
+			err = processHFFolderTree(ModelPath, IsDataset, SkipSHA, ModelDatasetName, Branch, jsonFilesList[i].Path) //recursive call
 			if err != nil {
 				return err
 			}
@@ -256,15 +256,20 @@ func processHFFolderTree(ModelPath string, IsDataset bool, ModelDatasetName stri
 			if size == int64(jsonFilesList[i].Size) {
 				jsonFilesList[i].SkipDownloading = true
 				if jsonFilesList[i].IsLFS {
-					err := verifyChecksum(jsonFilesList[i].AppendedPath, jsonFilesList[i].Lfs.Oid_SHA265)
-					if err != nil {
-						err := os.Remove(jsonFilesList[i].AppendedPath)
+					if !SkipSHA {
+						err := verifyChecksum(jsonFilesList[i].AppendedPath, jsonFilesList[i].Lfs.Oid_SHA265)
 						if err != nil {
-							return err
+							err := os.Remove(jsonFilesList[i].AppendedPath)
+							if err != nil {
+								return err
+							}
+							jsonFilesList[i].SkipDownloading = false
 						}
-						jsonFilesList[i].SkipDownloading = false
+						fmt.Printf("\nHash Matched for LFS file: %s", jsonFilesList[i].AppendedPath)
+					} else {
+						fmt.Printf("\nHash Matching SKIPPED for LFS file: %s", jsonFilesList[i].AppendedPath)
 					}
-					fmt.Printf("\nHash Matched for LFS file: %s", jsonFilesList[i].AppendedPath)
+
 				} else {
 					fmt.Printf("\nfile size matched for non LFS file: %s", jsonFilesList[i].AppendedPath)
 				}
@@ -294,15 +299,20 @@ func processHFFolderTree(ModelPath string, IsDataset bool, ModelDatasetName stri
 			}
 			//lfs file, verify by checksum
 			fmt.Printf("\nChecking SHA256 Hash for LFS file: %s", jsonFilesList[i].AppendedPath)
-			err = verifyChecksum(jsonFilesList[i].AppendedPath, jsonFilesList[i].Lfs.Oid_SHA265)
-			if err != nil {
-				err := os.Remove(jsonFilesList[i].AppendedPath)
+			if !SkipSHA {
+				err = verifyChecksum(jsonFilesList[i].AppendedPath, jsonFilesList[i].Lfs.Oid_SHA265)
 				if err != nil {
-					return err
+					err := os.Remove(jsonFilesList[i].AppendedPath)
+					if err != nil {
+						return err
+					}
+					//jsonFilesList[i].SkipDownloading = false
 				}
-				//jsonFilesList[i].SkipDownloading = false
+				fmt.Printf("\nHash Matched for LFS file: %s", jsonFilesList[i].AppendedPath)
+
+			} else {
+				fmt.Printf("\nHash Matching SKIPPED for LFS file: %s", jsonFilesList[i].AppendedPath)
 			}
-			fmt.Printf("\nHash Matched for LFS file: %s", jsonFilesList[i].AppendedPath)
 
 		} else {
 			// err := downloadFileMultiThread(tempFolder, jsonFilesList[i].DownloadLink, jsonFilesList[i].AppendedPath) //maybe later I'll enable multithreading for all files, even non-lfs
