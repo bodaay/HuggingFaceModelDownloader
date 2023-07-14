@@ -81,6 +81,10 @@ Append the filter name to the folder, use it for GGML ONLY qunatizatized filterd
 -f -m TheBloke/WizardLM-33B-V1.0-Uncensored-GGML:q4_K_S,q5_K_M
 ```
 
+`-k, --skipSHA bool`  
+SKip SHA256 checking for LFS files, usefull when trying to resum interrupted download and complet missing files quickly (optional)
+
+
 `-b, --branch string`  
 Model/Dataset branch (optional) (default "main")
 
