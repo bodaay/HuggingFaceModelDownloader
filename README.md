@@ -129,6 +129,7 @@ hfdowloader  -d facebook/flores -c 10 -s MyDatasets
 - Simple utlity that can used as library easily or just a single binary, all functionality in one go file and can be imported in any project
 - SHA256 checksum verification for LFS downloaded models
 - Skipping previsouly downloaded files
+- Resume progress for Interrupted downloads for LFS files
 - Simple File size matching for non-LFS files
 - Support HuggingFace Access Token, for restricted models/datasets
 

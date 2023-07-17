@@ -16,7 +16,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const VERSION = "1.2.1"
+const VERSION = "1.2.5"
 
 func main() {
 	var (
@@ -84,6 +84,7 @@ func main() {
 			if err != nil {
 				return err
 			}
+			fmt.Printf("\nDownload of %s completed successfully\n", ModelOrDataSet)
 			return nil
 		},
 	}

@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"path"
@@ -138,18 +139,20 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 	}
 
 	tempFolder := path.Join(ModelPath, fodlerName, "tmp")
-	if _, err := os.Stat(tempFolder); err == nil { //clear it if it exists before for any reason
-		err = os.RemoveAll(tempFolder)
-		if err != nil {
-			return err
-		}
-	}
+	// updated ver: 1.2.5; I cannot clear it if I'm trying to implement resume broken downloads based on a single file
+	// if _, err := os.Stat(tempFolder); err == nil { //clear it if it exists before for any reason
+	// 	err = os.RemoveAll(tempFolder)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// }
 	err := os.MkdirAll(tempFolder, os.ModePerm)
 	if err != nil {
 		// fmt.Println("Error:", err)
 		return err
 	}
-	defer os.RemoveAll(tempFolder) //delete tmp folder upon returning from this function
+	// updated ver: 1.2.5; I cannot clear it if I'm trying to implement resume broken downloads based on a single file
+	// defer os.RemoveAll(tempFolder) //delete tmp folder upon returning from this function
 	branch := Branch
 	JsonFileListURL := fmt.Sprintf(JsonTreeVaraible, ModelDatasetName, branch, fodlerName)
 	fmt.Printf("\nGetting File Download Files List Tree from: %s", JsonFileListURL)
@@ -265,6 +268,8 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 								return err
 							}
 							jsonFilesList[i].SkipDownloading = false
+							fmt.Printf("\nHash failed for LFS file: %s, will redownload/resume", jsonFilesList[i].AppendedPath)
+							return err
 						}
 						fmt.Printf("\nHash Matched for LFS file: %s", jsonFilesList[i].AppendedPath)
 					} else {
@@ -308,6 +313,8 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 						return err
 					}
 					//jsonFilesList[i].SkipDownloading = false
+					fmt.Printf("\nHash failed for LFS file: %s", jsonFilesList[i].AppendedPath)
+					return err
 				}
 				fmt.Printf("\nHash Matched for LFS file: %s", jsonFilesList[i].AppendedPath)
 
@@ -334,7 +341,7 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 			}
 		}
 	}
-
+	os.RemoveAll(tempFolder) //by here its safe to delete the temp folder
 	return nil
 }
 
@@ -405,16 +412,38 @@ func verifyChecksum(fileName string, expectedChecksum string) error {
 func downloadChunk(tempFolder string, outputFileName string, idx int, url string, start, end int64, wg *sync.WaitGroup, progress chan<- int64) error {
 	defer wg.Done()
 
+	tmpFileName := path.Join(tempFolder, fmt.Sprintf("%s_%d.tmp", outputFileName, idx))
+	var compensationBytes int64 = 12
+
+	// Checking file if exists
+	if fi, err := os.Stat(tmpFileName); err == nil { // file exists
+		// If file is already completely downloaded
+		if fi.Size() == (end - start) {
+			// Reflect progress and return
+			progress <- fi.Size()
+			return nil
+		}
+
+		// Fetching size to adjust start byte and compensate for potential corruption
+		start = int64(math.Max(float64(start+fi.Size()-compensationBytes), 0.0))
+
+		// Reflecting skipped part in progress, minus compensationBytes so we download them again. Making sure it does not go negative
+		progress <- int64(math.Max(float64(fi.Size()-compensationBytes), 0.0))
+	}
+
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return err
 	}
+
 	if RequiresAuth {
 		// Set the authorization header with the Bearer token
 		bearerToken := AuthToken
 		req.Header.Add("Authorization", "Bearer "+bearerToken)
 	}
+
+	// Updating the Range header
 	rangeHeader := fmt.Sprintf("bytes=%d-%d", start, end-1)
 	req.Header.Add("Range", rangeHeader)
 
@@ -423,15 +452,27 @@ func downloadChunk(tempFolder string, outputFileName string, idx int, url string
 		return err
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode == 401 && RequiresAuth == false {
 		return fmt.Errorf("This Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
 	}
-	tmpFileName := fmt.Sprintf("%s_%d_*.tmp", outputFileName, idx)
-	tempFile, err := ioutil.TempFile(tempFolder, tmpFileName)
+
+	// Open the file to append/add the new content
+	tempFile, err := os.OpenFile(tmpFileName, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return err
 	}
 	defer tempFile.Close()
+
+	// Seek to the beginning of the compensation part
+	_, err = tempFile.Seek(-compensationBytes, 2) // SEEK_END is 2
+	// If seek fails, it probably means the file size is less than compensationBytes
+	if err != nil {
+		_, err = tempFile.Seek(0, 0) // Seek to start of the file
+		if err != nil {
+			return err
+		}
+	}
 
 	buffer := make([]byte, 1024)
 	for {
@@ -448,6 +489,7 @@ func downloadChunk(tempFolder string, outputFileName string, idx int, url string
 		if err != nil {
 			return err
 		}
+
 		progress <- int64(bytesRead)
 	}
 
@@ -462,7 +504,7 @@ func mergeFiles(tempFodler, outputFileName string, numChunks int) error {
 	defer outputFile.Close()
 
 	for i := 0; i < numChunks; i++ {
-		tmpFileName := fmt.Sprintf("%s_%d_*.tmp", path.Base(outputFileName), i)
+		tmpFileName := fmt.Sprintf("%s_%d.tmp", path.Base(outputFileName), i)
 		tempFileName := path.Join(tempFodler, tmpFileName)
 		tempFiles, err := ioutil.ReadDir(tempFodler)
 		if err != nil {
@@ -520,8 +562,28 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string) error {
 	chunkSize := int64(contentLength / NumConnections)
 
 	progress := make(chan int64, NumConnections)
+
+	//update 1.2.5; we need to check now, if the tmp folder does exists, if the number of files exists before, matched the number of connection, we can proceed with the logic of resuming
+	// Calculate the temp file name pattern.
+	baseFileName := path.Base(outputFileName)
+	tmpFileNamePattern := filepath.Join(tempFolder, fmt.Sprintf("%s_*.tmp", baseFileName))
+
+	// Use Glob to find all files that match this pattern.
+	matches, err := filepath.Glob(tmpFileNamePattern)
+	if err != nil {
+		fmt.Println(err)
+		return err
+	}
+
+	// Print the number of matched files.
+	// count := len(matches)
+	if len(matches) > 0 {
+		fmt.Printf("\nFound existing incomplete download for the file: %s\nForcing Number of connections to: %d\n\n", baseFileName, len(matches))
+		NumConnections = len(matches)
+	}
 	wg := &sync.WaitGroup{}
-	wg.Add(NumConnections)
+
+	errChan := make(chan error)
 
 	for i := 0; i < NumConnections; i++ {
 		start := int64(i) * chunkSize
@@ -530,10 +592,11 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string) error {
 		if i == NumConnections-1 {
 			end = int64(contentLength)
 		}
+		wg.Add(1)
 		go func(i int, start, end int64) {
 			err := downloadChunk(tempFolder, path.Base(outputFileName), i, url, start, end, wg, progress)
 			if err != nil {
-				fmt.Printf("\nError downloading chunk %d: %v\n", i, err)
+				errChan <- fmt.Errorf("Error downloading chunk %d: %w", i, err)
 			}
 		}(i, start, end)
 	}
@@ -543,6 +606,7 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string) error {
 		var totalDownloaded int64
 
 		// Calculate speed in megabytes per second
+		fmt.Printf("\n\n")
 		for chunkSize := range progress {
 			totalDownloaded += chunkSize
 			elapsed := time.Since(startTime).Seconds()
@@ -551,8 +615,19 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string) error {
 		}
 	}()
 
-	wg.Wait()
-	close(progress)
+	go func() {
+		wg.Wait() // Wait for all downloadChunk to finish
+		close(errChan)
+	}()
+
+	// Check if there was an error in any of the running routines
+	for err := range errChan {
+		if err != nil {
+			fmt.Println(err) // Or however you want to handle the error
+			// Here you can choose to return, exit, or however you want to stop going forward
+			return err
+		}
+	}
 
 	// fmt.Print("\nDownload completed")
 	fmt.Printf("\nMerging %s Chunks", outputFileName)
