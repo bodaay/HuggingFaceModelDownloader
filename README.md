@@ -89,7 +89,7 @@ SKip SHA256 checking for LFS files, usefull when trying to resum interrupted dow
 Model/Dataset branch (optional) (default "main")
 
 `-s, --storage string`  
-Destination path (optional) (default "Storage")
+Storage path (optional) (default "Storage")
 
 `-c, --concurrent int`  
 Number of LFS concurrent connections (optional) (default 5)

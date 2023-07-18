@@ -3,7 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
-	hfdn "hfdownloader/hfdownloadernested"
+	hfd "hfdownloader/hfdownloader"
 	"io"
 	"os/exec"
 	"path"
@@ -23,7 +23,7 @@ func main() {
 		modelName                     string
 		datasetName                   string
 		branch                        string
-		destinationPath               string
+		storage                       string
 		numberOfConcurrentConnections int
 		HuggingFaceAccessToken        string
 		OneFolderPerFilter            bool
@@ -74,13 +74,13 @@ func main() {
 				ModelOrDataSet = datasetName
 			}
 			fmt.Println("Branch:", branch)
-			fmt.Println("DestinationPath:", destinationPath)
+			fmt.Println("Storage:", storage)
 			fmt.Println("NumberOfConcurrentConnections:", numberOfConcurrentConnections)
 			fmt.Println("Append Filter Names to Folder:", OneFolderPerFilter)
 			fmt.Println("Skip SHA256 Check:", SkipSHA)
 			fmt.Println("Token:", HuggingFaceAccessToken)
 
-			err := hfdn.DownloadModel(ModelOrDataSet, OneFolderPerFilter, SkipSHA, IsDataset, destinationPath, branch, numberOfConcurrentConnections, HuggingFaceAccessToken)
+			err := hfd.DownloadModel(ModelOrDataSet, OneFolderPerFilter, SkipSHA, IsDataset, storage, branch, numberOfConcurrentConnections, HuggingFaceAccessToken)
 			if err != nil {
 				return err
 			}
@@ -97,7 +97,7 @@ func main() {
 
 	rootCmd.Flags().StringVarP(&branch, "branch", "b", "main", "ModModel/Datasetel branch (optional)")
 
-	rootCmd.Flags().StringVarP(&destinationPath, "storage", "s", "Storage", "Destination path (optional)")
+	rootCmd.Flags().StringVarP(&storage, "storage", "s", "Storage", "Storage path (optional)")
 
 	rootCmd.Flags().BoolVarP(&SkipSHA, "skipSHA", "k", false, "Skip SHA256 Hash Check, sometimes you just need to download missing files without wasting time waiting (optional)")
 

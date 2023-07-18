@@ -1,4 +1,4 @@
-package hfdownloadernested
+package hfdownloader
 
 import (
 	"crypto/sha256"
