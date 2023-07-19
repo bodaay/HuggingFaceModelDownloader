@@ -95,7 +95,7 @@ Storage path (optional) (default "Storage")
 Number of LFS concurrent connections (optional) (default 5)
 
 `-t, --token string`  
-HuggingFace Access Token, this can be automatically supplied by env variable 'HF_API_KEY' or .env file (recommended), required for some Models/Datasets, you still need to manually accept agreement if model requires it (optional)
+HuggingFace Access Token, this can be automatically supplied by env variable 'HUGGING_FACE_HUB_TOKEN' or .env file (recommended), required for some Models/Datasets, you still need to manually accept agreement if model requires it (optional)
 
 `-i, --install bool`  
 Install the binary to the OS default bin folder (if installPath not specified), Unix-like operating systems only
