@@ -223,7 +223,7 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 				filenameLowerCase := strings.ToLower(jsonFilesList[i].Path)
 				if strings.HasSuffix(filenameLowerCase, ".act") || strings.HasSuffix(filenameLowerCase, ".bin") ||
 					strings.HasSuffix(filenameLowerCase, ".safetensors") || strings.HasSuffix(filenameLowerCase, ".pt") || strings.HasSuffix(filenameLowerCase, ".meta") ||
-					strings.HasSuffix(filenameLowerCase, ".zip") || strings.HasSuffix(filenameLowerCase, ".onnx") || strings.HasSuffix(filenameLowerCase, ".data") ||
+					strings.HasSuffix(filenameLowerCase, ".zip") || strings.HasSuffix(filenameLowerCase, ".z01") || strings.HasSuffix(filenameLowerCase, ".onnx") || strings.HasSuffix(filenameLowerCase, ".data") ||
 					strings.HasSuffix(filenameLowerCase, ".onnx_data") {
 					jsonFilesList[i].FilterSkip = true //we assume its skipped, unless below condition range match
 					for _, ff := range FilterBinFileString {
