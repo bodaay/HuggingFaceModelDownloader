@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"math"
 	"net/http"
 	"os"
@@ -410,9 +409,7 @@ func verifyChecksum(fileName string, expectedChecksum string) error {
 	return nil
 }
 
-func downloadChunk(tempFolder string, outputFileName string, idx int, url string, start, end int64, wg *sync.WaitGroup, progress chan<- int64) error {
-	defer wg.Done()
-
+func downloadChunk(tempFolder string, outputFileName string, idx int, url string, start, end int64, progress chan<- int64) error {
 	tmpFileName := path.Join(tempFolder, fmt.Sprintf("%s_%d.tmp", outputFileName, idx))
 	var compensationBytes int64 = 12
 
@@ -595,10 +592,12 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string) error {
 		}
 		wg.Add(1)
 		go func(i int, start, end int64) {
-			err := downloadChunk(tempFolder, path.Base(outputFileName), i, url, start, end, wg, progress)
+			err := downloadChunk(tempFolder, path.Base(outputFileName), i, url, start, end, progress)
 			if err != nil {
 				errChan <- fmt.Errorf("Error downloading chunk %d: %w", i, err)
 			}
+
+			wg.Done() // prevent panic send on closed channel
 		}(i, start, end)
 	}
 	// Mark the start time of the download
@@ -652,7 +651,7 @@ func downloadSingleThreaded(url, outputFileName string) error {
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		log.Fatal(err)
+		return err // gracefully handle request err
 	}
 	if RequiresAuth {
 		// Set the authorization header with the Bearer token
