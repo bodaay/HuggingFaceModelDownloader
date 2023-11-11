@@ -429,7 +429,9 @@ func downloadChunk(tempFolder string, outputFileName string, idx int, url string
 		progress <- int64(math.Max(float64(fi.Size()-compensationBytes), 0.0))
 	}
 
-	client := &http.Client{}
+	client := &http.Client{
+		Transport: &http.Transport{},
+	}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return err
