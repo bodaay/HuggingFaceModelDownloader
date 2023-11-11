@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"log"
 	"os"
@@ -31,6 +32,8 @@ func main() {
 		SkipSHA                       bool
 		install                       bool
 		installPath                   string
+		maxRetries                    int
+		retryInterval                 int
 	)
 	ShortString := fmt.Sprintf("a Simple HuggingFace Models Downloader Utility\nVersion: %s", VERSION)
 	currentPath, err := os.Executable()
@@ -88,10 +91,22 @@ func main() {
 			fmt.Println("Skip SHA256 Check:", SkipSHA)
 			fmt.Println("Token:", HuggingFaceAccessToken)
 
-			err := hfd.DownloadModel(ModelOrDataSet, OneFolderPerFilter, SkipSHA, IsDataset, storage, branch, numberOfConcurrentConnections, HuggingFaceAccessToken)
-			if err != nil {
-				return err
+			var downloadErr error
+			for i := 0; i < maxRetries; i++ {
+				downloadErr = hfd.DownloadModel(ModelOrDataSet, OneFolderPerFilter, SkipSHA, IsDataset, storage, branch, numberOfConcurrentConnections, HuggingFaceAccessToken)
+				if downloadErr != nil {
+					fmt.Printf("warning: attempt %d / %d failed, error: %s\n", i+1, maxRetries, downloadErr.Error())
+					time.Sleep(time.Duration(retryInterval) * time.Second)
+					continue
+				} else {
+					break
+				}
 			}
+
+			if downloadErr != nil {
+				return fmt.Errorf("failed to download %s after %d attempts, error: %s", ModelOrDataSet, maxRetries, downloadErr.Error())
+			}
+
 			fmt.Printf("\nDownload of %s completed successfully\n", ModelOrDataSet)
 			return nil
 		},
@@ -118,6 +133,10 @@ func main() {
 	rootCmd.Flags().BoolVarP(&install, "install", "i", false, "Install the binary to the OS default bin folder, Unix-like operating systems only")
 
 	rootCmd.Flags().StringVarP(&installPath, "installPath", "p", "/usr/local/bin/", "install Path (optional)")
+
+	rootCmd.Flags().IntVar(&maxRetries, "maxRetries", 3, "Max number of retries (optional)")
+
+	rootCmd.Flags().IntVar(&retryInterval, "retryInterval", 5, "Retry interval in seconds (optional)")
 
 	if err := rootCmd.Execute(); err != nil {
 		log.Fatalln("Error:", err)
