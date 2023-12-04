@@ -53,7 +53,7 @@ bash <(curl -sSL https://g.bodaay.io/hfd) -m TheBloke/vicuna-13b-v1.3.0-GGML:q4_
 
 ## Usage:
 
-  hfdowloader [flags]
+  hfdownloader [flags]
 
 ## Flags:
 
@@ -106,18 +106,18 @@ used with -i to copy the binary to spceified path, default to: /usr/local/bin/ (
 
 
 `-h, --help`  
-Help for hfdowloader
+Help for hfdownloader
 
 
 
 Model Example
 ```shell
-hfdowloader  -m TheBloke/WizardLM-13B-V1.0-Uncensored-GPTQ -c 10 -s MyModels
+hfdownloader  -m TheBloke/WizardLM-13B-V1.0-Uncensored-GPTQ -c 10 -s MyModels
 ```
 
 Dataset Example
 ```shell
-hfdowloader  -d facebook/flores -c 10 -s MyDatasets
+hfdownloader  -d facebook/flores -c 10 -s MyDatasets
 ```
 
 
