@@ -44,7 +44,7 @@ func main() {
 		ShortString = fmt.Sprintf("%s\nRunning on: %s", ShortString, currentPath)
 	}
 	rootCmd := &cobra.Command{
-		Use:   "hfdowloader",
+		Use:   "hfdownloader",
 		Short: ShortString,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Validate the ModelName parameter
