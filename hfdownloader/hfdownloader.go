@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math"
 	"net/http"
 	"os"
@@ -17,8 +16,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/fatih/color"
 )
 
 const (
@@ -34,9 +31,9 @@ const (
 
 // I may use this coloring thing later on
 var (
-	infoColor      = color.New(color.FgGreen).SprintFunc()
-	warningColor   = color.New(color.FgYellow).SprintFunc()
-	errorColor     = color.New(color.FgRed).SprintFunc()
+	// infoColor      = color.New(color.FgGreen).SprintFunc()
+	// warningColor   = color.New(color.FgYellow).SprintFunc()
+	// errorColor     = color.New(color.FgRed).SprintFunc()
 	NumConnections = 5
 	RequiresAuth   = false
 	AuthToken      = ""
@@ -63,8 +60,8 @@ type hflfs struct {
 	PointerSize int    `json:"pointerSize"`
 }
 
-func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, SkipSHA bool, IsDataset bool, DestintionBasePath string, ModelBranch string, concurrentConnctionions int, token string) error {
-	NumConnections = concurrentConnctionions
+func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, SkipSHA bool, IsDataset bool, DestinationBasePath string, ModelBranch string, concurrentConnections int, token string) error {
+	NumConnections = concurrentConnections
 
 	//make sure we dont include dataset filter within folder creation
 	modelP := ModelDatasetName
@@ -73,7 +70,7 @@ func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, SkipSHA boo
 		modelP = strings.Split(ModelDatasetName, ":")[0]
 		HasFilter = true
 	}
-	modelPath := path.Join(DestintionBasePath, strings.Replace(modelP, "/", "_", -1))
+	modelPath := path.Join(DestinationBasePath, strings.Replace(modelP, "/", "_", -1))
 	if token != "" {
 		RequiresAuth = true
 		AuthToken = token
@@ -173,14 +170,14 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == 401 && RequiresAuth == false {
+	if resp.StatusCode == 401 && !RequiresAuth {
 		return fmt.Errorf("\nThis Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
 	}
 	if resp.StatusCode == 403 {
 		return fmt.Errorf("\nYou need to manually Accept the agreement for this model/dataset: %s on HuggingFace site, No bypass will be implemeted", AgreementURL)
 	}
 	// Read the response body into a byte slice
-	content, err := ioutil.ReadAll(resp.Body)
+	content, err := io.ReadAll(resp.Body)
 	if err != nil {
 		// fmt.Println("Error:", err)
 		return err
@@ -378,15 +375,15 @@ func getRedirectLink(url string) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == 401 && RequiresAuth == false {
-		return "", fmt.Errorf("This Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
+	if resp.StatusCode == 401 && !RequiresAuth {
+		return "", fmt.Errorf("this Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
 	}
 	if resp.StatusCode >= 300 && resp.StatusCode <= 399 {
 		redirectURL := resp.Header.Get("Location")
 		return redirectURL, nil
 	}
 
-	return "", fmt.Errorf("No redirect found")
+	return "", fmt.Errorf("no redirect found")
 }
 
 func verifyChecksum(fileName string, expectedChecksum string) error {
@@ -453,8 +450,8 @@ func downloadChunk(tempFolder string, outputFileName string, idx int, url string
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == 401 && RequiresAuth == false {
-		return fmt.Errorf("This Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
+	if resp.StatusCode == 401 && !RequiresAuth {
+		return fmt.Errorf("this Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
 	}
 
 	// Open the file to append/add the new content
@@ -506,7 +503,7 @@ func mergeFiles(tempFodler, outputFileName string, numChunks int) error {
 	for i := 0; i < numChunks; i++ {
 		tmpFileName := fmt.Sprintf("%s_%d.tmp", path.Base(outputFileName), i)
 		tempFileName := path.Join(tempFodler, tmpFileName)
-		tempFiles, err := ioutil.ReadDir(tempFodler)
+		tempFiles, err := os.ReadDir(tempFodler)
 		if err != nil {
 			return err
 		}
@@ -550,8 +547,8 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string) error {
 	if err != nil {
 		return err
 	}
-	if resp.StatusCode == 401 && RequiresAuth == false {
-		return fmt.Errorf("This Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
+	if resp.StatusCode == 401 && !RequiresAuth {
+		return fmt.Errorf("\nThis Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
 
 	}
 	contentLength, err := strconv.Atoi(resp.Header.Get("Content-Length"))
@@ -596,7 +593,7 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string) error {
 		go func(i int, start, end int64) {
 			err := downloadChunk(tempFolder, path.Base(outputFileName), i, url, start, end, progress)
 			if err != nil {
-				errChan <- fmt.Errorf("Error downloading chunk %d: %w", i, err)
+				errChan <- fmt.Errorf("error downloading chunk %d: %w", i, err)
 			}
 
 			wg.Done() // prevent panic send on closed channel
@@ -666,8 +663,8 @@ func downloadSingleThreaded(url, outputFileName string) error {
 	}
 
 	defer resp.Body.Close()
-	if resp.StatusCode == 401 && RequiresAuth == false {
-		return fmt.Errorf("This Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
+	if resp.StatusCode == 401 && !RequiresAuth {
+		return fmt.Errorf("\nThis Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
 
 	}
 	_, err = io.Copy(outputFile, resp.Body)
