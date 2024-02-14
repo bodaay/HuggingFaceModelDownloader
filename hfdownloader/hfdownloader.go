@@ -173,14 +173,14 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == 401 && RequiresAuth == false {
+	if resp.StatusCode == 401 && !RequiresAuth {
 		return fmt.Errorf("\nThis Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
 	}
 	if resp.StatusCode == 403 {
 		return fmt.Errorf("\nYou need to manually Accept the agreement for this model/dataset: %s on HuggingFace site, No bypass will be implemeted", AgreementURL)
 	}
 	// Read the response body into a byte slice
-	content, err := ioutil.ReadAll(resp.Body)
+	content, err := io.ReadAll(resp.Body)
 	if err != nil {
 		// fmt.Println("Error:", err)
 		return err
@@ -378,7 +378,7 @@ func getRedirectLink(url string) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == 401 && RequiresAuth == false {
+	if resp.StatusCode == 401 && !RequiresAuth {
 		return "", fmt.Errorf("This Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
 	}
 	if resp.StatusCode >= 300 && resp.StatusCode <= 399 {
@@ -453,7 +453,7 @@ func downloadChunk(tempFolder string, outputFileName string, idx int, url string
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == 401 && RequiresAuth == false {
+	if resp.StatusCode == 401 && !RequiresAuth {
 		return fmt.Errorf("This Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
 	}
 
@@ -550,7 +550,7 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string) error {
 	if err != nil {
 		return err
 	}
-	if resp.StatusCode == 401 && RequiresAuth == false {
+	if resp.StatusCode == 401 && !RequiresAuth {
 		return fmt.Errorf("This Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
 
 	}
@@ -666,7 +666,7 @@ func downloadSingleThreaded(url, outputFileName string) error {
 	}
 
 	defer resp.Body.Close()
-	if resp.StatusCode == 401 && RequiresAuth == false {
+	if resp.StatusCode == 401 && !RequiresAuth {
 		return fmt.Errorf("This Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
 
 	}

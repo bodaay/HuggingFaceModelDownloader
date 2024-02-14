@@ -1,149 +1,185 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	hfd "hfdownloader/hfdownloader"
 	"io"
-	"os/exec"
+	"log"
+	"os"
 	"path"
 	"path/filepath"
 	"runtime"
 	"time"
 
-	"log"
-	"os"
-
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 )
+const VERSION = "1.3.0"
 
-const VERSION = "1.2.9"
+type Config struct {
+	NumConnections               int    `json:"num_connections"`
+	RequiresAuth                 bool   `json:"requires_auth"`
+	AuthToken                    string `json:"auth_token"`
+	ModelName                    string `json:"model_name"`
+	DatasetName                  string `json:"dataset_name"`
+	Branch                       string `json:"branch"`
+	Storage                      string `json:"storage"`
+	OneFolderPerFilter           bool   `json:"one_folder_per_filter"`
+	SkipSHA                      bool   `json:"skip_sha"`
+	Install                      bool   `json:"install"`
+	InstallPath                  string `json:"install_path"`
+	MaxRetries                   int    `json:"max_retries"`
+	RetryInterval                int    `json:"retry_interval"`
+}
+
+// DefaultConfig returns a config instance populated with default values.
+func DefaultConfig() Config {
+	return Config{
+		NumConnections: 5,
+		Branch:         "main",
+		Storage:        "./downloads",
+		MaxRetries:     3,
+		RetryInterval:  5,
+	}
+}
+
+func LoadConfig() (*Config, error) {
+	config := DefaultConfig() // Use defaults as a base
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	configPath := filepath.Join(homeDir, ".config", "hfdownloader.json")
+
+	file, err := os.ReadFile(configPath)
+	if os.IsNotExist(err) {
+		return &config, nil // Return defaults if file does not exist
+	} else if err == nil {
+		if err := json.Unmarshal(file, &config); err != nil {
+			return nil, err
+		}
+	}
+	return &config, nil
+}
+
+func generateConfigFile() error {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	configPath := filepath.Join(homeDir, ".config", "hfdownloader.json")
+
+	config := DefaultConfig()
+
+	file, err := os.OpenFile(configPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(config); err != nil {
+		return err
+	}
+
+	fmt.Printf("Generated config file at: %s\n", configPath)
+	return nil
+}
 
 func main() {
-	var (
-		modelName                     string
-		datasetName                   string
-		branch                        string
-		storage                       string
-		numberOfConcurrentConnections int
-		HuggingFaceAccessToken        string
-		OneFolderPerFilter            bool
-		SkipSHA                       bool
-		install                       bool
-		installPath                   string
-		maxRetries                    int
-		retryInterval                 int
-	)
-	ShortString := fmt.Sprintf("a Simple HuggingFace Models Downloader Utility\nVersion: %s", VERSION)
-	currentPath, err := os.Executable()
-	if err != nil {
-		log.Printf("Failed to get execuable path, %s", err)
-	}
-	if currentPath != "" {
-		ShortString = fmt.Sprintf("%s\nRunning on: %s", ShortString, currentPath)
-	}
-	rootCmd := &cobra.Command{
-		Use:   "hfdownloader",
-		Short: ShortString,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			// Validate the ModelName parameter
-			// if !hfdn.IsValidModelName(modelName) { Just realized there are indeed models that don't follow this format :)
-			// 	// fmt.Println("Error:", err)
-			// 	return fmt.Errorf("Invailid Model Name, it should follow the pattern: ModelAuthor/ModelName")
-			// }
-			if install {
-				err := installBinary(installPath)
-				if err != nil {
+    config, err := LoadConfig()
+    if err != nil {
+        log.Fatalf("Failed to load configuration: %v", err)
+    }
+
+    rootCmd := &cobra.Command{
+        Use:   "hfdownloader",
+        Short: fmt.Sprintf("A Simple HuggingFace Models Downloader Utility\nVersion: %s", VERSION),
+				SilenceErrors: true,
+				SilenceUsage: true,
+        RunE: func(cmd *cobra.Command, args []string) error {
+						// Validate the ModelName parameter
+						// if !hfdn.IsValidModelName(modelName) { Just realized there are indeed models that don't follow this format :)
+						// 	// fmt.Println("Error:", err)
+						// 	return fmt.Errorf("Invailid Model Name, it should follow the pattern: ModelAuthor/ModelName")
+						// }
+            // Dynamic configuration updates (e.g., for AuthToken)
+            if config.AuthToken == "" {
+                config.AuthToken = os.Getenv("HUGGING_FACE_HUB_TOKEN")
+            }
+			if config.Install {
+				if err := installBinary(config.InstallPath); err != nil {
 					log.Fatal(err)
 				}
 				os.Exit(0)
 			}
 			var IsDataset bool
-			if (modelName == "" && datasetName == "") || (modelName != "" && datasetName != "") {
-				cmd.Help()
-				return fmt.Errorf("Error: You must set either modelName or datasetName, not both or neither.")
-
-			}
-			ModelOrDataSet := modelName
-			// Print the parameter values
-			if modelName != "" {
-				fmt.Println("Model:", modelName)
-				IsDataset = false //no need to speicfy it here, just cleaner
-				ModelOrDataSet = modelName
-			}
-			if datasetName != "" {
-				fmt.Println("Dataset:", datasetName)
+			ModelOrDataSet := config.ModelName
+			if config.ModelName != "" {
+				fmt.Println("Model:", config.ModelName)
+				IsDataset = false
+			} else if config.DatasetName != "" {
+				fmt.Println("Dataset:", config.DatasetName)
 				IsDataset = true
-				ModelOrDataSet = datasetName
+				ModelOrDataSet = config.DatasetName
+			} else {
+				cmd.Help()
+				return fmt.Errorf("Error: You must set either modelName or datasetName.")
 			}
 
-			_ = godotenv.Load() //this will give an error of the file is not there, but we dont really care
+			_ = godotenv.Load() // Load .env file if exists
 
-			// Fetch token from command line flag or from .env file if not provided in flag
-			if HuggingFaceAccessToken == "" {
-				HuggingFaceAccessToken = os.Getenv("HUGGING_FACE_HUB_TOKEN")
+			if config.AuthToken == "" {
+				config.AuthToken = os.Getenv("HUGGING_FACE_HUB_TOKEN")
 			}
-			fmt.Println("Branch:", branch)
-			fmt.Println("Storage:", storage)
-			fmt.Println("NumberOfConcurrentConnections:", numberOfConcurrentConnections)
-			fmt.Println("Append Filter Names to Folder:", OneFolderPerFilter)
-			fmt.Println("Skip SHA256 Check:", SkipSHA)
-			fmt.Println("Token:", HuggingFaceAccessToken)
 
-			var downloadErr error
-			for i := 0; i < maxRetries; i++ {
-				downloadErr = hfd.DownloadModel(ModelOrDataSet, OneFolderPerFilter, SkipSHA, IsDataset, storage, branch, numberOfConcurrentConnections, HuggingFaceAccessToken)
-				if downloadErr != nil {
-					fmt.Printf("warning: attempt %d / %d failed, error: %s\n", i+1, maxRetries, downloadErr.Error())
-					time.Sleep(time.Duration(retryInterval) * time.Second)
+			fmt.Printf("Branch: %s\nStorage: %s\nNumberOfConcurrentConnections: %d\nAppend Filter Names to Folder: %t\nSkip SHA256 Check: %t\nToken: %s\n",
+				config.Branch, config.Storage, config.NumConnections, config.OneFolderPerFilter, config.SkipSHA, config.AuthToken)
+
+			for i := 0; i < config.MaxRetries; i++ {
+				if err := hfd.DownloadModel(ModelOrDataSet, config.OneFolderPerFilter, config.SkipSHA, IsDataset, config.Storage, config.Branch, config.NumConnections, config.AuthToken); err != nil {
+					fmt.Printf("Warning: attempt %d / %d failed, error: %s\n", i+1, config.MaxRetries, err)
+					time.Sleep(time.Duration(config.RetryInterval) * time.Second)
 					continue
-				} else {
-					break
 				}
+				fmt.Printf("\nDownload of %s completed successfully\n", ModelOrDataSet)
+				return nil
 			}
-
-			if downloadErr != nil {
-				return fmt.Errorf("failed to download %s after %d attempts, error: %s", ModelOrDataSet, maxRetries, downloadErr.Error())
-			}
-
-			fmt.Printf("\nDownload of %s completed successfully\n", ModelOrDataSet)
-			return nil
+			return fmt.Errorf("failed to download %s after %d attempts", ModelOrDataSet, config.MaxRetries)
 		},
 	}
-	rootCmd.SilenceUsage = true // I'll manually print help them while validating the parameters above
-	rootCmd.Flags().SortFlags = false
-	// Define flags for command-line parameters
-	rootCmd.Flags().StringVarP(&modelName, "model", "m", "", "Model/Dataset name (required if dataset not set)\nYou can supply filters for required LFS model files\nex:  ModelName:q4_0,q8_1\nex:  TheBloke/WizardLM-Uncensored-Falcon-7B-GGML:fp16")
 
-	rootCmd.Flags().StringVarP(&datasetName, "dataset", "d", "", "Model/Dataset name (required if model not set)")
+    // Setup flags and bind them to config properties
+    rootCmd.PersistentFlags().StringVarP(&config.ModelName, "model", "m", config.ModelName, "Model name to download")
+    rootCmd.PersistentFlags().StringVarP(&config.DatasetName, "dataset", "d", config.DatasetName, "Dataset name to download")
+    rootCmd.PersistentFlags().StringVarP(&config.Branch, "branch", "b", config.Branch, "Branch of the model or dataset")
+    rootCmd.PersistentFlags().StringVarP(&config.Storage, "storage", "s", config.Storage, "Storage path for downloads")
+    rootCmd.PersistentFlags().IntVarP(&config.NumConnections, "concurrent", "c", config.NumConnections, "Number of concurrent connections")
+    rootCmd.PersistentFlags().StringVarP(&config.AuthToken, "token", "t", config.AuthToken, "HuggingFace Auth Token")
+    rootCmd.PersistentFlags().BoolVarP(&config.OneFolderPerFilter, "appendFilterFolder", "f", config.OneFolderPerFilter, "Append filter name to folder")
+    rootCmd.PersistentFlags().BoolVarP(&config.SkipSHA, "skipSHA", "k", config.SkipSHA, "Skip SHA256 hash check")
+    rootCmd.PersistentFlags().IntVar(&config.MaxRetries, "maxRetries", config.MaxRetries, "Maximum number of retries for downloads")
+    rootCmd.PersistentFlags().IntVar(&config.RetryInterval, "retryInterval", config.RetryInterval, "Interval between retries in seconds")
 
-	rootCmd.Flags().StringVarP(&branch, "branch", "b", "main", "ModModel/Datasetel branch (optional)")
+    // Add the generate-config command
+    generateCmd := &cobra.Command{
+        Use:   "generate-config",
+        Short: "Generates an example configuration file with default values",
+        RunE: func(cmd *cobra.Command, args []string) error {
+            return generateConfigFile()
+        },
+    }
 
-	rootCmd.Flags().StringVarP(&storage, "storage", "s", "Storage", "Storage path (optional)")
+    rootCmd.AddCommand(generateCmd)
 
-	rootCmd.Flags().BoolVarP(&SkipSHA, "skipSHA", "k", false, "Skip SHA256 Hash Check, sometimes you just need to download missing files without wasting time waiting (optional)")
-
-	rootCmd.Flags().BoolVarP(&OneFolderPerFilter, "appendFilterFolder", "f", false, "This will append the filter name to the folder, use it for GGML qunatizatized filterd download only (optional)")
-
-	rootCmd.Flags().IntVarP(&numberOfConcurrentConnections, "concurrent", "c", 5, "Number of LFS concurrent connections (optional)")
-
-	rootCmd.Flags().StringVarP(&HuggingFaceAccessToken, "token", "t", "", "HuggingFace Access Token, this can be automatically supplied by env variable 'HUGGING_FACE_HUB_TOKEN' or .env file, required for some Models/Datasets, you still need to manually accept agreement if model requires it (optional)")
-
-	rootCmd.Flags().BoolVarP(&install, "install", "i", false, "Install the binary to the OS default bin folder, Unix-like operating systems only")
-
-	rootCmd.Flags().StringVarP(&installPath, "installPath", "p", "/usr/local/bin/", "install Path (optional)")
-
-	rootCmd.Flags().IntVar(&maxRetries, "maxRetries", 3, "Max number of retries (optional)")
-
-	rootCmd.Flags().IntVar(&retryInterval, "retryInterval", 5, "Retry interval in seconds (optional)")
-
-	if err := rootCmd.Execute(); err != nil {
-		log.Fatalln("Error:", err)
-	}
-
-	os.Exit(0)
+    if err := rootCmd.Execute(); err != nil {
+        log.Fatalln("Error:", err)
+    }
 }
+
 func installBinary(installPath string) error {
 	if runtime.GOOS == "windows" {
 		return errors.New("the install command is not supported on Windows")
@@ -153,7 +189,6 @@ func installBinary(installPath string) error {
 	if err != nil {
 		return err
 	}
-
 	dst := path.Join(installPath, filepath.Base(exePath))
 
 	// Check if the binary already exists and remove it
@@ -168,36 +203,17 @@ func installBinary(installPath string) error {
 	}
 	defer srcFile.Close()
 
-	// Try to copy the file
-	err = copyFile(dst, srcFile)
-	if err != nil {
-		if os.IsPermission(err) {
-			// If permission error, try to elevate privilege
-			fmt.Printf("Require sudo privilages to install to: %s\n", installPath)
-			cmd := exec.Command("sudo", "cp", exePath, dst)
-			if err := cmd.Run(); err != nil {
-				return err
-			}
-		} else {
-			return err
-		}
-	}
-	log.Printf("The binary has been copied to %s", dst)
-	return nil
+	return copyFile(dst, srcFile)
 }
 
-// copyFile is a helper function to copy a file with specific permission
+// Try to copy the file
 func copyFile(dst string, src *os.File) error {
-	// Open destination file and ensure it gets closed
 	dstFile, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
 	if err != nil {
 		return err
 	}
 	defer dstFile.Close()
 
-	// Copy the file content
-	if _, err := io.Copy(dstFile, src); err != nil {
-		return err
-	}
-	return nil
+	_, err = io.Copy(dstFile, src)
+	return err
 }
