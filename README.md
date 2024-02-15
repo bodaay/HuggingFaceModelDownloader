@@ -101,3 +101,4 @@ hfdownloader -d facebook/flores -c 10 -s MyDatasets
 - Support for HuggingFace Access Token for restricted models/datasets
 - Configuration File Support: You can now create a configuration file at `~/.config/hfdownloader.json` to set default values for all command flags.
 - Generate Configuration File: A new command `hfdownloader generate-config` generates an example configuration file with default values at the above path.
+- Existing downloads will be updated if the model/dataset already exists in the storage path and new files or versions are available.
