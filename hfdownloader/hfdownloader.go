@@ -43,12 +43,14 @@ var (
 )
 
 type hfmodel struct {
-	Type        string `json:"type"`
-	Oid         string `json:"oid"`
-	Size        int    `json:"size"`
-	Path        string `json:"path"`
-	IsDirectory bool
-	IsLFS       bool
+	Type					string `json:"type"`
+	Oid						string `json:"oid"`
+	Size					int    `json:"size"`
+	Path					string `json:"path"`
+	LocalSize			int64
+	NeedsDownload bool
+	IsDirectory		bool
+	IsLFS					bool
 
 	AppendedPath    string
 	SkipDownloading bool
@@ -63,8 +65,8 @@ type hflfs struct {
 	PointerSize int    `json:"pointerSize"`
 }
 
-func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, SkipSHA bool, IsDataset bool, DestintionBasePath string, ModelBranch string, concurrentConnctionions int, token string) error {
-	NumConnections = concurrentConnctionions
+func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, SkipSHA bool, IsDataset bool, DestinationBasePath string, ModelBranch string, concurrentConnections int, token string) error {
+	NumConnections = concurrentConnections
 
 	//make sure we dont include dataset filter within folder creation
 	modelP := ModelDatasetName
@@ -73,7 +75,7 @@ func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, SkipSHA boo
 		modelP = strings.Split(ModelDatasetName, ":")[0]
 		HasFilter = true
 	}
-	modelPath := path.Join(DestintionBasePath, strings.Replace(modelP, "/", "_", -1))
+	modelPath := path.Join(DestinationBasePath, strings.Replace(modelP, "/", "_", -1))
 	if token != "" {
 		RequiresAuth = true
 		AuthToken = token
@@ -115,8 +117,8 @@ func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, SkipSHA boo
 
 	return nil
 }
-func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDatasetName string, Branch string, fodlerName string) error {
-	JsonTreeVaraible := JsonModelsFileTreeURL //we assume its Model first
+func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDatasetName string, Branch string, folderName string) error {
+	JsonTreeVariable := JsonModelsFileTreeURL //we assume its Model first
 	RawFileURL := RawModelFileURL
 	LfsResolverURL := LfsModelResolverURL
 	AgreementURL := fmt.Sprintf(AgreementModelURL, ModelDatasetName)
@@ -124,20 +126,20 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 	var FilterBinFileString []string
 	if strings.Contains(ModelDatasetName, ":") && !IsDataset {
 		HasFilter = true
-		//remove the filterd content from Model Name
+		//remove the filtered content from Model Name
 		f := strings.Split(ModelDatasetName, ":")
 		ModelDatasetName = f[0]
 		FilterBinFileString = strings.Split(strings.ToLower(f[1]), ",")
 		fmt.Printf("\nFilter Has been applied, will include LFS Model Files that contains: %s", FilterBinFileString)
 	}
 	if IsDataset {
-		JsonTreeVaraible = JsonDatasetFileTreeURL //set this to true if it its set to Dataset
+		JsonTreeVariable = JsonDatasetFileTreeURL //set this to true if it its set to Dataset
 		RawFileURL = RawDatasetFileURL
 		LfsResolverURL = LfsDatasetResolverURL
 		AgreementURL = fmt.Sprintf(AgreementDatasetURL, ModelDatasetName)
 	}
 
-	tempFolder := path.Join(ModelPath, fodlerName, "tmp")
+	tempFolder := path.Join(ModelPath, folderName, "tmp")
 	// updated ver: 1.2.5; I cannot clear it if I'm trying to implement resume broken downloads based on a single file
 	// if _, err := os.Stat(tempFolder); err == nil { //clear it if it exists before for any reason
 	// 	err = os.RemoveAll(tempFolder)
@@ -153,7 +155,39 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 	// updated ver: 1.2.5; I cannot clear it if I'm trying to implement resume broken downloads based on a single file
 	// defer os.RemoveAll(tempFolder) //delete tmp folder upon returning from this function
 	branch := Branch
-	JsonFileListURL := fmt.Sprintf(JsonTreeVaraible, ModelDatasetName, branch, fodlerName)
+	JsonFileListURL := fmt.Sprintf(JsonTreeVariable, ModelDatasetName, branch, folderName)
+	jsonFilesList := []hfmodel{}
+	for _, file := range jsonFilesList {
+			filePath := path.Join(ModelPath, file.Path)
+			if file.IsDirectory {
+					// Directory handling remains unchanged
+					if err := os.MkdirAll(filePath, os.ModePerm); err != nil {
+							return err
+					}
+					if err := processHFFolderTree(ModelPath, IsDataset, SkipSHA, ModelDatasetName, Branch, file.Path); err != nil {
+							return err
+					}
+			} else {
+					// Use NeedsDownload flag to determine if the file should be downloaded
+					if file.NeedsDownload {
+							if file.IsLFS || needsDownload(filePath, file.Size) {
+									tempFolder := filepath.Join(ModelPath, "tmp")
+									downloadErr := downloadFileMultiThread(tempFolder, file.DownloadLink, filePath)
+									if downloadErr != nil {
+											fmt.Println("Error downloading file with multi-threading:", downloadErr)
+											return downloadErr
+									}
+							} else {
+									// For smaller files or if not using multi-threading, a single-threaded download can be used
+									downloadErr := downloadSingleThreaded(file.DownloadLink, filePath)
+									if downloadErr != nil {
+											fmt.Println("Error downloading file with single-threading:", downloadErr)
+											return downloadErr
+									}
+							}
+					}
+			}
+	}
 	fmt.Printf("\nGetting File Download Files List Tree from: %s", JsonFileListURL)
 
 	client := &http.Client{}
@@ -187,7 +221,6 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 
 	}
 
-	jsonFilesList := []hfmodel{}
 	err = json.Unmarshal(content, &jsonFilesList)
 	if err != nil {
 		return err
@@ -345,6 +378,39 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 	return nil
 }
 
+func fetchFileList(JsonFileListURL string) ([]hfmodel, error) {
+	var filesList []hfmodel
+
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", JsonFileListURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if RequiresAuth {
+		req.Header.Add("Authorization", "Bearer "+AuthToken)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if err := json.NewDecoder(resp.Body).Decode(&filesList); err != nil {
+		return nil, err
+	}
+
+	return filesList, nil
+}
+
+func needsDownload(filePath string, remoteSize int) bool {
+	info, err := os.Stat(filePath)
+	if os.IsNotExist(err) {
+		return true
+	}
+	return info.Size() != int64(remoteSize)
+}
+
 // ***********************************************   All the functions below generated by ChatGPT 3.5, and ChatGPT 4 , with some modifications ***********************************************
 func IsValidModelName(modelName string) bool {
 	pattern := `^[A-Za-z0-9_\-]+/[A-Za-z0-9\._\-]+$`
@@ -389,8 +455,8 @@ func getRedirectLink(url string) (string, error) {
 	return "", fmt.Errorf("No redirect found")
 }
 
-func verifyChecksum(fileName string, expectedChecksum string) error {
-	file, err := os.Open(fileName)
+func verifyChecksum(filePath, expectedChecksum string) error {
+	file, err := os.Open(filePath)
 	if err != nil {
 		return err
 	}
@@ -401,9 +467,9 @@ func verifyChecksum(fileName string, expectedChecksum string) error {
 		return err
 	}
 
-	sum := hasher.Sum(nil)
-	if hex.EncodeToString(sum) != expectedChecksum {
-		return fmt.Errorf("checksums do not match")
+	actualChecksum := hex.EncodeToString(hasher.Sum(nil))
+	if actualChecksum != expectedChecksum {
+		return fmt.Errorf("checksum mismatch: expected %s, got %s", expectedChecksum, actualChecksum)
 	}
 
 	return nil

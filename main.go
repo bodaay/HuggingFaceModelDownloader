@@ -16,7 +16,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 )
-const VERSION = "1.3.0"
+const VERSION = "1.3.1"
 
 type Config struct {
 	NumConnections               int    `json:"num_connections"`
