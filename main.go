@@ -3,13 +3,14 @@ package main
 import (
 	"errors"
 	"fmt"
-	hfd "hfdownloader/hfdownloader"
 	"io"
 	"os/exec"
 	"path"
 	"path/filepath"
 	"runtime"
 	"time"
+
+	hfd "github.com/bodaay/HuggingFaceModelDownloader/hfdownloader"
 
 	"log"
 	"os"
