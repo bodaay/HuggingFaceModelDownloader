@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math"
 	"net/http"
 	"os"
@@ -17,8 +16,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/fatih/color"
 )
 
 const (
@@ -34,9 +31,9 @@ const (
 
 // I may use this coloring thing later on
 var (
-	infoColor      = color.New(color.FgGreen).SprintFunc()
-	warningColor   = color.New(color.FgYellow).SprintFunc()
-	errorColor     = color.New(color.FgRed).SprintFunc()
+	// infoColor      = color.New(color.FgGreen).SprintFunc()
+	// warningColor   = color.New(color.FgYellow).SprintFunc()
+	// errorColor     = color.New(color.FgRed).SprintFunc()
 	NumConnections = 5
 	RequiresAuth   = false
 	AuthToken      = ""
@@ -452,7 +449,7 @@ func getRedirectLink(url string) (string, error) {
 		return redirectURL, nil
 	}
 
-	return "", fmt.Errorf("No redirect found")
+	return "", fmt.Errorf("no redirect found")
 }
 
 func verifyChecksum(filePath, expectedChecksum string) error {
@@ -572,7 +569,7 @@ func mergeFiles(tempFodler, outputFileName string, numChunks int) error {
 	for i := 0; i < numChunks; i++ {
 		tmpFileName := fmt.Sprintf("%s_%d.tmp", path.Base(outputFileName), i)
 		tempFileName := path.Join(tempFodler, tmpFileName)
-		tempFiles, err := ioutil.ReadDir(tempFodler)
+		tempFiles, err := os.ReadDir(tempFodler)
 		if err != nil {
 			return err
 		}
@@ -662,7 +659,7 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string) error {
 		go func(i int, start, end int64) {
 			err := downloadChunk(tempFolder, path.Base(outputFileName), i, url, start, end, progress)
 			if err != nil {
-				errChan <- fmt.Errorf("Error downloading chunk %d: %w", i, err)
+				errChan <- fmt.Errorf("error downloading chunk %d: %w", i, err)
 			}
 
 			wg.Done() // prevent panic send on closed channel

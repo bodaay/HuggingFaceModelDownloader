@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	hfd "hfdownloader/hfdownloader"
 	"io"
 	"log"
 	"os"
@@ -12,7 +11,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"time"
-
+  
+  hfd "github.com/bodaay/HuggingFaceModelDownloader/hfdownloader"
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 )
