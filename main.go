@@ -11,12 +11,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"time"
-  
-  hfd "github.com/bodaay/HuggingFaceModelDownloader/hfdownloader"
+
+	hfd "github.com/bodaay/HuggingFaceModelDownloader/hfdownloader"
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 )
-const VERSION = "1.3.1"
+const VERSION = "1.3.2"
 
 type Config struct {
 	NumConnections               int    `json:"num_connections"`
@@ -32,6 +32,7 @@ type Config struct {
 	InstallPath                  string `json:"install_path"`
 	MaxRetries                   int    `json:"max_retries"`
 	RetryInterval                int    `json:"retry_interval"`
+	JustDownload								 bool   `json:"just_download"`
 }
 
 // DefaultConfig returns a config instance populated with default values.
@@ -61,6 +62,13 @@ func LoadConfig() (*Config, error) {
 			return nil, err
 		}
 	}
+
+		// Check if an environment variable to always enable the 'just download' feature is enabled
+    envVar := os.Getenv("HFDOWNLOADER_JUST_DOWNLOAD")
+    if envVar == "1" || envVar == "true" {
+        config.Storage = "./" // Set storage to current directory
+    }
+
 	return &config, nil
 }
 
@@ -95,12 +103,24 @@ func main() {
         log.Fatalf("Failed to load configuration: %v", err)
     }
 
+		var justDownload bool
+
     rootCmd := &cobra.Command{
-        Use:   "hfdownloader",
+        Use:   "hfdownloader [model]",
         Short: fmt.Sprintf("A Simple HuggingFace Models Downloader Utility\nVersion: %s", VERSION),
-				SilenceErrors: true,
-				SilenceUsage: true,
-        RunE: func(cmd *cobra.Command, args []string) error {
+        SilenceErrors: true,
+        SilenceUsage: true,
+        Args: func(cmd *cobra.Command, args []string) error {
+					if justDownload && len(args) < 1 {
+							return errors.New("requires a model name argument when using -j")
+					}
+					return nil
+        },
+				RunE: func(cmd *cobra.Command, args []string) error {
+					if justDownload {
+						config.ModelName = args[0] // Use the first argument as the model name
+						config.Storage = "./"
+				}
 						// Validate the ModelName parameter
 						// if !hfdn.IsValidModelName(modelName) { Just realized there are indeed models that don't follow this format :)
 						// 	// fmt.Println("Error:", err)
@@ -163,6 +183,7 @@ func main() {
     rootCmd.PersistentFlags().BoolVarP(&config.SkipSHA, "skipSHA", "k", config.SkipSHA, "Skip SHA256 hash check")
     rootCmd.PersistentFlags().IntVar(&config.MaxRetries, "maxRetries", config.MaxRetries, "Maximum number of retries for downloads")
     rootCmd.PersistentFlags().IntVar(&config.RetryInterval, "retryInterval", config.RetryInterval, "Interval between retries in seconds")
+    rootCmd.PersistentFlags().BoolVarP(&justDownload, "justDownload", "j", config.JustDownload, "Just download the model to the current directory and assume the first argument is the model name")
 
     // Add the generate-config command
     generateCmd := &cobra.Command{
