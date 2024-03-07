@@ -16,23 +16,25 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 )
-const VERSION = "1.3.2"
+
+const VERSION = "1.3.3"
 
 type Config struct {
-	NumConnections               int    `json:"num_connections"`
-	RequiresAuth                 bool   `json:"requires_auth"`
-	AuthToken                    string `json:"auth_token"`
-	ModelName                    string `json:"model_name"`
-	DatasetName                  string `json:"dataset_name"`
-	Branch                       string `json:"branch"`
-	Storage                      string `json:"storage"`
-	OneFolderPerFilter           bool   `json:"one_folder_per_filter"`
-	SkipSHA                      bool   `json:"skip_sha"`
-	Install                      bool   `json:"install"`
-	InstallPath                  string `json:"install_path"`
-	MaxRetries                   int    `json:"max_retries"`
-	RetryInterval                int    `json:"retry_interval"`
-	JustDownload								 bool   `json:"just_download"`
+	NumConnections     int    `json:"num_connections"`
+	RequiresAuth       bool   `json:"requires_auth"`
+	AuthToken          string `json:"auth_token"`
+	ModelName          string `json:"model_name"`
+	DatasetName        string `json:"dataset_name"`
+	Branch             string `json:"branch"`
+	Storage            string `json:"storage"`
+	OneFolderPerFilter bool   `json:"one_folder_per_filter"`
+	SkipSHA            bool   `json:"skip_sha"`
+	Install            bool   `json:"install"`
+	InstallPath        string `json:"install_path"`
+	MaxRetries         int    `json:"max_retries"`
+	RetryInterval      int    `json:"retry_interval"`
+	JustDownload       bool   `json:"just_download"`
+	SilentMode         bool   `json:"silent_mode"`
 }
 
 // DefaultConfig returns a config instance populated with default values.
@@ -63,11 +65,11 @@ func LoadConfig() (*Config, error) {
 		}
 	}
 
-		// Check if an environment variable to always enable the 'just download' feature is enabled
-    envVar := os.Getenv("HFDOWNLOADER_JUST_DOWNLOAD")
-    if envVar == "1" || envVar == "true" {
-        config.Storage = "./" // Set storage to current directory
-    }
+	// Check if an environment variable to always enable the 'just download' feature is enabled
+	envVar := os.Getenv("HFDOWNLOADER_JUST_DOWNLOAD")
+	if envVar == "1" || envVar == "true" {
+		config.Storage = "./" // Set storage to current directory
+	}
 
 	return &config, nil
 }
@@ -98,38 +100,38 @@ func generateConfigFile() error {
 }
 
 func main() {
-    config, err := LoadConfig()
-    if err != nil {
-        log.Fatalf("Failed to load configuration: %v", err)
-    }
+	config, err := LoadConfig()
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
 
-		var justDownload bool
+	var justDownload bool
 
-    rootCmd := &cobra.Command{
-        Use:   "hfdownloader [model]",
-        Short: fmt.Sprintf("A Simple HuggingFace Models Downloader Utility\nVersion: %s", VERSION),
-        SilenceErrors: true,
-        SilenceUsage: true,
-        Args: func(cmd *cobra.Command, args []string) error {
-					if justDownload && len(args) < 1 {
-							return errors.New("requires a model name argument when using -j")
-					}
-					return nil
-        },
-				RunE: func(cmd *cobra.Command, args []string) error {
-					if justDownload {
-						config.ModelName = args[0] // Use the first argument as the model name
-						config.Storage = "./"
-				}
-						// Validate the ModelName parameter
-						// if !hfdn.IsValidModelName(modelName) { Just realized there are indeed models that don't follow this format :)
-						// 	// fmt.Println("Error:", err)
-						// 	return fmt.Errorf("Invailid Model Name, it should follow the pattern: ModelAuthor/ModelName")
-						// }
-            // Dynamic configuration updates (e.g., for AuthToken)
-            if config.AuthToken == "" {
-                config.AuthToken = os.Getenv("HUGGING_FACE_HUB_TOKEN")
-            }
+	rootCmd := &cobra.Command{
+		Use:           "hfdownloader [model]",
+		Short:         fmt.Sprintf("A Simple HuggingFace Models Downloader Utility\nVersion: %s", VERSION),
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if justDownload && len(args) < 1 {
+				return errors.New("requires a model name argument when using -j")
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if justDownload {
+				config.ModelName = args[0] // Use the first argument as the model name
+				config.Storage = "./"
+			}
+			// Validate the ModelName parameter
+			// if !hfdn.IsValidModelName(modelName) { Just realized there are indeed models that don't follow this format :)
+			// 	// fmt.Println("Error:", err)
+			// 	return fmt.Errorf("Invailid Model Name, it should follow the pattern: ModelAuthor/ModelName")
+			// }
+			// Dynamic configuration updates (e.g., for AuthToken)
+			if config.AuthToken == "" {
+				config.AuthToken = os.Getenv("HUGGING_FACE_HUB_TOKEN")
+			}
 			if config.Install {
 				if err := installBinary(config.InstallPath); err != nil {
 					log.Fatal(err)
@@ -160,7 +162,7 @@ func main() {
 				config.Branch, config.Storage, config.NumConnections, config.OneFolderPerFilter, config.SkipSHA, config.AuthToken)
 
 			for i := 0; i < config.MaxRetries; i++ {
-				if err := hfd.DownloadModel(ModelOrDataSet, config.OneFolderPerFilter, config.SkipSHA, IsDataset, config.Storage, config.Branch, config.NumConnections, config.AuthToken); err != nil {
+				if err := hfd.DownloadModel(ModelOrDataSet, config.OneFolderPerFilter, config.SkipSHA, IsDataset, config.Storage, config.Branch, config.NumConnections, config.AuthToken, config.SilentMode); err != nil {
 					fmt.Printf("Warning: attempt %d / %d failed, error: %s\n", i+1, config.MaxRetries, err)
 					time.Sleep(time.Duration(config.RetryInterval) * time.Second)
 					continue
@@ -172,33 +174,34 @@ func main() {
 		},
 	}
 
-    // Setup flags and bind them to config properties
-    rootCmd.PersistentFlags().StringVarP(&config.ModelName, "model", "m", config.ModelName, "Model name to download")
-    rootCmd.PersistentFlags().StringVarP(&config.DatasetName, "dataset", "d", config.DatasetName, "Dataset name to download")
-    rootCmd.PersistentFlags().StringVarP(&config.Branch, "branch", "b", config.Branch, "Branch of the model or dataset")
-    rootCmd.PersistentFlags().StringVarP(&config.Storage, "storage", "s", config.Storage, "Storage path for downloads")
-    rootCmd.PersistentFlags().IntVarP(&config.NumConnections, "concurrent", "c", config.NumConnections, "Number of concurrent connections")
-    rootCmd.PersistentFlags().StringVarP(&config.AuthToken, "token", "t", config.AuthToken, "HuggingFace Auth Token")
-    rootCmd.PersistentFlags().BoolVarP(&config.OneFolderPerFilter, "appendFilterFolder", "f", config.OneFolderPerFilter, "Append filter name to folder")
-    rootCmd.PersistentFlags().BoolVarP(&config.SkipSHA, "skipSHA", "k", config.SkipSHA, "Skip SHA256 hash check")
-    rootCmd.PersistentFlags().IntVar(&config.MaxRetries, "maxRetries", config.MaxRetries, "Maximum number of retries for downloads")
-    rootCmd.PersistentFlags().IntVar(&config.RetryInterval, "retryInterval", config.RetryInterval, "Interval between retries in seconds")
-    rootCmd.PersistentFlags().BoolVarP(&justDownload, "justDownload", "j", config.JustDownload, "Just download the model to the current directory and assume the first argument is the model name")
+	// Setup flags and bind them to config properties
+	rootCmd.PersistentFlags().StringVarP(&config.ModelName, "model", "m", config.ModelName, "Model name to download")
+	rootCmd.PersistentFlags().StringVarP(&config.DatasetName, "dataset", "d", config.DatasetName, "Dataset name to download")
+	rootCmd.PersistentFlags().StringVarP(&config.Branch, "branch", "b", config.Branch, "Branch of the model or dataset")
+	rootCmd.PersistentFlags().StringVarP(&config.Storage, "storage", "s", config.Storage, "Storage path for downloads")
+	rootCmd.PersistentFlags().IntVarP(&config.NumConnections, "concurrent", "c", config.NumConnections, "Number of concurrent connections")
+	rootCmd.PersistentFlags().StringVarP(&config.AuthToken, "token", "t", config.AuthToken, "HuggingFace Auth Token")
+	rootCmd.PersistentFlags().BoolVarP(&config.OneFolderPerFilter, "appendFilterFolder", "f", config.OneFolderPerFilter, "Append filter name to folder")
+	rootCmd.PersistentFlags().BoolVarP(&config.SkipSHA, "skipSHA", "k", config.SkipSHA, "Skip SHA256 hash check")
+	rootCmd.PersistentFlags().IntVar(&config.MaxRetries, "maxRetries", config.MaxRetries, "Maximum number of retries for downloads")
+	rootCmd.PersistentFlags().IntVar(&config.RetryInterval, "retryInterval", config.RetryInterval, "Interval between retries in seconds")
+	rootCmd.PersistentFlags().BoolVarP(&justDownload, "justDownload", "j", config.JustDownload, "Just download the model to the current directory and assume the first argument is the model name")
+	rootCmd.PersistentFlags().BoolVarP(&config.SilentMode, "silentMode", "q", config.SilentMode, "Disable progress bar output printing")
 
-    // Add the generate-config command
-    generateCmd := &cobra.Command{
-        Use:   "generate-config",
-        Short: "Generates an example configuration file with default values",
-        RunE: func(cmd *cobra.Command, args []string) error {
-            return generateConfigFile()
-        },
-    }
+	// Add the generate-config command
+	generateCmd := &cobra.Command{
+		Use:   "generate-config",
+		Short: "Generates an example configuration file with default values",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return generateConfigFile()
+		},
+	}
 
-    rootCmd.AddCommand(generateCmd)
+	rootCmd.AddCommand(generateCmd)
 
-    if err := rootCmd.Execute(); err != nil {
-        log.Fatalln("Error:", err)
-    }
+	if err := rootCmd.Execute(); err != nil {
+		log.Fatalln("Error:", err)
+	}
 }
 
 func installBinary(installPath string) error {
