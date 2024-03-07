@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/fatih/color"
 )
 
 const (
@@ -29,23 +31,26 @@ const (
 	JsonDatasetFileTreeURL = "https://huggingface.co/api/datasets/%s/tree/%s/%s"
 )
 
-// I may use this coloring thing later on
 var (
-	// infoColor      = color.New(color.FgGreen).SprintFunc()
-	// warningColor   = color.New(color.FgYellow).SprintFunc()
-	// errorColor     = color.New(color.FgRed).SprintFunc()
+	infoColor    = color.New(color.FgGreen).SprintFunc()
+	successColor = color.New(color.FgHiGreen).SprintFunc()
+	warningColor = color.New(color.FgYellow).SprintFunc()
+	errorColor   = color.New(color.FgRed).SprintFunc()
 	NumConnections = 5
 	RequiresAuth   = false
 	AuthToken      = ""
 )
 
+
 type hfmodel struct {
-	Type        string `json:"type"`
-	Oid         string `json:"oid"`
-	Size        int    `json:"size"`
-	Path        string `json:"path"`
-	IsDirectory bool
-	IsLFS       bool
+	Type					string `json:"type"`
+	Oid						string `json:"oid"`
+	Size					int    `json:"size"`
+	Path					string `json:"path"`
+	LocalSize			int64
+	NeedsDownload bool
+	IsDirectory		bool
+	IsLFS					bool
 
 	AppendedPath    string
 	SkipDownloading bool
@@ -84,20 +89,20 @@ func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, SkipSHA boo
 			ffpath := fmt.Sprintf("%s_f_%s", modelPath, ff)
 			err := os.MkdirAll(ffpath, os.ModePerm)
 			if err != nil {
-				// fmt.Println("Error:", err)
+				fmt.Println(errorColor("Error:"), err)
 				return err
 			}
 			newModelDatasetName := fmt.Sprintf("%s:%s", modelP, ff)
 			err = processHFFolderTree(ffpath, IsDataset, SkipSHA, newModelDatasetName, ModelBranch, "") // passing empty as foldername, because its the first root folder
 			if err != nil {
-				// fmt.Println("Error:", err)
+				fmt.Println(errorColor("Error:"), err)
 				return err
 			}
 		}
 	} else {
 		err := os.MkdirAll(modelPath, os.ModePerm)
 		if err != nil {
-			// fmt.Println("Error:", err)
+			fmt.Println(errorColor("Error:"), err)
 			return err
 		}
 		//ok we need to add some logic here now to analyze the model/dataset before we go into downloading
@@ -105,15 +110,15 @@ func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, SkipSHA boo
 		//get root path files and folders
 		err = processHFFolderTree(modelPath, IsDataset, SkipSHA, ModelDatasetName, ModelBranch, "") // passing empty as foldername, because its the first root folder
 		if err != nil {
-			// fmt.Println("Error:", err)
+			fmt.Println(errorColor("Error:"), err)
 			return err
 		}
 	}
 
 	return nil
 }
-func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDatasetName string, Branch string, fodlerName string) error {
-	JsonTreeVaraible := JsonModelsFileTreeURL //we assume its Model first
+func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDatasetName string, Branch string, folderName string) error {
+	JsonTreeVariable := JsonModelsFileTreeURL //we assume its Model first
 	RawFileURL := RawModelFileURL
 	LfsResolverURL := LfsModelResolverURL
 	AgreementURL := fmt.Sprintf(AgreementModelURL, ModelDatasetName)
@@ -121,20 +126,20 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 	var FilterBinFileString []string
 	if strings.Contains(ModelDatasetName, ":") && !IsDataset {
 		HasFilter = true
-		//remove the filterd content from Model Name
+		//remove the filtered content from Model Name
 		f := strings.Split(ModelDatasetName, ":")
 		ModelDatasetName = f[0]
 		FilterBinFileString = strings.Split(strings.ToLower(f[1]), ",")
-		fmt.Printf("\nFilter Has been applied, will include LFS Model Files that contains: %s", FilterBinFileString)
+		fmt.Printf("\n%s", infoColor("Filter Has been applied, will include LFS Model Files that contains: ", FilterBinFileString))
 	}
 	if IsDataset {
-		JsonTreeVaraible = JsonDatasetFileTreeURL //set this to true if it its set to Dataset
+		JsonTreeVariable = JsonDatasetFileTreeURL //set this to true if it its set to Dataset
 		RawFileURL = RawDatasetFileURL
 		LfsResolverURL = LfsDatasetResolverURL
 		AgreementURL = fmt.Sprintf(AgreementDatasetURL, ModelDatasetName)
 	}
 
-	tempFolder := path.Join(ModelPath, fodlerName, "tmp")
+	tempFolder := path.Join(ModelPath, folderName, "tmp")
 	// updated ver: 1.2.5; I cannot clear it if I'm trying to implement resume broken downloads based on a single file
 	// if _, err := os.Stat(tempFolder); err == nil { //clear it if it exists before for any reason
 	// 	err = os.RemoveAll(tempFolder)
@@ -144,14 +149,46 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 	// }
 	err := os.MkdirAll(tempFolder, os.ModePerm)
 	if err != nil {
-		// fmt.Println("Error:", err)
+		fmt.Println(errorColor("Error:", err))
 		return err
 	}
 	// updated ver: 1.2.5; I cannot clear it if I'm trying to implement resume broken downloads based on a single file
 	// defer os.RemoveAll(tempFolder) //delete tmp folder upon returning from this function
 	branch := Branch
-	JsonFileListURL := fmt.Sprintf(JsonTreeVaraible, ModelDatasetName, branch, fodlerName)
-	fmt.Printf("\nGetting File Download Files List Tree from: %s", JsonFileListURL)
+	JsonFileListURL := fmt.Sprintf(JsonTreeVariable, ModelDatasetName, branch, folderName)
+	jsonFilesList := []hfmodel{}
+	for _, file := range jsonFilesList {
+			filePath := path.Join(ModelPath, file.Path)
+			if file.IsDirectory {
+					// Directory handling remains unchanged
+					if err := os.MkdirAll(filePath, os.ModePerm); err != nil {
+							return err
+					}
+					if err := processHFFolderTree(ModelPath, IsDataset, SkipSHA, ModelDatasetName, Branch, file.Path); err != nil {
+							return err
+					}
+			} else {
+					// Use NeedsDownload flag to determine if the file should be downloaded
+					if file.NeedsDownload {
+							if file.IsLFS || needsDownload(filePath, file.Size) {
+									tempFolder := filepath.Join(ModelPath, "tmp")
+									downloadErr := downloadFileMultiThread(tempFolder, file.DownloadLink, filePath)
+									if downloadErr != nil {
+											fmt.Printf("\n%s", errorColor("Error downloading file with multi-threading: ", downloadErr))
+											return downloadErr
+									}
+							} else {
+									// For smaller files or if not using multi-threading, a single-threaded download can be used
+									downloadErr := downloadSingleThreaded(file.DownloadLink, filePath)
+									if downloadErr != nil {
+											fmt.Printf("\n%s", errorColor("Error downloading file with single-threading: ", downloadErr))
+											return downloadErr
+									}
+							}
+					}
+			}
+	}
+	fmt.Printf("\n%s", infoColor("Getting File Download Files List Tree from: ", JsonFileListURL))
 
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", JsonFileListURL, nil)
@@ -166,25 +203,24 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 
 	resp, err := client.Do(req)
 	if err != nil {
-		// fmt.Println("Error:", err)
+		fmt.Println(errorColor("Error:"), err)
 		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == 401 && !RequiresAuth {
-		return fmt.Errorf("\nThis Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
+		return fmt.Errorf("\n%s", errorColor("Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN"))
 	}
 	if resp.StatusCode == 403 {
-		return fmt.Errorf("\nYou need to manually Accept the agreement for this model/dataset: %s on HuggingFace site, No bypass will be implemeted", AgreementURL)
+		return fmt.Errorf("\n%s", errorColor("You need to manually accept the agreement for this model/dataset: ", AgreementURL, " on HuggingFace site, No bypass will be implemented"))
 	}
 	// Read the response body into a byte slice
 	content, err := io.ReadAll(resp.Body)
 	if err != nil {
-		// fmt.Println("Error:", err)
+		fmt.Println(errorColor("Error:"), err)
 		return err
 
 	}
 
-	jsonFilesList := []hfmodel{}
 	err = json.Unmarshal(content, &jsonFilesList)
 	if err != nil {
 		return err
@@ -198,7 +234,7 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 				return err
 			}
 			jsonFilesList[i].SkipDownloading = true
-			//now if this a folder, this whole function will be called again recursivley
+			//now if this a folder, this whole function will be called again recursively
 			err = processHFFolderTree(ModelPath, IsDataset, SkipSHA, ModelDatasetName, Branch, jsonFilesList[i].Path) //recursive call
 			if err != nil {
 				return err
@@ -252,7 +288,7 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 			// File exists, get its size
 			fileInfo, _ := os.Stat(filename)
 			size := fileInfo.Size()
-			fmt.Printf("\nChecking Existsing file: %s", jsonFilesList[i].AppendedPath)
+			fmt.Printf("\n%s", infoColor("Checking Existing file: ", jsonFilesList[i].AppendedPath))
 			//  for non-lfs files, I can only compare size, I don't there is a sha256 hash for them
 			if size == int64(jsonFilesList[i].Size) {
 				jsonFilesList[i].SkipDownloading = true
@@ -265,16 +301,16 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 								return err
 							}
 							jsonFilesList[i].SkipDownloading = false
-							fmt.Printf("\nHash failed for LFS file: %s, will redownload/resume", jsonFilesList[i].AppendedPath)
+							fmt.Printf("\n%s", warningColor("Hash failed for LFS file: ", jsonFilesList[i].AppendedPath, ", will redownload/resume"))
 							return err
 						}
-						fmt.Printf("\nHash Matched for LFS file: %s", jsonFilesList[i].AppendedPath)
+						fmt.Printf("\n%s", successColor("Hash Matched for LFS file: ", jsonFilesList[i].AppendedPath))
 					} else {
-						fmt.Printf("\nHash Matching SKIPPED for LFS file: %s", jsonFilesList[i].AppendedPath)
+						fmt.Printf("\n%s", infoColor("Hash Matching SKIPPED for LFS file: ", jsonFilesList[i].AppendedPath))
 					}
 
 				} else {
-					fmt.Printf("\nfile size matched for non LFS file: %s", jsonFilesList[i].AppendedPath)
+					fmt.Printf("\n%s", successColor("file size matched for non LFS file: ", jsonFilesList[i].AppendedPath))
 				}
 			}
 
@@ -287,11 +323,11 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 			continue
 		}
 		if jsonFilesList[i].SkipDownloading {
-			fmt.Printf("\nSkipping: %s", jsonFilesList[i].AppendedPath)
+			fmt.Printf("\n%s", infoColor("Skipping: ", jsonFilesList[i].AppendedPath))
 			continue
 		}
 		if jsonFilesList[i].FilterSkip {
-			fmt.Printf("\nFilter Skipping: %s", jsonFilesList[i].AppendedPath)
+			fmt.Printf("\n%s", infoColor("Filter Skipping: ", jsonFilesList[i].AppendedPath))
 			continue
 		}
 		// fmt.Printf("Downloading: %s\n", jsonFilesList[i].Path)
@@ -301,7 +337,7 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 				return err
 			}
 			//lfs file, verify by checksum
-			fmt.Printf("\nChecking SHA256 Hash for LFS file: %s", jsonFilesList[i].AppendedPath)
+			fmt.Printf("\n%s", infoColor("Checking SHA256 Hash for LFS file: ", jsonFilesList[i].AppendedPath))
 			if !SkipSHA {
 				err = verifyChecksum(jsonFilesList[i].AppendedPath, jsonFilesList[i].Lfs.Oid_SHA265)
 				if err != nil {
@@ -310,13 +346,13 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 						return err
 					}
 					//jsonFilesList[i].SkipDownloading = false
-					fmt.Printf("\nHash failed for LFS file: %s", jsonFilesList[i].AppendedPath)
+					fmt.Printf("\n%s", errorColor("Hash failed for LFS file: ", jsonFilesList[i].AppendedPath, "will redownload/resume"))
 					return err
 				}
-				fmt.Printf("\nHash Matched for LFS file: %s", jsonFilesList[i].AppendedPath)
+				fmt.Printf("\n%s", successColor("Hash Matched for LFS file: ", jsonFilesList[i].AppendedPath))
 
 			} else {
-				fmt.Printf("\nHash Matching SKIPPED for LFS file: %s", jsonFilesList[i].AppendedPath)
+				fmt.Printf("\n%s", warningColor("Hash Matching SKIPPED for LFS file: ", jsonFilesList[i].AppendedPath))
 			}
 
 		} else {
@@ -331,15 +367,48 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 				fileInfo, _ := os.Stat(jsonFilesList[i].AppendedPath)
 				size := fileInfo.Size()
 				if size != int64(jsonFilesList[i].Size) {
-					return fmt.Errorf("\nFile size mismatch: %s, filesize: %d, Needed Size: %d", jsonFilesList[i].AppendedPath, size, jsonFilesList[i].Size)
+					return fmt.Errorf("\n%s", errorColor("File size mismatch: ", jsonFilesList[i].AppendedPath, ", filesize: ", size, "Needed Size: ", jsonFilesList[i].Size))
 				}
 			} else {
-				return fmt.Errorf("\nFile does not exist: %s", jsonFilesList[i].AppendedPath)
+				return fmt.Errorf("\n%s", errorColor("File does not exist: ", jsonFilesList[i].AppendedPath))
 			}
 		}
 	}
 	os.RemoveAll(tempFolder) //by here its safe to delete the temp folder
 	return nil
+}
+
+func fetchFileList(JsonFileListURL string) ([]hfmodel, error) {
+	var filesList []hfmodel
+
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", JsonFileListURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if RequiresAuth {
+		req.Header.Add("Authorization", "Bearer "+AuthToken)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if err := json.NewDecoder(resp.Body).Decode(&filesList); err != nil {
+		return nil, err
+	}
+
+	return filesList, nil
+}
+
+func needsDownload(filePath string, remoteSize int) bool {
+	info, err := os.Stat(filePath)
+	if os.IsNotExist(err) {
+		return true
+	}
+	return info.Size() != int64(remoteSize)
 }
 
 // ***********************************************   All the functions below generated by ChatGPT 3.5, and ChatGPT 4 , with some modifications ***********************************************
@@ -376,18 +445,18 @@ func getRedirectLink(url string) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 401 && !RequiresAuth {
-		return "", fmt.Errorf("this Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
+		return "", fmt.Errorf("\n%s", errorColor("This Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN"))
 	}
 	if resp.StatusCode >= 300 && resp.StatusCode <= 399 {
 		redirectURL := resp.Header.Get("Location")
 		return redirectURL, nil
 	}
 
-	return "", fmt.Errorf("no redirect found")
+	return "", fmt.Errorf(errorColor("No redirect found"))
 }
 
-func verifyChecksum(fileName string, expectedChecksum string) error {
-	file, err := os.Open(fileName)
+func verifyChecksum(filePath, expectedChecksum string) error {
+	file, err := os.Open(filePath)
 	if err != nil {
 		return err
 	}
@@ -398,9 +467,9 @@ func verifyChecksum(fileName string, expectedChecksum string) error {
 		return err
 	}
 
-	sum := hasher.Sum(nil)
-	if hex.EncodeToString(sum) != expectedChecksum {
-		return fmt.Errorf("checksums do not match")
+	actualChecksum := hex.EncodeToString(hasher.Sum(nil))
+	if actualChecksum != expectedChecksum {
+		return fmt.Errorf("\n%s", errorColor("checksum mismatch: expected ", expectedChecksum, "got ", actualChecksum))
 	}
 
 	return nil
@@ -451,7 +520,7 @@ func downloadChunk(tempFolder string, outputFileName string, idx int, url string
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 401 && !RequiresAuth {
-		return fmt.Errorf("this Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
+		return fmt.Errorf("\n%s", errorColor("This Repo requires an access token, generate an access token form huggingface, and pass it using flag: -t TOKEN"))
 	}
 
 	// Open the file to append/add the new content
@@ -493,7 +562,7 @@ func downloadChunk(tempFolder string, outputFileName string, idx int, url string
 	return nil
 }
 
-func mergeFiles(tempFodler, outputFileName string, numChunks int) error {
+func mergeFiles(tempFolder, outputFileName string, numChunks int) error {
 	outputFile, err := os.Create(outputFileName)
 	if err != nil {
 		return err
@@ -502,15 +571,15 @@ func mergeFiles(tempFodler, outputFileName string, numChunks int) error {
 
 	for i := 0; i < numChunks; i++ {
 		tmpFileName := fmt.Sprintf("%s_%d.tmp", path.Base(outputFileName), i)
-		tempFileName := path.Join(tempFodler, tmpFileName)
-		tempFiles, err := os.ReadDir(tempFodler)
+		tempFileName := path.Join(tempFolder, tmpFileName)
+		tempFiles, err := os.ReadDir(tempFolder)
 		if err != nil {
 			return err
 		}
 		for _, file := range tempFiles {
 
-			if matched, _ := filepath.Match(tempFileName, path.Join(tempFodler, file.Name())); matched {
-				tempFile, err := os.Open(path.Join(tempFodler, file.Name()))
+			if matched, _ := filepath.Match(tempFileName, path.Join(tempFolder, file.Name())); matched {
+				tempFile, err := os.Open(path.Join(tempFolder, file.Name()))
 				if err != nil {
 					return err
 				}
@@ -522,7 +591,7 @@ func mergeFiles(tempFodler, outputFileName string, numChunks int) error {
 				if err != nil {
 					return err
 				}
-				err = os.Remove(path.Join(tempFodler, file.Name()))
+				err = os.Remove(path.Join(tempFolder, file.Name()))
 				if err != nil {
 					return err
 				}
@@ -548,7 +617,7 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string) error {
 		return err
 	}
 	if resp.StatusCode == 401 && !RequiresAuth {
-		return fmt.Errorf("\nThis Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
+		return fmt.Errorf("\n%s", errorColor("This Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN"))
 
 	}
 	contentLength, err := strconv.Atoi(resp.Header.Get("Content-Length"))
@@ -575,7 +644,7 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string) error {
 	// Print the number of matched files.
 	// count := len(matches)
 	if len(matches) > 0 {
-		fmt.Printf("\nFound existing incomplete download for the file: %s\nForcing Number of connections to: %d\n\n", baseFileName, len(matches))
+		fmt.Printf("\n%s", infoColor("Found existing incomplete download for the file: ", baseFileName, "\nForcing Number of connections to: ", len(matches), "\n\n"))
 		NumConnections = len(matches)
 	}
 	wg := &sync.WaitGroup{}
@@ -593,7 +662,7 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string) error {
 		go func(i int, start, end int64) {
 			err := downloadChunk(tempFolder, path.Base(outputFileName), i, url, start, end, progress)
 			if err != nil {
-				errChan <- fmt.Errorf("error downloading chunk %d: %w", i, err)
+				errChan <- fmt.Errorf("\n%s", errorColor("error downloading chunk ", i, ":", err))
 			}
 
 			wg.Done() // prevent panic send on closed channel
@@ -664,7 +733,7 @@ func downloadSingleThreaded(url, outputFileName string) error {
 
 	defer resp.Body.Close()
 	if resp.StatusCode == 401 && !RequiresAuth {
-		return fmt.Errorf("\nThis Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN")
+		return fmt.Errorf(errorColor("This Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN"))
 
 	}
 	_, err = io.Copy(outputFile, resp.Body)
