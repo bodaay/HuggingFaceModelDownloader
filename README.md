@@ -78,7 +78,8 @@ hfdownloader [flags]
 - `-t, --token string`: HuggingFace Access Token, can be supplied by env variable 'HUGGING_FACE_HUB_TOKEN' or .env file (optional).
 - `-i, --install bool`: Install the binary to the OS default bin folder, Unix-like operating systems only.
 - `-p, --installPath string`: Specify install path, used with `-i` (optional).
-- `-j, --justDownload string`: Just download the model to the current directory and assume the first argument is the model name.
+- `-j, --justDownload bool`: Just download the model to the current directory and assume the first argument is the model name.
+- `-q, --silentMode bool`: Disable progress bar printing.
 - `-h, --help`: Help for hfdownloader.
 
 ## Examples
