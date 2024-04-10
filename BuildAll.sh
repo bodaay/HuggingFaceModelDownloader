@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 rm output/*
 # Build script for all platforms
 

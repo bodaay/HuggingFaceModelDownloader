@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 output_dir="output"
 binaryName="hfdownloader"
