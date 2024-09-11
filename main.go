@@ -130,7 +130,13 @@ func main() {
 			// }
 			// Dynamic configuration updates (e.g., for AuthToken)
 			if config.AuthToken == "" {
-				config.AuthToken = os.Getenv("HUGGING_FACE_HUB_TOKEN")
+				config.AuthToken = os.Getenv("HF_TOKEN")
+				if config.AuthToken == "" {
+					config.AuthToken = os.Getenv("HUGGING_FACE_HUB_TOKEN")
+					if config.AuthToken != "" {
+						fmt.Println("DeprecationWarning: The environment variable 'HUGGING_FACE_HUB_TOKEN' is deprecated and will be removed in a future version. Please use 'HF_TOKEN' instead.")
+					}
+				}
 			}
 			if config.Install {
 				if err := installBinary(config.InstallPath); err != nil {
@@ -155,9 +161,15 @@ func main() {
 			_ = godotenv.Load() // Load .env file if exists
 
 			if config.AuthToken == "" {
-				config.AuthToken = os.Getenv("HUGGING_FACE_HUB_TOKEN")
+				config.AuthToken = os.Getenv("HF_TOKEN")
+				if config.AuthToken == "" {
+					config.AuthToken = os.Getenv("HUGGING_FACE_HUB_TOKEN")
+					if config.AuthToken != "" {
+						fmt.Println("DeprecationWarning: The environment variable 'HUGGING_FACE_HUB_TOKEN' is deprecated and will be removed in a future version. Please use 'HF_TOKEN' instead.")
+					}
+				}
 			}
-
+		
 			fmt.Printf("Branch: %s\nStorage: %s\nNumberOfConcurrentConnections: %d\nAppend Filter Names to Folder: %t\nSkip SHA256 Check: %t\nToken: %s\n",
 				config.Branch, config.Storage, config.NumConnections, config.OneFolderPerFilter, config.SkipSHA, config.AuthToken)
 
