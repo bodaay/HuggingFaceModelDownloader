@@ -539,7 +539,7 @@ func downloadChunk(tempFolder string, outputFileName string, idx int, url string
 		}
 	}
 
-	buffer := make([]byte, 1024)
+	buffer := make([]byte, 32768)
 	for {
 		bytesRead, err := resp.Body.Read(buffer)
 		if err != nil && err != io.EOF {
@@ -674,17 +674,21 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string, silentMode 
 	startTime := time.Now()
 	go func() {
 		var totalDownloaded int64
+		lastPrintTime := startTime.Add(-time.Second)
 
-		// Calculate speed in megabytes per second
 		fmt.Printf("\n\n")
 		for chunkSize := range progress {
+			// Calculate speed in megabytes per second
 			totalDownloaded += chunkSize
 			elapsed := time.Since(startTime).Seconds()
 			speed := float64(totalDownloaded) / 1024 / 1024 / elapsed
-			if !silentMode {
-				fmt.Printf("\rDownloading %s Speed: %.2f MB/sec, %.2f%% ", outputFileName, speed, float64(totalDownloaded*100)/float64(contentLength))
-			}
 
+			if !silentMode {
+				if time.Since(lastPrintTime).Seconds() >= 0.1 || totalDownloaded == int64(contentLength) {
+					fmt.Printf("\rDownloading %s Speed: %.2f MB/sec, %.2f%% ", outputFileName, speed, float64(totalDownloaded*100)/float64(contentLength))
+					lastPrintTime = time.Now()
+				}
+			}
 		}
 	}()
 
