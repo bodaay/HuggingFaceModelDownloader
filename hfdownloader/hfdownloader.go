@@ -676,13 +676,26 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string, silentMode 
 		var totalDownloaded int64
 		lastPrintTime := startTime.Add(-time.Second)
 
+		rateCheckpoints := make([]struct {time time.Time; bytes int64}, 10)
+		for i := range rateCheckpoints {
+			rateCheckpoints[i].time = startTime
+		}
+
 		fmt.Printf("\n\n")
 		for chunkSize := range progress {
-			// Calculate speed in megabytes per second
+			now := time.Now()
 			totalDownloaded += chunkSize
-			elapsed := time.Since(startTime).Seconds()
-			speed := float64(totalDownloaded) / 1024 / 1024 / elapsed
 
+			if now.Sub(rateCheckpoints[len(rateCheckpoints)-2].time) >= 1 * time.Second {
+				for i := 1; i < len(rateCheckpoints); i++ {
+					rateCheckpoints[i-1] = rateCheckpoints[i]
+				}
+			}
+			rateCheckpoints[len(rateCheckpoints)-1] = struct {time time.Time; bytes int64}{now, totalDownloaded}
+
+			// Calculate speed in megabytes per second
+			elapsed := now.Sub(rateCheckpoints[0].time).Seconds()
+			speed := float64(rateCheckpoints[len(rateCheckpoints)-1].bytes - rateCheckpoints[0].bytes) / (1024 * 1024) / elapsed
 			if !silentMode {
 				if time.Since(lastPrintTime).Seconds() >= 0.1 || totalDownloaded == int64(contentLength) {
 					fmt.Printf("\rDownloading %s Speed: %.2f MB/sec, %.2f%% ", outputFileName, speed, float64(totalDownloaded*100)/float64(contentLength))
