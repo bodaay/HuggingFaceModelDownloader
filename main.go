@@ -17,7 +17,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const VERSION = "1.3.4"
+const VERSION = "1.3.8"
 
 type Config struct {
 	NumConnections     int    `json:"num_connections"`
@@ -169,7 +169,7 @@ func main() {
 					}
 				}
 			}
-		
+
 			fmt.Printf("Branch: %s\nStorage: %s\nNumberOfConcurrentConnections: %d\nAppend Filter Names to Folder: %t\nSkip SHA256 Check: %t\nToken: %s\n",
 				config.Branch, config.Storage, config.NumConnections, config.OneFolderPerFilter, config.SkipSHA, config.AuthToken)
 
