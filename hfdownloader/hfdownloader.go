@@ -67,7 +67,7 @@ type hflfs struct {
 func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, SkipSHA bool, IsDataset bool, DestinationBasePath string, ModelBranch string, concurrentConnections int, token string, silentMode bool) error {
 	NumConnections = concurrentConnections
 
-	//make sure we dont include dataset filter within folder creation
+	// make sure we dont include dataset filter within folder creation
 	modelP := ModelDatasetName
 	HasFilter := false
 	if strings.Contains(modelP, ":") {
@@ -80,36 +80,44 @@ func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, SkipSHA boo
 		AuthToken = token
 	}
 
-	if HasFilter && AppendFilterToPath { //for this feature, I'll just simple re-run the script and apply one filter at a time
+	if HasFilter && AppendFilterToPath { // for this feature, I'll just simple re-run the script and apply one filter at a time
 		filters := strings.Split(strings.Split(ModelDatasetName, ":")[1], ",")
 		for _, ff := range filters {
-			//create folders
+			// create folders
 
 			ffpath := fmt.Sprintf("%s_f_%s", modelPath, ff)
 			err := os.MkdirAll(ffpath, os.ModePerm)
 			if err != nil {
-				fmt.Println(errorColor("Error:"), err)
+				if !silentMode {
+					fmt.Println(errorColor("Error:"), err)
+				}
 				return err
 			}
 			newModelDatasetName := fmt.Sprintf("%s:%s", modelP, ff)
 			err = processHFFolderTree(ffpath, IsDataset, SkipSHA, newModelDatasetName, ModelBranch, "", silentMode) // passing empty as foldername, because its the first root folder
 			if err != nil {
-				fmt.Println(errorColor("Error:"), err)
+				if !silentMode {
+					fmt.Println(errorColor("Error:"), err)
+				}
 				return err
 			}
 		}
 	} else {
 		err := os.MkdirAll(modelPath, os.ModePerm)
 		if err != nil {
-			fmt.Println(errorColor("Error:"), err)
+			if !silentMode {
+				fmt.Println(errorColor("Error:"), err)
+			}
 			return err
 		}
-		//ok we need to add some logic here now to analyze the model/dataset before we go into downloading
+		// ok we need to add some logic here now to analyze the model/dataset before we go into downloading
 
-		//get root path files and folders
+		// get root path files and folders
 		err = processHFFolderTree(modelPath, IsDataset, SkipSHA, ModelDatasetName, ModelBranch, "", silentMode) // passing empty as foldername, because its the first root folder
 		if err != nil {
-			fmt.Println(errorColor("Error:"), err)
+			if !silentMode {
+				fmt.Println(errorColor("Error:"), err)
+			}
 			return err
 		}
 	}
@@ -117,7 +125,7 @@ func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, SkipSHA boo
 	return nil
 }
 func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDatasetName string, Branch string, folderName string, silentMode bool) error {
-	JsonTreeVariable := JsonModelsFileTreeURL //we assume its Model first
+	JsonTreeVariable := JsonModelsFileTreeURL // we assume its Model first
 	RawFileURL := RawModelFileURL
 	LfsResolverURL := LfsModelResolverURL
 	AgreementURL := fmt.Sprintf(AgreementModelURL, ModelDatasetName)
@@ -125,14 +133,16 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 	var FilterBinFileString []string
 	if strings.Contains(ModelDatasetName, ":") && !IsDataset {
 		HasFilter = true
-		//remove the filtered content from Model Name
+		// remove the filtered content from Model Name
 		f := strings.Split(ModelDatasetName, ":")
 		ModelDatasetName = f[0]
 		FilterBinFileString = strings.Split(strings.ToLower(f[1]), ",")
-		fmt.Printf("\n%s", infoColor("Filter Has been applied, will include LFS Model Files that contains: ", FilterBinFileString))
+		if !silentMode {
+			fmt.Printf("\n%s", infoColor("Filter Has been applied, will include LFS Model Files that contains: ", FilterBinFileString))
+		}
 	}
 	if IsDataset {
-		JsonTreeVariable = JsonDatasetFileTreeURL //set this to true if it its set to Dataset
+		JsonTreeVariable = JsonDatasetFileTreeURL // set this to true if it its set to Dataset
 		RawFileURL = RawDatasetFileURL
 		LfsResolverURL = LfsDatasetResolverURL
 		AgreementURL = fmt.Sprintf(AgreementDatasetURL, ModelDatasetName)
@@ -148,7 +158,9 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 	// }
 	err := os.MkdirAll(tempFolder, os.ModePerm)
 	if err != nil {
-		fmt.Println(errorColor("Error:", err))
+		if !silentMode {
+			fmt.Println(errorColor("Error:", err))
+		}
 		return err
 	}
 	// updated ver: 1.2.5; I cannot clear it if I'm trying to implement resume broken downloads based on a single file
@@ -173,21 +185,27 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 					tempFolder := filepath.Join(ModelPath, "tmp")
 					downloadErr := downloadFileMultiThread(tempFolder, file.DownloadLink, filePath, silentMode)
 					if downloadErr != nil {
-						fmt.Printf("\n%s", errorColor("Error downloading file with multi-threading: ", downloadErr))
+						if !silentMode {
+							fmt.Printf("\n%s", errorColor("Error downloading file with multi-threading: ", downloadErr))
+						}
 						return downloadErr
 					}
 				} else {
 					// For smaller files or if not using multi-threading, a single-threaded download can be used
 					downloadErr := downloadSingleThreaded(file.DownloadLink, filePath)
 					if downloadErr != nil {
-						fmt.Printf("\n%s", errorColor("Error downloading file with single-threading: ", downloadErr))
+						if !silentMode {
+							fmt.Printf("\n%s", errorColor("Error downloading file with single-threading: ", downloadErr))
+						}
 						return downloadErr
 					}
 				}
 			}
 		}
 	}
-	fmt.Printf("\n%s", infoColor("Getting File Download Files List Tree from: ", JsonFileListURL))
+	if !silentMode {
+		fmt.Printf("\n%s", infoColor("Getting File Download Files List Tree from: ", JsonFileListURL))
+	}
 
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", JsonFileListURL, nil)
@@ -202,7 +220,9 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Println(errorColor("Error:"), err)
+		if !silentMode {
+			fmt.Println(errorColor("Error:"), err)
+		}
 		return err
 	}
 	defer resp.Body.Close()
@@ -215,7 +235,9 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 	// Read the response body into a byte slice
 	content, err := io.ReadAll(resp.Body)
 	if err != nil {
-		fmt.Println(errorColor("Error:"), err)
+		if !silentMode {
+			fmt.Println(errorColor("Error:"), err)
+		}
 		return err
 
 	}
@@ -233,8 +255,8 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 				return err
 			}
 			jsonFilesList[i].SkipDownloading = true
-			//now if this a folder, this whole function will be called again recursively
-			err = processHFFolderTree(ModelPath, IsDataset, SkipSHA, ModelDatasetName, Branch, jsonFilesList[i].Path, silentMode) //recursive call
+			// now if this a folder, this whole function will be called again recursively
+			err = processHFFolderTree(ModelPath, IsDataset, SkipSHA, ModelDatasetName, Branch, jsonFilesList[i].Path, silentMode) // recursive call
 			if err != nil {
 				return err
 			}
@@ -249,7 +271,7 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 			if err != nil {
 				return err
 			}
-			//Check for filter
+			// Check for filter
 			if HasFilter {
 				filenameLowerCase := strings.ToLower(jsonFilesList[i].Path)
 				if strings.HasSuffix(filenameLowerCase, ".act") || strings.HasSuffix(filenameLowerCase, ".bin") ||
@@ -257,7 +279,7 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 					strings.HasSuffix(filenameLowerCase, ".safetensors") || strings.HasSuffix(filenameLowerCase, ".pt") || strings.HasSuffix(filenameLowerCase, ".meta") ||
 					strings.HasSuffix(filenameLowerCase, ".zip") || strings.HasSuffix(filenameLowerCase, ".z01") || strings.HasSuffix(filenameLowerCase, ".onnx") || strings.HasSuffix(filenameLowerCase, ".data") ||
 					strings.HasSuffix(filenameLowerCase, ".onnx_data") {
-					jsonFilesList[i].FilterSkip = true //we assume its skipped, unless below condition range match
+					jsonFilesList[i].FilterSkip = true // we assume its skipped, unless below condition range match
 					for _, ff := range FilterBinFileString {
 						if strings.Contains(filenameLowerCase, ff) {
 							jsonFilesList[i].FilterSkip = false
@@ -272,9 +294,9 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 	// UNCOMMENT BELOW TWO LINES TO DEBUG THIS FOLDER JSON STRUCTURE
 	// s, _ := json.MarshalIndent(jsonFilesList, "", "  ")
 	// fmt.Println(string(s))
-	//2nd loop through the files, checking exists/non-exists
+	// 2nd loop through the files, checking exists/non-exists
 	for i := range jsonFilesList {
-		//check if the file exists before
+		// check if the file exists before
 		// Check if the file exists
 		if jsonFilesList[i].IsDirectory {
 			continue
@@ -287,7 +309,9 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 			// File exists, get its size
 			fileInfo, _ := os.Stat(filename)
 			size := fileInfo.Size()
-			fmt.Printf("\n%s", infoColor("Checking Existing file: ", jsonFilesList[i].AppendedPath))
+			if !silentMode {
+				fmt.Printf("\n%s", infoColor("Checking Existing file: ", jsonFilesList[i].AppendedPath))
+			}
 			//  for non-lfs files, I can only compare size, I don't there is a sha256 hash for them
 			if size == int64(jsonFilesList[i].Size) {
 				jsonFilesList[i].SkipDownloading = true
@@ -300,33 +324,45 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 								return err
 							}
 							jsonFilesList[i].SkipDownloading = false
-							fmt.Printf("\n%s", warningColor("Hash failed for LFS file: ", jsonFilesList[i].AppendedPath, ", will redownload/resume"))
+							if !silentMode {
+								fmt.Printf("\n%s", warningColor("Hash failed for LFS file: ", jsonFilesList[i].AppendedPath, ", will redownload/resume"))
+							}
 							return err
 						}
-						fmt.Printf("\n%s", successColor("Hash Matched for LFS file: ", jsonFilesList[i].AppendedPath))
+						if !silentMode {
+							fmt.Printf("\n%s", successColor("Hash Matched for LFS file: ", jsonFilesList[i].AppendedPath))
+						}
 					} else {
-						fmt.Printf("\n%s", infoColor("Hash Matching SKIPPED for LFS file: ", jsonFilesList[i].AppendedPath))
+						if !silentMode {
+							fmt.Printf("\n%s", infoColor("Hash Matching SKIPPED for LFS file: ", jsonFilesList[i].AppendedPath))
+						}
 					}
 
 				} else {
-					fmt.Printf("\n%s", successColor("file size matched for non LFS file: ", jsonFilesList[i].AppendedPath))
+					if !silentMode {
+						fmt.Printf("\n%s", successColor("file size matched for non LFS file: ", jsonFilesList[i].AppendedPath))
+					}
 				}
 			}
 
 		}
 
 	}
-	//3ed loop through the files, downloading missing/failed files
+	// 3ed loop through the files, downloading missing/failed files
 	for i := range jsonFilesList {
 		if jsonFilesList[i].IsDirectory {
 			continue
 		}
 		if jsonFilesList[i].SkipDownloading {
-			fmt.Printf("\n%s", infoColor("Skipping: ", jsonFilesList[i].AppendedPath))
+			if !silentMode {
+				fmt.Printf("\n%s", infoColor("Skipping: ", jsonFilesList[i].AppendedPath))
+			}
 			continue
 		}
 		if jsonFilesList[i].FilterSkip {
-			fmt.Printf("\n%s", infoColor("Filter Skipping: ", jsonFilesList[i].AppendedPath))
+			if !silentMode {
+				fmt.Printf("\n%s", infoColor("Filter Skipping: ", jsonFilesList[i].AppendedPath))
+			}
 			continue
 		}
 		// fmt.Printf("Downloading: %s\n", jsonFilesList[i].Path)
@@ -335,8 +371,10 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 			if err != nil {
 				return err
 			}
-			//lfs file, verify by checksum
-			fmt.Printf("\n%s", infoColor("Checking SHA256 Hash for LFS file: ", jsonFilesList[i].AppendedPath))
+			// lfs file, verify by checksum
+			if !silentMode {
+				fmt.Printf("\n%s", infoColor("Checking SHA256 Hash for LFS file: ", jsonFilesList[i].AppendedPath))
+			}
 			if !SkipSHA {
 				err = verifyChecksum(jsonFilesList[i].AppendedPath, jsonFilesList[i].Lfs.Oid_SHA265)
 				if err != nil {
@@ -344,24 +382,32 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 					if err != nil {
 						return err
 					}
-					//jsonFilesList[i].SkipDownloading = false
-					fmt.Printf("\n%s", errorColor("Hash failed for LFS file: ", jsonFilesList[i].AppendedPath, "will redownload/resume"))
+					// jsonFilesList[i].SkipDownloading = false
+					if !silentMode {
+						fmt.Printf("\n%s", errorColor("Hash failed for LFS file: ", jsonFilesList[i].AppendedPath, "will redownload/resume"))
+					}
 					return err
 				}
-				fmt.Printf("\n%s", successColor("Hash Matched for LFS file: ", jsonFilesList[i].AppendedPath))
+				if !silentMode {
+					fmt.Printf("\n%s", successColor("Hash Matched for LFS file: ", jsonFilesList[i].AppendedPath))
+				}
 
 			} else {
-				fmt.Printf("\n%s", warningColor("Hash Matching SKIPPED for LFS file: ", jsonFilesList[i].AppendedPath))
+				if !silentMode {
+					fmt.Printf("\n%s", warningColor("Hash Matching SKIPPED for LFS file: ", jsonFilesList[i].AppendedPath))
+				}
 			}
 
 		} else {
 			// err := downloadFileMultiThread(tempFolder, jsonFilesList[i].DownloadLink, jsonFilesList[i].AppendedPath) //maybe later I'll enable multithreading for all files, even non-lfs
-			err = downloadSingleThreaded(jsonFilesList[i].DownloadLink, jsonFilesList[i].AppendedPath) //no checksum available for small non-lfs files
+			err = downloadSingleThreaded(jsonFilesList[i].DownloadLink, jsonFilesList[i].AppendedPath) // no checksum available for small non-lfs files
 			if err != nil {
 				return err
 			}
-			//non-lfs file, verify by size matching
-			fmt.Printf("\nChecking file size matching: %s", jsonFilesList[i].AppendedPath)
+			// non-lfs file, verify by size matching
+			if !silentMode {
+				fmt.Printf("\nChecking file size matching: %s", jsonFilesList[i].AppendedPath)
+			}
 			if _, err := os.Stat(jsonFilesList[i].AppendedPath); err == nil {
 				fileInfo, _ := os.Stat(jsonFilesList[i].AppendedPath)
 				size := fileInfo.Size()
@@ -373,7 +419,7 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 			}
 		}
 	}
-	os.RemoveAll(tempFolder) //by here its safe to delete the temp folder
+	os.RemoveAll(tempFolder) // by here its safe to delete the temp folder
 	return nil
 }
 
@@ -628,7 +674,7 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string, silentMode 
 
 	progress := make(chan int64, NumConnections)
 
-	//update 1.2.5; we need to check now, if the tmp folder does exists, if the number of files exists before, matched the number of connection, we can proceed with the logic of resuming
+	// update 1.2.5; we need to check now, if the tmp folder does exists, if the number of files exists before, matched the number of connection, we can proceed with the logic of resuming
 	// Calculate the temp file name pattern.
 	baseFileName := path.Base(outputFileName)
 	tmpFileNamePattern := filepath.Join(tempFolder, fmt.Sprintf("%s_*.tmp", baseFileName))
@@ -636,14 +682,18 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string, silentMode 
 	// Use Glob to find all files that match this pattern.
 	matches, err := filepath.Glob(tmpFileNamePattern)
 	if err != nil {
-		fmt.Println(err)
+		if !silentMode {
+			fmt.Println(err)
+		}
 		return err
 	}
 
 	// Print the number of matched files.
 	// count := len(matches)
 	if len(matches) > 0 {
-		fmt.Printf("\n%s", infoColor("Found existing incomplete download for the file: ", baseFileName, "\nForcing Number of connections to: ", len(matches), "\n\n"))
+		if !silentMode {
+			fmt.Printf("\n%s", infoColor("Found existing incomplete download for the file: ", baseFileName, "\nForcing Number of connections to: ", len(matches), "\n\n"))
+		}
 		NumConnections = len(matches)
 	}
 	wg := &sync.WaitGroup{}
@@ -668,7 +718,7 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string, silentMode 
 		}(i, start, end)
 	}
 	// Mark the start time of the download
-	if silentMode { //TODO: check if we change later to always printing regardless of silent or non silent mode
+	if !silentMode { // TODO: check if we change later to always printing regardless of silent or non silent mode
 		fmt.Printf("\nStart Downloading: %s", outputFileName)
 	}
 	startTime := time.Now()
@@ -676,7 +726,10 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string, silentMode 
 		var totalDownloaded int64
 		lastPrintTime := startTime.Add(-time.Second)
 
-		rateCheckpoints := make([]struct {time time.Time; bytes int64}, 10)
+		rateCheckpoints := make([]struct {
+			time  time.Time
+			bytes int64
+		}, 10)
 		for i := range rateCheckpoints {
 			rateCheckpoints[i].time = startTime
 		}
@@ -686,16 +739,19 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string, silentMode 
 			now := time.Now()
 			totalDownloaded += chunkSize
 
-			if now.Sub(rateCheckpoints[len(rateCheckpoints)-2].time) >= 1 * time.Second {
+			if now.Sub(rateCheckpoints[len(rateCheckpoints)-2].time) >= 1*time.Second {
 				for i := 1; i < len(rateCheckpoints); i++ {
 					rateCheckpoints[i-1] = rateCheckpoints[i]
 				}
 			}
-			rateCheckpoints[len(rateCheckpoints)-1] = struct {time time.Time; bytes int64}{now, totalDownloaded}
+			rateCheckpoints[len(rateCheckpoints)-1] = struct {
+				time  time.Time
+				bytes int64
+			}{now, totalDownloaded}
 
 			// Calculate speed in megabytes per second
 			elapsed := now.Sub(rateCheckpoints[0].time).Seconds()
-			speed := float64(rateCheckpoints[len(rateCheckpoints)-1].bytes - rateCheckpoints[0].bytes) / (1024 * 1024) / elapsed
+			speed := float64(rateCheckpoints[len(rateCheckpoints)-1].bytes-rateCheckpoints[0].bytes) / (1024 * 1024) / elapsed
 			if !silentMode {
 				if time.Since(lastPrintTime).Seconds() >= 0.1 || totalDownloaded == int64(contentLength) {
 					fmt.Printf("\rDownloading %s Speed: %.2f MB/sec, %.2f%% ", outputFileName, speed, float64(totalDownloaded*100)/float64(contentLength))
@@ -713,19 +769,23 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string, silentMode 
 	// Check if there was an error in any of the running routines
 	for err := range errChan {
 		if err != nil {
-			fmt.Println(err) // Or however you want to handle the error
+			if !silentMode {
+				fmt.Println(err) // Or however you want to handle the error
+			}
 			// Here you can choose to return, exit, or however you want to stop going forward
 			return err
 		}
 	}
 
 	// fmt.Print("\nDownload completed")
-	fmt.Printf("\nMerging %s Chunks", outputFileName)
+	if !silentMode {
+		fmt.Printf("\nMerging %s Chunks", outputFileName)
+	}
 	err = mergeFiles(tempFolder, outputFileName, NumConnections)
 	if err != nil {
 		return err
 	}
-	if silentMode { //TODO: check if we change later to always printing regardless of silent or non silent mode
+	if !silentMode { // TODO: check if we change later to always printing regardless of silent or non silent mode
 		fmt.Printf("\nFinished Downloading: %s", outputFileName)
 	}
 	return nil
