@@ -75,7 +75,7 @@ hfdownloader [flags]
 - `-b, --branch string`: Model/Dataset branch (optional, default "main").
 - `-s, --storage string`: Storage path (optional, default "Storage").
 - `-c, --concurrent int`: Number of LFS concurrent connections (optional, default 5).
-- `-t, --token string`: HuggingFace Access Token, can be supplied by env variable 'HUGGING_FACE_HUB_TOKEN' or .env file (optional).
+- `-t, --token string`: HuggingFace Access Token, can be supplied by env variable 'HF_TOKEN' or .env file (optional).
 - `-i, --install bool`: Install the binary to the OS default bin folder, Unix-like operating systems only.
 - `-p, --installPath string`: Specify install path, used with `-i` (optional).
 - `-j, --justDownload bool`: Just download the model to the current directory and assume the first argument is the model name.
