@@ -21,14 +21,14 @@ import (
 )
 
 const (
-	AgreementModelURL      = "https://huggingface.co/%s"
-	AgreementDatasetURL    = "https://huggingface.co/datasets/%s"
-	RawModelFileURL        = "https://huggingface.co/%s/raw/%s/%s"
-	RawDatasetFileURL      = "https://huggingface.co/datasets/%s/raw/%s/%s"
-	LfsModelResolverURL    = "https://huggingface.co/%s/resolve/%s/%s"
-	LfsDatasetResolverURL  = "https://huggingface.co/datasets/%s/resolve/%s/%s"
-	JsonModelsFileTreeURL  = "https://huggingface.co/api/models/%s/tree/%s/%s"
-	JsonDatasetFileTreeURL = "https://huggingface.co/api/datasets/%s/tree/%s/%s"
+	AgreementModelURL      = "/%s"
+	AgreementDatasetURL    = "/datasets/%s"
+	RawModelFileURL        = "/%s/raw/%s/%s"
+	RawDatasetFileURL      = "/datasets/%s/raw/%s/%s"
+	LfsModelResolverURL    = "/%s/resolve/%s/%s"
+	LfsDatasetResolverURL  = "/datasets/%s/resolve/%s/%s"
+	JsonModelsFileTreeURL  = "/api/models/%s/tree/%s/%s"
+	JsonDatasetFileTreeURL = "/api/datasets/%s/tree/%s/%s"
 )
 
 var (
@@ -64,7 +64,7 @@ type hflfs struct {
 	PointerSize int    `json:"pointerSize"`
 }
 
-func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, SkipSHA bool, IsDataset bool, DestinationBasePath string, ModelBranch string, concurrentConnections int, token string, silentMode bool) error {
+func DownloadModel(EndPoint string, ModelDatasetName string, AppendFilterToPath bool, SkipSHA bool, IsDataset bool, DestinationBasePath string, ModelBranch string, concurrentConnections int, token string, silentMode bool) error {
 	NumConnections = concurrentConnections
 
 	// make sure we dont include dataset filter within folder creation
@@ -94,7 +94,7 @@ func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, SkipSHA boo
 				return err
 			}
 			newModelDatasetName := fmt.Sprintf("%s:%s", modelP, ff)
-			err = processHFFolderTree(ffpath, IsDataset, SkipSHA, newModelDatasetName, ModelBranch, "", silentMode) // passing empty as foldername, because its the first root folder
+			err = processHFFolderTree(EndPoint, ffpath, IsDataset, SkipSHA, newModelDatasetName, ModelBranch, "", silentMode) // passing empty as foldername, because its the first root folder
 			if err != nil {
 				if !silentMode {
 					fmt.Println(errorColor("Error:"), err)
@@ -113,7 +113,7 @@ func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, SkipSHA boo
 		// ok we need to add some logic here now to analyze the model/dataset before we go into downloading
 
 		// get root path files and folders
-		err = processHFFolderTree(modelPath, IsDataset, SkipSHA, ModelDatasetName, ModelBranch, "", silentMode) // passing empty as foldername, because its the first root folder
+		err = processHFFolderTree(EndPoint, modelPath, IsDataset, SkipSHA, ModelDatasetName, ModelBranch, "", silentMode) // passing empty as foldername, because its the first root folder
 		if err != nil {
 			if !silentMode {
 				fmt.Println(errorColor("Error:"), err)
@@ -124,11 +124,11 @@ func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, SkipSHA boo
 
 	return nil
 }
-func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDatasetName string, Branch string, folderName string, silentMode bool) error {
-	JsonTreeVariable := JsonModelsFileTreeURL // we assume its Model first
-	RawFileURL := RawModelFileURL
-	LfsResolverURL := LfsModelResolverURL
-	AgreementURL := fmt.Sprintf(AgreementModelURL, ModelDatasetName)
+func processHFFolderTree(EndPoint string, ModelPath string, IsDataset bool, SkipSHA bool, ModelDatasetName string, Branch string, folderName string, silentMode bool) error {
+	JsonTreeVariable := EndPoint + JsonModelsFileTreeURL // we assume its Model first
+	RawFileURL := EndPoint + RawModelFileURL
+	LfsResolverURL := EndPoint + LfsModelResolverURL
+	AgreementURL := fmt.Sprintf(EndPoint+AgreementModelURL, ModelDatasetName)
 	HasFilter := false
 	var FilterBinFileString []string
 	if strings.Contains(ModelDatasetName, ":") && !IsDataset {
@@ -142,10 +142,10 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 		}
 	}
 	if IsDataset {
-		JsonTreeVariable = JsonDatasetFileTreeURL // set this to true if it its set to Dataset
-		RawFileURL = RawDatasetFileURL
-		LfsResolverURL = LfsDatasetResolverURL
-		AgreementURL = fmt.Sprintf(AgreementDatasetURL, ModelDatasetName)
+		JsonTreeVariable = EndPoint + JsonDatasetFileTreeURL // set this to true if it its set to Dataset
+		RawFileURL = EndPoint + RawDatasetFileURL
+		LfsResolverURL = EndPoint + LfsDatasetResolverURL
+		AgreementURL = fmt.Sprintf(EndPoint+AgreementDatasetURL, ModelDatasetName)
 	}
 
 	tempFolder := path.Join(ModelPath, folderName, "tmp")
@@ -175,7 +175,7 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 			if err := os.MkdirAll(filePath, os.ModePerm); err != nil {
 				return err
 			}
-			if err := processHFFolderTree(ModelPath, IsDataset, SkipSHA, ModelDatasetName, Branch, file.Path, silentMode); err != nil {
+			if err := processHFFolderTree(EndPoint, ModelPath, IsDataset, SkipSHA, ModelDatasetName, Branch, file.Path, silentMode); err != nil {
 				return err
 			}
 		} else {
@@ -256,7 +256,7 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 			}
 			jsonFilesList[i].SkipDownloading = true
 			// now if this a folder, this whole function will be called again recursively
-			err = processHFFolderTree(ModelPath, IsDataset, SkipSHA, ModelDatasetName, Branch, jsonFilesList[i].Path, silentMode) // recursive call
+			err = processHFFolderTree(EndPoint, ModelPath, IsDataset, SkipSHA, ModelDatasetName, Branch, jsonFilesList[i].Path, silentMode) // recursive call
 			if err != nil {
 				return err
 			}
