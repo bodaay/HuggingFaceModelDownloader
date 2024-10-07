@@ -80,6 +80,7 @@ hfdownloader [flags]
 - `-p, --installPath string`: Specify install path, used with `-i` (optional).
 - `-j, --justDownload bool`: Just download the model to the current directory and assume the first argument is the model name.
 - `-q, --silentMode bool`: Disable progress bar printing.
+- `-e, --endPoint string`: HuggingFace end point url, can be supplied by env variable 'HF_ENDPOINT' or .env file (optional).
 - `-h, --help`: Help for hfdownloader.
 
 ## Examples
