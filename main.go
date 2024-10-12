@@ -17,7 +17,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const VERSION = "1.4.0"
+const VERSION = "1.4.1"
 
 type Config struct {
 	NumConnections     int    `json:"num_connections"`
@@ -29,12 +29,12 @@ type Config struct {
 	Storage            string `json:"storage"`
 	OneFolderPerFilter bool   `json:"one_folder_per_filter"`
 	SkipSHA            bool   `json:"skip_sha"`
-	Install            bool   `json:"install"`
-	InstallPath        string `json:"install_path"`
-	MaxRetries         int    `json:"max_retries"`
-	RetryInterval      int    `json:"retry_interval"`
-	JustDownload       bool   `json:"just_download"`
-	SilentMode         bool   `json:"silent_mode"`
+	// Install            bool   `json:"install"`
+	// InstallPath        string `json:"install_path"`
+	MaxRetries    int  `json:"max_retries"`
+	RetryInterval int  `json:"retry_interval"`
+	JustDownload  bool `json:"just_download"`
+	SilentMode    bool `json:"silent_mode"`
 }
 
 // DefaultConfig returns a config instance populated with default values.
@@ -42,7 +42,7 @@ func DefaultConfig() Config {
 	return Config{
 		NumConnections: 5,
 		Branch:         "main",
-		Storage:        "./downloads",
+		Storage:        "./",
 		MaxRetries:     3,
 		RetryInterval:  5,
 	}
@@ -104,12 +104,22 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
-
 	var justDownload bool
-
+	var (
+		install     bool
+		installPath string
+	)
+	ShortString := fmt.Sprintf("a Simple HuggingFace Models Downloader Utility\nVersion: %s", VERSION)
+	currentPath, err := os.Executable()
+	if err != nil {
+		log.Printf("Failed to get execuable path, %s", err)
+	}
+	if currentPath != "" {
+		ShortString = fmt.Sprintf("%s\nRunning on: %s", ShortString, currentPath)
+	}
 	rootCmd := &cobra.Command{
 		Use:           "hfdownloader [model]",
-		Short:         fmt.Sprintf("A Simple HuggingFace Models Downloader Utility\nVersion: %s", VERSION),
+		Short:         ShortString,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Args: func(cmd *cobra.Command, args []string) error {
@@ -138,8 +148,8 @@ func main() {
 					}
 				}
 			}
-			if config.Install {
-				if err := installBinary(config.InstallPath); err != nil {
+			if install {
+				if err := installBinary(installPath); err != nil {
 					log.Fatal(err)
 				}
 				os.Exit(0)
@@ -198,6 +208,9 @@ func main() {
 	rootCmd.PersistentFlags().IntVar(&config.MaxRetries, "maxRetries", config.MaxRetries, "Maximum number of retries for downloads")
 	rootCmd.PersistentFlags().IntVar(&config.RetryInterval, "retryInterval", config.RetryInterval, "Interval between retries in seconds")
 	rootCmd.PersistentFlags().BoolVarP(&justDownload, "justDownload", "j", config.JustDownload, "Just download the model to the current directory and assume the first argument is the model name")
+	rootCmd.Flags().BoolVarP(&install, "install", "i", false, "Install the binary to the OS default bin folder, Unix-like operating systems only")
+
+	rootCmd.Flags().StringVarP(&installPath, "installPath", "p", "/usr/local/bin/", "install Path (optional)")
 	rootCmd.PersistentFlags().BoolVarP(&config.SilentMode, "silentMode", "q", config.SilentMode, "Disable progress bar output printing")
 
 	// Add the generate-config command
