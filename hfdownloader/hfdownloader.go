@@ -131,6 +131,7 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 	AgreementURL := fmt.Sprintf(AgreementModelURL, ModelDatasetName)
 	HasFilter := false
 	var FilterBinFileString []string
+	originalDataSetName := ModelDatasetName // fix a bug where filters will be skipped when we call the function recursiley
 	if strings.Contains(ModelDatasetName, ":") && !IsDataset {
 		HasFilter = true
 		// remove the filtered content from Model Name
@@ -175,7 +176,9 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 			if err := os.MkdirAll(filePath, os.ModePerm); err != nil {
 				return err
 			}
-			if err := processHFFolderTree(ModelPath, IsDataset, SkipSHA, ModelDatasetName, Branch, file.Path, silentMode); err != nil {
+			//here we should pass the original name with filters, other wise the filter will be applied
+
+			if err := processHFFolderTree(ModelPath, IsDataset, SkipSHA, originalDataSetName, Branch, file.Path, silentMode); err != nil {
 				return err
 			}
 		} else {
@@ -256,7 +259,9 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 			}
 			jsonFilesList[i].SkipDownloading = true
 			// now if this a folder, this whole function will be called again recursively
-			err = processHFFolderTree(ModelPath, IsDataset, SkipSHA, ModelDatasetName, Branch, jsonFilesList[i].Path, silentMode) // recursive call
+			//here we should pass the original name with filters, other wise the filter will be applied
+
+			err = processHFFolderTree(ModelPath, IsDataset, SkipSHA, originalDataSetName, Branch, jsonFilesList[i].Path, silentMode) // recursive call
 			if err != nil {
 				return err
 			}

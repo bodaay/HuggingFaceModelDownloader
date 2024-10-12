@@ -17,7 +17,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const VERSION = "1.3.8"
+const VERSION = "1.3.9"
 
 type Config struct {
 	NumConnections     int    `json:"num_connections"`
