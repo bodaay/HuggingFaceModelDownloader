@@ -283,7 +283,8 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 					strings.Contains(filenameLowerCase, ".gguf") || // either *.gguf or *.gguf-split-{a, b, ...}
 					strings.HasSuffix(filenameLowerCase, ".safetensors") || strings.HasSuffix(filenameLowerCase, ".pt") || strings.HasSuffix(filenameLowerCase, ".meta") ||
 					strings.HasSuffix(filenameLowerCase, ".zip") || strings.HasSuffix(filenameLowerCase, ".z01") || strings.HasSuffix(filenameLowerCase, ".onnx") || strings.HasSuffix(filenameLowerCase, ".data") ||
-					strings.HasSuffix(filenameLowerCase, ".onnx_data") {
+					strings.HasSuffix(filenameLowerCase, ".onnx_data") ||
+					strings.HasSuffix(filenameLowerCase, ".llamafile") {
 					jsonFilesList[i].FilterSkip = true // we assume its skipped, unless below condition range match
 					for _, ff := range FilterBinFileString {
 						if strings.Contains(filenameLowerCase, ff) {
