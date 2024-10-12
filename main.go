@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -238,31 +239,67 @@ func installBinary(installPath string) error {
 	if err != nil {
 		return err
 	}
+
 	dst := path.Join(installPath, filepath.Base(exePath))
 
-	// Check if the binary already exists and remove it
+	// Check if we need sudo for either removing the existing binary or copying the new one
+	needsSudo := false
+
+	// Check if the binary already exists
 	if _, err := os.Stat(dst); err == nil {
-		os.Remove(dst)
+		// Try to remove the existing binary
+		err := os.Remove(dst)
+		if err != nil {
+			if os.IsPermission(err) {
+				needsSudo = true
+			} else {
+				return err
+			}
+		}
 	}
 
-	// Open source file
+	// Open the source file
 	srcFile, err := os.Open(exePath)
 	if err != nil {
 		return err
 	}
 	defer srcFile.Close()
 
-	return copyFile(dst, srcFile)
+	// Try to copy the file
+	err = copyFile(dst, srcFile)
+	if err != nil {
+		if os.IsPermission(err) {
+			needsSudo = true
+		} else {
+			return err
+		}
+	}
+
+	// If we need sudo, handle both removal and copy with elevated privileges
+	if needsSudo {
+		fmt.Printf("Require sudo privileges to complete installation at: %s\n", installPath)
+		cmd := exec.Command("sudo", "sh", "-c", fmt.Sprintf("rm -f %s && cp %s %s", dst, exePath, dst))
+		if err := cmd.Run(); err != nil {
+			return err
+		}
+	}
+
+	log.Printf("The binary has been successfully installed to %s", dst)
+	return nil
 }
 
-// Try to copy the file
+// copyFile is a helper function to copy a file with specific permission
 func copyFile(dst string, src *os.File) error {
+	// Open destination file and ensure it gets closed
 	dstFile, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
 	if err != nil {
 		return err
 	}
 	defer dstFile.Close()
 
-	_, err = io.Copy(dstFile, src)
-	return err
+	// Copy the file content
+	if _, err := io.Copy(dstFile, src); err != nil {
+		return err
+	}
+	return nil
 }
