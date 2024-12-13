@@ -32,13 +32,14 @@ const (
 )
 
 var (
-	infoColor      = color.New(color.FgGreen).SprintFunc()
-	successColor   = color.New(color.FgHiGreen).SprintFunc()
-	warningColor   = color.New(color.FgYellow).SprintFunc()
-	errorColor     = color.New(color.FgRed).SprintFunc()
-	NumConnections = 5
-	RequiresAuth   = false
-	AuthToken      = ""
+	infoColor       = color.New(color.FgGreen).SprintFunc()
+	successColor    = color.New(color.FgHiGreen).SprintFunc()
+	warningColor    = color.New(color.FgYellow).SprintFunc()
+	errorColor      = color.New(color.FgRed).SprintFunc()
+	NumConnections  = 5
+	RequiresAuth    = false
+	AuthToken       = ""
+	ExcludePatterns []string
 )
 
 type hfmodel struct {
@@ -54,6 +55,7 @@ type hfmodel struct {
 	AppendedPath    string
 	SkipDownloading bool
 	FilterSkip      bool
+	ExcludeSkip     bool // Added to indicate if a file should be excluded
 	DownloadLink    string
 	Lfs             *hflfs `json:"lfs,omitempty"`
 }
@@ -64,8 +66,16 @@ type hflfs struct {
 	PointerSize int    `json:"pointerSize"`
 }
 
-func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, SkipSHA bool, IsDataset bool, DestinationBasePath string, ModelBranch string, concurrentConnections int, token string, silentMode bool) error {
+func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, SkipSHA bool, IsDataset bool, DestinationBasePath string, ModelBranch string, concurrentConnections int, token string, silentMode bool, exclude string) error {
 	NumConnections = concurrentConnections
+	// Parse exclude patterns
+	if exclude != "" {
+		ExcludePatterns = strings.Split(exclude, ",")
+		if !silentMode {
+			fmt.Printf("\n%s", infoColor("Exclude pattern has been applied, will exclude  files that contains: ", ExcludePatterns))
+		}
+
+	}
 
 	// make sure we dont include dataset filter within folder creation
 	modelP := ModelDatasetName
@@ -296,6 +306,20 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 			}
 			jsonFilesList[i].DownloadLink = getLink
 		}
+
+		// Apply exclude pattern
+		for _, pattern := range ExcludePatterns {
+			filename := filepath.Base(jsonFilesList[i].Path)
+			matched, _ := filepath.Match(pattern, filename)
+			if matched {
+				jsonFilesList[i].ExcludeSkip = true
+				if !silentMode {
+					fmt.Printf("\n%s", infoColor("Excluding file due to pattern: ", jsonFilesList[i].Path, " Pattern: ", pattern))
+				}
+				break
+			}
+		}
+
 	}
 	// UNCOMMENT BELOW TWO LINES TO DEBUG THIS FOLDER JSON STRUCTURE
 	// s, _ := json.MarshalIndent(jsonFilesList, "", "  ")
@@ -310,6 +334,10 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 		if jsonFilesList[i].FilterSkip {
 			continue
 		}
+		if jsonFilesList[i].ExcludeSkip {
+			continue
+		}
+
 		filename := jsonFilesList[i].AppendedPath
 		if _, err := os.Stat(filename); err == nil {
 			// File exists, get its size
@@ -368,6 +396,12 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 		if jsonFilesList[i].FilterSkip {
 			if !silentMode {
 				fmt.Printf("\n%s", infoColor("Filter Skipping: ", jsonFilesList[i].AppendedPath))
+			}
+			continue
+		}
+		if jsonFilesList[i].ExcludeSkip {
+			if !silentMode {
+				fmt.Printf("\n%s", infoColor("Exclude Skipping: ", jsonFilesList[i].AppendedPath))
 			}
 			continue
 		}
