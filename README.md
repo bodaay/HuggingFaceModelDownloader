@@ -60,6 +60,12 @@ bash <(curl -sSL https://g.bodaay.io/hfd) -m TheBloke/vicuna-13b-v1.3.0-GGML:q4_
 bash <(curl -sSL https://g.bodaay.io/hfd) -j TheBloke/vicuna-13b-v1.3.0-GGML:q4_0
 ```
 
+### Download Model Excluding Certain Files
+
+```shell
+bash <(curl -sSL https://g.bodaay.io/hfd) -m stabilityai/stable-diffusion-xl-base-1.0:fp16.safetensors -e "*.msgpack"
+```
+
 ## Usage
 
 ```shell
@@ -80,6 +86,7 @@ hfdownloader [flags]
 - `-p, --installPath string`: Specify install path, used with `-i` (optional).
 - `-j, --justDownload bool`: Just download the model to the current directory and assume the first argument is the model name.
 - `-q, --silentMode bool`: Disable progress bar printing.
+- `-e, --exclude string`: Exclude files using comma-separated glob patterns (optional).
 - `-h, --help`: Help for hfdownloader.
 
 ## Examples
@@ -110,3 +117,4 @@ hfdownloader -d facebook/flores -c 10 -s MyDatasets
 - Configuration File Support: You can now create a configuration file at `~/.config/hfdownloader.json` to set default values for all command flags.
 - Generate Configuration File: A new command `hfdownloader generate-config` generates an example configuration file with default values at the above path.
 - Existing downloads will be updated if the model/dataset already exists in the storage path and new files or versions are available.
+- Exclude specific files from the download using the `-e` or `--exclude` flag with glob patterns (e.g., `*.msgpack,tokenizer.model`).

@@ -32,10 +32,11 @@ type Config struct {
 	SkipSHA            bool   `json:"skip_sha"`
 	// Install            bool   `json:"install"`
 	// InstallPath        string `json:"install_path"`
-	MaxRetries    int  `json:"max_retries"`
-	RetryInterval int  `json:"retry_interval"`
-	JustDownload  bool `json:"just_download"`
-	SilentMode    bool `json:"silent_mode"`
+	MaxRetries    int    `json:"max_retries"`
+	RetryInterval int    `json:"retry_interval"`
+	JustDownload  bool   `json:"just_download"`
+	SilentMode    bool   `json:"silent_mode"`
+	Exclude       string `json:"exclude"`
 }
 
 // DefaultConfig returns a config instance populated with default values.
@@ -185,7 +186,7 @@ func main() {
 				config.Branch, config.Storage, config.NumConnections, config.OneFolderPerFilter, config.SkipSHA, config.AuthToken)
 
 			for i := 0; i < config.MaxRetries; i++ {
-				if err := hfd.DownloadModel(ModelOrDataSet, config.OneFolderPerFilter, config.SkipSHA, IsDataset, config.Storage, config.Branch, config.NumConnections, config.AuthToken, config.SilentMode); err != nil {
+				if err := hfd.DownloadModel(ModelOrDataSet, config.OneFolderPerFilter, config.SkipSHA, IsDataset, config.Storage, config.Branch, config.NumConnections, config.AuthToken, config.SilentMode, config.Exclude); err != nil {
 					fmt.Printf("Warning: attempt %d / %d failed, error: %s\n", i+1, config.MaxRetries, err)
 					time.Sleep(time.Duration(config.RetryInterval) * time.Second)
 					continue
@@ -209,6 +210,7 @@ func main() {
 	rootCmd.PersistentFlags().IntVar(&config.MaxRetries, "maxRetries", config.MaxRetries, "Maximum number of retries for downloads")
 	rootCmd.PersistentFlags().IntVar(&config.RetryInterval, "retryInterval", config.RetryInterval, "Interval between retries in seconds")
 	rootCmd.PersistentFlags().BoolVarP(&justDownload, "justDownload", "j", config.JustDownload, "Just download the model to the current directory and assume the first argument is the model name")
+	rootCmd.PersistentFlags().StringVarP(&config.Exclude, "exclude", "e", config.Exclude, "Exclude files using comma-separated glob patterns")
 	rootCmd.Flags().BoolVarP(&install, "install", "i", false, "Install the binary to the OS default bin folder, Unix-like operating systems only")
 
 	rootCmd.Flags().StringVarP(&installPath, "installPath", "p", "/usr/local/bin/", "install Path (optional)")
