@@ -55,7 +55,7 @@ type hfmodel struct {
 	AppendedPath    string
 	SkipDownloading bool
 	FilterSkip      bool
-	ExcludeSkip     bool // Added to indicate if a file should be excluded
+	ExcludeSkip     bool
 	DownloadLink    string
 	Lfs             *hflfs `json:"lfs,omitempty"`
 }
