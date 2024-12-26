@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"os"
 	"path"
@@ -62,6 +61,12 @@ type hflfs struct {
 	Oid_SHA265  string `json:"oid"` // in lfs, oid is sha256 of the file
 	Size        int64  `json:"size"`
 	PointerSize int    `json:"pointerSize"`
+}
+
+// Add this new struct to track download progress
+type downloadProgress struct {
+	chunkIndex int
+	bytesRead  int64
 }
 
 func DownloadModel(ModelDatasetName string, AppendFilterToPath bool, SkipSHA bool, IsDataset bool, DestinationBasePath string, ModelBranch string, concurrentConnections int, token string, silentMode bool) error {
@@ -526,26 +531,8 @@ func verifyChecksum(filePath, expectedChecksum string) error {
 	return nil
 }
 
-func downloadChunk(tempFolder string, outputFileName string, idx int, url string, start, end int64, progress chan<- int64) error {
-	tmpFileName := path.Join(tempFolder, fmt.Sprintf("%s_%d.tmp", outputFileName, idx))
-	var compensationBytes int64 = 12
-
-	// Checking file if exists
-	if fi, err := os.Stat(tmpFileName); err == nil { // file exists
-		// If file is already completely downloaded
-		if fi.Size() == (end - start) {
-			// Reflect progress and return
-			progress <- fi.Size()
-			return nil
-		}
-
-		// Fetching size to adjust start byte and compensate for potential corruption
-		start = int64(math.Max(float64(start+fi.Size()-compensationBytes), 0.0))
-
-		// Reflecting skipped part in progress, minus compensationBytes so we download them again. Making sure it does not go negative
-		progress <- int64(math.Max(float64(fi.Size()-compensationBytes), 0.0))
-	}
-
+// Modify downloadChunk to write directly to the target file
+func downloadChunk(file *os.File, idx int, url string, start, end int64, progress chan<- downloadProgress) error {
 	client := &http.Client{
 		Transport: &http.Transport{},
 	}
@@ -555,12 +542,9 @@ func downloadChunk(tempFolder string, outputFileName string, idx int, url string
 	}
 
 	if RequiresAuth {
-		// Set the authorization header with the Bearer token
-		bearerToken := AuthToken
-		req.Header.Add("Authorization", "Bearer "+bearerToken)
+		req.Header.Add("Authorization", "Bearer "+AuthToken)
 	}
 
-	// Updating the Range header
 	rangeHeader := fmt.Sprintf("bytes=%d-%d", start, end-1)
 	req.Header.Add("Range", rangeHeader)
 
@@ -574,24 +558,9 @@ func downloadChunk(tempFolder string, outputFileName string, idx int, url string
 		return fmt.Errorf("\n%s", errorColor("This Repo requires an access token, generate an access token form huggingface, and pass it using flag: -t TOKEN"))
 	}
 
-	// Open the file to append/add the new content
-	tempFile, err := os.OpenFile(tmpFileName, os.O_CREATE|os.O_RDWR, 0644)
-	if err != nil {
-		return err
-	}
-	defer tempFile.Close()
-
-	// Seek to the beginning of the compensation part
-	_, err = tempFile.Seek(-compensationBytes, 2) // SEEK_END is 2
-	// If seek fails, it probably means the file size is less than compensationBytes
-	if err != nil {
-		_, err = tempFile.Seek(0, 0) // Seek to start of the file
-		if err != nil {
-			return err
-		}
-	}
-
 	buffer := make([]byte, 32768)
+	bytesDownloaded := int64(0)
+
 	for {
 		bytesRead, err := resp.Body.Read(buffer)
 		if err != nil && err != io.EOF {
@@ -602,56 +571,22 @@ func downloadChunk(tempFolder string, outputFileName string, idx int, url string
 			break
 		}
 
-		_, err = tempFile.Write(buffer[:bytesRead])
+		_, err = file.WriteAt(buffer[:bytesRead], start+bytesDownloaded)
 		if err != nil {
 			return err
 		}
 
-		progress <- int64(bytesRead)
+		bytesDownloaded += int64(bytesRead)
+		progress <- downloadProgress{
+			chunkIndex: idx,
+			bytesRead:  int64(bytesRead),
+		}
 	}
 
 	return nil
 }
 
-func mergeFiles(tempFolder, outputFileName string, numChunks int) error {
-	outputFile, err := os.Create(outputFileName)
-	if err != nil {
-		return err
-	}
-	defer outputFile.Close()
-
-	for i := 0; i < numChunks; i++ {
-		tmpFileName := fmt.Sprintf("%s_%d.tmp", path.Base(outputFileName), i)
-		tempFileName := path.Join(tempFolder, tmpFileName)
-		tempFiles, err := os.ReadDir(tempFolder)
-		if err != nil {
-			return err
-		}
-		for _, file := range tempFiles {
-
-			if matched, _ := filepath.Match(tempFileName, path.Join(tempFolder, file.Name())); matched {
-				tempFile, err := os.Open(path.Join(tempFolder, file.Name()))
-				if err != nil {
-					return err
-				}
-				_, err = io.Copy(outputFile, tempFile)
-				if err != nil {
-					return err
-				}
-				err = tempFile.Close()
-				if err != nil {
-					return err
-				}
-				err = os.Remove(path.Join(tempFolder, file.Name()))
-				if err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
-}
-
+// Replace downloadFileMultiThread with this improved version
 func downloadFileMultiThread(tempFolder, url, outputFileName string, silentMode bool) error {
 	client := &http.Client{}
 	req, err := http.NewRequest("HEAD", url, nil)
@@ -659,143 +594,110 @@ func downloadFileMultiThread(tempFolder, url, outputFileName string, silentMode 
 		return err
 	}
 	if RequiresAuth {
-		// Set the authorization header with the Bearer token
-		bearerToken := AuthToken
-		req.Header.Add("Authorization", "Bearer "+bearerToken)
+		req.Header.Add("Authorization", "Bearer "+AuthToken)
 	}
+	
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
 	if resp.StatusCode == 401 && !RequiresAuth {
 		return fmt.Errorf("\n%s", errorColor("This Repo requires access token, generate an access token form huggingface, and pass it using flag: -t TOKEN"))
-
 	}
+	
 	contentLength, err := strconv.Atoi(resp.Header.Get("Content-Length"))
 	if err != nil {
 		return err
 	}
 
-	chunkSize := int64(contentLength / NumConnections)
-
-	progress := make(chan int64, NumConnections)
-
-	// update 1.2.5; we need to check now, if the tmp folder does exists, if the number of files exists before, matched the number of connection, we can proceed with the logic of resuming
-	// Calculate the temp file name pattern.
-	baseFileName := path.Base(outputFileName)
-	tmpFileNamePattern := filepath.Join(tempFolder, fmt.Sprintf("%s_*.tmp", baseFileName))
-
-	// Use Glob to find all files that match this pattern.
-	matches, err := filepath.Glob(tmpFileNamePattern)
+	// Create the output file
+	outputFile, err := os.OpenFile(outputFileName, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
-		if !silentMode {
-			fmt.Println(err)
-		}
+		return err
+	}
+	defer outputFile.Close()
+
+	// Pre-allocate the file size
+	err = outputFile.Truncate(int64(contentLength))
+	if err != nil {
 		return err
 	}
 
-	// Print the number of matched files.
-	// count := len(matches)
-	if len(matches) > 0 {
-		if !silentMode {
-			fmt.Printf("\n%s", infoColor("Found existing incomplete download for the file: ", baseFileName, "\nForcing Number of connections to: ", len(matches), "\n\n"))
-		}
-		NumConnections = len(matches)
-	}
+	chunkSize := int64(contentLength / NumConnections)
+	progress := make(chan downloadProgress, NumConnections)
 	wg := &sync.WaitGroup{}
-
-	errChan := make(chan error)
+	errChan := make(chan error, NumConnections)
 
 	for i := 0; i < NumConnections; i++ {
 		start := int64(i) * chunkSize
 		end := start + chunkSize
-
 		if i == NumConnections-1 {
 			end = int64(contentLength)
 		}
+
 		wg.Add(1)
 		go func(i int, start, end int64) {
-			err := downloadChunk(tempFolder, path.Base(outputFileName), i, url, start, end, progress)
-			if err != nil {
-				errChan <- fmt.Errorf("\n%s", errorColor("error downloading chunk ", i, ":", err))
+			defer wg.Done()
+			if err := downloadChunk(outputFile, i, url, start, end, progress); err != nil {
+				errChan <- fmt.Errorf("error downloading chunk %d: %v", i, err)
 			}
-
-			wg.Done() // prevent panic send on closed channel
 		}(i, start, end)
 	}
-	// Mark the start time of the download
-	if !silentMode { // TODO: check if we change later to always printing regardless of silent or non silent mode
+
+	// Monitor progress
+	if !silentMode {
 		fmt.Printf("\nStart Downloading: %s", outputFileName)
 	}
+	
 	startTime := time.Now()
 	go func() {
-		var totalDownloaded int64
-		lastPrintTime := startTime.Add(-time.Second)
+		totalBytes := make([]int64, NumConnections)
+		lastPrintTime := time.Now()
 
-		rateCheckpoints := make([]struct {
-			time  time.Time
-			bytes int64
-		}, 10)
-		for i := range rateCheckpoints {
-			rateCheckpoints[i].time = startTime
-		}
-
-		fmt.Printf("\n\n")
-		for chunkSize := range progress {
+		for prog := range progress {
 			now := time.Now()
-			totalDownloaded += chunkSize
+			totalBytes[prog.chunkIndex] += prog.bytesRead
 
-			if now.Sub(rateCheckpoints[len(rateCheckpoints)-2].time) >= 1*time.Second {
-				for i := 1; i < len(rateCheckpoints); i++ {
-					rateCheckpoints[i-1] = rateCheckpoints[i]
-				}
+			totalDownloaded := int64(0)
+			for _, bytes := range totalBytes {
+				totalDownloaded += bytes
 			}
-			rateCheckpoints[len(rateCheckpoints)-1] = struct {
-				time  time.Time
-				bytes int64
-			}{now, totalDownloaded}
 
-			// Calculate speed in megabytes per second
-			elapsed := now.Sub(rateCheckpoints[0].time).Seconds()
-			speed := float64(rateCheckpoints[len(rateCheckpoints)-1].bytes-rateCheckpoints[0].bytes) / (1024 * 1024) / elapsed
-			if !silentMode {
-				if time.Since(lastPrintTime).Seconds() >= 0.1 || totalDownloaded == int64(contentLength) {
-					fmt.Printf("\rDownloading %s Speed: %.2f MB/sec, %.2f%% ", outputFileName, speed, float64(totalDownloaded*100)/float64(contentLength))
-					lastPrintTime = time.Now()
+			if !silentMode && (now.Sub(lastPrintTime) >= 100*time.Millisecond) {
+				elapsed := time.Since(startTime).Seconds()
+				if elapsed > 0 {
+					speed := float64(totalDownloaded) / (1024 * 1024) / elapsed
+					percent := float64(totalDownloaded*100) / float64(contentLength)
+					fmt.Printf("\rDownloading %s Speed: %.2f MB/sec, %.2f%% ", 
+						outputFileName, speed, percent)
+					lastPrintTime = now
 				}
 			}
 		}
 	}()
 
+	// Wait for completion and check for errors
 	go func() {
-		wg.Wait() // Wait for all downloadChunk to finish
+		wg.Wait()
+		close(progress)
 		close(errChan)
 	}()
 
-	// Check if there was an error in any of the running routines
 	for err := range errChan {
 		if err != nil {
 			if !silentMode {
-				fmt.Println(err) // Or however you want to handle the error
+				fmt.Println(err)
 			}
-			// Here you can choose to return, exit, or however you want to stop going forward
 			return err
 		}
 	}
 
-	// fmt.Print("\nDownload completed")
 	if !silentMode {
-		fmt.Printf("\nMerging %s Chunks", outputFileName)
-	}
-	err = mergeFiles(tempFolder, outputFileName, NumConnections)
-	if err != nil {
-		return err
-	}
-	if !silentMode { // TODO: check if we change later to always printing regardless of silent or non silent mode
-		fmt.Printf("\nFinished Downloading: %s", outputFileName)
+		fmt.Printf("\nFinished Downloading: %s\n", outputFileName)
 	}
 	return nil
 }
+
 func downloadSingleThreaded(url, outputFileName string) error {
 	outputFile, err := os.Create(outputFileName)
 
