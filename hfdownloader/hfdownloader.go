@@ -254,6 +254,12 @@ func processHFFolderTree(ModelPath string, IsDataset bool, SkipSHA bool, ModelDa
 	if err != nil {
 		return err
 	}
+
+	// Replace \n with %0A in the jsonFilesList
+	for i := range jsonFilesList {
+		jsonFilesList[i].Path = strings.ReplaceAll(jsonFilesList[i].Path, "\n", "%0A")
+	}
+
 	for i := range jsonFilesList {
 		jsonFilesList[i].AppendedPath = path.Join(ModelPath, jsonFilesList[i].Path)
 		if jsonFilesList[i].Type == "directory" {
