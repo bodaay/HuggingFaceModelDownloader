@@ -17,7 +17,7 @@ A fast and efficient tool for downloading files from HuggingFace repositories. F
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/hfdownloader
+git clone https://github.com/lxe/hfdownloader
 cd hfdownloader
 
 # Build for your platform
@@ -35,7 +35,7 @@ For more build options, run `make help`.
 ### Using Go Install
 
 ```bash
-go install github.com/yourusername/hfdownloader@latest
+go install github.com/lxe/hfdownloader@latest
 ```
 
 ## Usage
