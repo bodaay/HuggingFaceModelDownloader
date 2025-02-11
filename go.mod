@@ -1,14 +1,13 @@
-module github.com/bodaay/HuggingFaceModelDownloader
+module github.com/lxe/hfdownloader
 
-go 1.20
+go 1.21
 
 require (
-	github.com/joho/godotenv v1.5.1
-	github.com/spf13/cobra v1.7.0
+	github.com/fatih/color v1.16.0
+	github.com/spf13/cobra v1.8.0
 )
 
 require (
-	github.com/fatih/color v1.16.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect

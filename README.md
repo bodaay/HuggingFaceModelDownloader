@@ -1,112 +1,185 @@
-# HuggingFace Model Downloader
+# HuggingFace Fast Downloader
 
-The HuggingFace Model Downloader is a utility tool for downloading models and datasets from the HuggingFace website. It offers multithreaded downloading for LFS files and ensures the integrity of downloaded models with SHA256 checksum verification.
+A fast and efficient tool for downloading files from HuggingFace repositories. Features parallel downloads, SHA verification, and flexible file filtering.
 
-## Reason
+## Features
 
-Git LFS was slow for me, and I couldn't find a single binary for easy model downloading. This tool may also be integrated into future projects for inference using a Go/Python combination.
+- Fast parallel downloads with configurable connections
+- SHA verification for file integrity
+- Flexible file filtering with glob and regex patterns
+- Custom destination paths for downloaded files
+- Support for private repositories with token authentication
+- Tree view of repository contents
 
-## One Line Installer (Linux/Mac/Windows WSL2)
+## Installation
 
-The script downloads the correct version based on your OS/architecture and saves the binary as "hfdownloader" in the current folder.
+### From Source
 
-```shell
-bash <(curl -sSL https://g.bodaay.io/hfd) -h
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/hfdownloader
+cd hfdownloader
+
+# Build for your platform
+make        # Build for all platforms
+make darwin # macOS only (AMD64, ARM64)
+make linux  # Linux only (AMD64)
+make arm    # ARM only (ARMv7, ARM64)
+
+# Install locally (Unix-like systems)
+sudo make install
 ```
 
-To install it to the default OS bin folder:
+For more build options, run `make help`.
 
-```shell
-bash <(curl -sSL https://g.bodaay.io/hfd) -i
-```
+### Using Go Install
 
-It will automatically request higher 'sudo' privileges if required. You can specify the install destination with `-p`.
-
-```shell
-bash <(curl -sSL https://g.bodaay.io/hfd) -i -p ~/.local/bin/
-```
-
-## Quick Download and Run Examples (Linux/Mac/Windows WSL2)
-
-The bash script just downloads the binary based on your OS/architecture and runs it.
-
-### Download Model: TheBloke/orca_mini_7B-GPTQ
-
-```shell
-bash <(curl -sSL https://g.bodaay.io/hfd) -m TheBloke/orca_mini_7B-GPTQ
-```
-
-### Download Model: TheBloke/vicuna-13b-v1.3.0-GGML and Get GGML Variant: q4_0
-
-```shell
-bash <(curl -sSL https://g.bodaay.io/hfd) -m TheBloke/vicuna-13b-v1.3.0-GGML:q4_0
-```
-
-### Download Model: TheBloke/vicuna-13b-v1.3.0-GGML and Get GGML Variants: q4_0,q5_0 in Separate Folders
-
-```shell
-bash <(curl -sSL https://g.bodaay.io/hfd) -f -m TheBloke/vicuna-13b-v1.3.0-GGML:q4_0,q5_0
-```
-
-### Download Model with 8 Connections and Save into /workspace/
-
-```shell
-bash <(curl -sSL https://g.bodaay.io/hfd) -m TheBloke/vicuna-13b-v1.3.0-GGML:q4_0,q4_K_S -c 8 -s /workspace/
-```
-
-### Download Model to the Current Directory
-
-```shell
-bash <(curl -sSL https://g.bodaay.io/hfd) -j TheBloke/vicuna-13b-v1.3.0-GGML:q4_0
+```bash
+go install github.com/yourusername/hfdownloader@latest
 ```
 
 ## Usage
 
-```shell
-hfdownloader [flags]
+### List Repository Contents
+
+```bash
+# List all files in a repository
+hfdownloader -r runwayml/stable-diffusion-v1-5 list
+
+# List files in a specific branch/commit
+hfdownloader -r runwayml/stable-diffusion-v1-5 list -b main
 ```
 
-## Flags
+### Practical Examples
 
-- `-m, --model string`: Model/Dataset name (required if dataset not set). You can supply filters for required LFS model files. Filters will discard any LFS file ending with .bin, .act, .safetensors, .zip that are missing the supplied filtered out.
-- `-d, --dataset string`: Dataset name (required if model not set).
-- `-f, --appendFilterFolder bool`: Append the filter name to the folder, use it for GGML quantized filtered download only (optional).
-- `-k, --skipSHA bool`: Skip SHA256 checking for LFS files, useful when trying to resume interrupted downloads and complete missing files quickly (optional).
-- `-b, --branch string`: Model/Dataset branch (optional, default "main").
-- `-s, --storage string`: Storage path (optional, default "Storage").
-- `-c, --concurrent int`: Number of LFS concurrent connections (optional, default 5).
-- `-t, --token string`: HuggingFace Access Token, can be supplied by env variable 'HF_TOKEN' or .env file (optional).
-- `-i, --install bool`: Install the binary to the OS default bin folder, Unix-like operating systems only.
-- `-p, --installPath string`: Specify install path, used with `-i` (optional).
-- `-j, --justDownload bool`: Just download the model to the current directory and assume the first argument is the model name.
-- `-q, --silentMode bool`: Disable progress bar printing.
-- `-h, --help`: Help for hfdownloader.
+Here are some real-world examples using a FP8 model repository:
 
-## Examples
+```bash
+# List all files in the repository
+hfdownloader -r Kijai/flux-fp8 list
 
-### Model Example
+# Download all the vae safetensor files into the current directory
+hfdownloader -r Kijai/flux-fp8 download -f "*vae*.safetensors" 
 
-```shell
-hfdownloader -m TheBloke/WizardLM-13B-V1.0-Uncensored-GPTQ -c 10 -s MyModels
+# Download VAE model to models/vae directory (auto-confirm)
+hfdownloader -r Kijai/flux-fp8 download -f "*vae*.safetensors:models/vae" -y
+
+# Same as above but with 16 concurrent connections for faster download
+hfdownloader -r Kijai/flux-fp8 download -f "*vae*.safetensors:models/vae" -y -c 16
+
+# Use a regex instead of glob and skip SHA verification for faster downloads
+hfdownloader -r Kijai/flux-fp8 download -f "/e4m3fn/:models/checkpoints" -y -c 16 --skip-sha
 ```
 
-### Dataset Example
+### Authentication
 
-```shell
-hfdownloader -d facebook/flores -c 10 -s MyDatasets
+For private repositories, you can provide your HuggingFace token:
+
+```bash
+hfdownloader -r private-org/model download -t "your_token_here" -f "*.safetensors"
 ```
 
-## Features
+## Pattern Matching
 
-- Nested file downloading of the model
-- Multithreaded downloading of large files (LFS)
-- Filter downloads for specific LFS model files (useful for GGML/GGUFs)
-- Simple utility that can be used as a library or a single binary
-- SHA256 checksum verification for downloaded models
-- Skipping previously downloaded files
-- Resume progress for interrupted downloads
-- Simple file size matching for non-LFS files
-- Support for HuggingFace Access Token for restricted models/datasets
-- Configuration File Support: You can now create a configuration file at `~/.config/hfdownloader.json` to set default values for all command flags.
-- Generate Configuration File: A new command `hfdownloader generate-config` generates an example configuration file with default values at the above path.
-- Existing downloads will be updated if the model/dataset already exists in the storage path and new files or versions are available.
+The downloader supports two types of patterns:
+
+1. Glob Patterns (default):
+   - `*.safetensors` - match all safetensors files
+   - `model/*.bin` - match bin files in model directory
+   - `v2-*/*.ckpt` - match ckpt files in v2-* directories
+
+2. Regex Patterns (enclosed in /):
+   - `/\\.safetensors$/` - match files ending in .safetensors
+   - `/v\\d+/.*\\.bin$/` - match .bin files in version directories
+   - `/model_(fp16|fp32)\\.bin$/` - match specific model variants
+
+## Destination Mapping
+
+You can specify custom destinations for downloaded files using the format `pattern:destination`. The destination can be specified in three ways:
+
+1. Directory with trailing slash (`path/to/dir/`):
+   ```bash
+   # Downloads flux-vae.safetensors to models/vae/flux-vae.safetensors
+   hfdownloader -r org/model download -f "flux-vae.safetensors:models/vae/"
+   
+   # Downloads all .safetensors files to models/checkpoints/, keeping original names
+   hfdownloader -r org/model download -f "*.safetensors:models/checkpoints/"
+   
+   # Downloads multiple files to different directories
+   hfdownloader -r org/model download \
+     -f "model.safetensors:models/full/" \
+     -f "vae/*.pt:models/vae/" \
+     -f "configs/*.yaml:configs/"
+   ```
+
+2. Existing directory (without trailing slash):
+   ```bash
+   # If models/vae exists, this will show a warning and download to:
+   # models/vae/flux-vae.safetensors
+   hfdownloader -r org/model download -f "flux-vae.safetensors:models/vae"
+   
+   # Multiple files to existing directory
+   hfdownloader -r org/model download \
+     -f "*-fp16.safetensors:models/checkpoints" \
+     -f "*-fp32.safetensors:models/checkpoints"
+   ```
+
+3. Full file path (new filename):
+   ```bash
+   # Downloads to exact path with new filename
+   hfdownloader -r org/model download \
+     -f "model.safetensors:models/checkpoints/sd15-base.safetensors"
+   
+   # Multiple files with custom names
+   hfdownloader -r org/model download \
+     -f "model-v1.safetensors:models/v1-base.safetensors" \
+     -f "model-v2.safetensors:models/v2-base.safetensors"
+   ```
+
+### Complex Examples
+
+1. Mix of patterns and destinations:
+   ```bash
+   # Download multiple file types to organized directories
+   hfdownloader -r org/model download \
+     -f "*.safetensors:models/" \
+     -f "*.pt:weights/" \
+     -f "*.yaml:configs/" \
+     -f "*.json:configs/"
+   ```
+
+2. Using regex with custom destinations:
+   ```bash
+   # Download specific model variants to organized directories
+   hfdownloader -r org/model download \
+     -f "/model_fp16.*/:models/fp16/" \
+     -f "/model_fp32.*/:models/fp32/" \
+     -f "/vae_v[0-9].*/:models/vae/"
+   ```
+
+3. Combining glob patterns with specific paths:
+   ```bash
+   # Download and rename some files, keep original names for others
+   hfdownloader -r org/model download \
+     -f "model.safetensors:models/sd15-base.safetensors" \
+     -f "vae/*.pt:models/vae/" \
+     -f "embeddings/*.pt:embeddings/" \
+     -f "lora/*.safetensors:models/lora/"
+   ```
+
+4. Using patterns with directory structure:
+   ```bash
+   # Match nested directory structure
+   hfdownloader -r org/model download \
+     -f "v1/*/*.safetensors:models/v1/" \
+     -f "v2/*/*.safetensors:models/v2/" \
+     -f "*/vae/*.pt:models/vae/"
+   ```
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+MIT License - see LICENSE file for details

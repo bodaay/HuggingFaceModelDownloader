@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,223 +10,275 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
-	"time"
+	"strings"
 
-	hfd "github.com/bodaay/HuggingFaceModelDownloader/hfdownloader"
-	"github.com/joho/godotenv"
+	"github.com/lxe/hfdownloader/hfclient"
 	"github.com/spf13/cobra"
 )
 
-const VERSION = "1.4.2"
+const VERSION = "2.0.0"
 
 type Config struct {
-	NumConnections     int    `json:"num_connections"`
-	RequiresAuth       bool   `json:"requires_auth"`
-	AuthToken          string `json:"auth_token"`
-	ModelName          string `json:"model_name"`
-	DatasetName        string `json:"dataset_name"`
-	Branch             string `json:"branch"`
-	Storage            string `json:"storage"`
-	OneFolderPerFilter bool   `json:"one_folder_per_filter"`
-	SkipSHA            bool   `json:"skip_sha"`
-	// Install            bool   `json:"install"`
-	// InstallPath        string `json:"install_path"`
-	MaxRetries    int  `json:"max_retries"`
-	RetryInterval int  `json:"retry_interval"`
-	JustDownload  bool `json:"just_download"`
-	SilentMode    bool `json:"silent_mode"`
-}
-
-// DefaultConfig returns a config instance populated with default values.
-func DefaultConfig() Config {
-	return Config{
-		NumConnections: 5,
-		Branch:         "main",
-		Storage:        "./",
-		MaxRetries:     3,
-		RetryInterval:  5,
-	}
-}
-
-func LoadConfig() (*Config, error) {
-	config := DefaultConfig() // Use defaults as a base
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-	configPath := filepath.Join(homeDir, ".config", "hfdownloader.json")
-
-	file, err := os.ReadFile(configPath)
-	if os.IsNotExist(err) {
-		return &config, nil // Return defaults if file does not exist
-	} else if err == nil {
-		if err := json.Unmarshal(file, &config); err != nil {
-			return nil, err
-		}
-	}
-
-	// Check if an environment variable to always enable the 'just download' feature is enabled
-	envVar := os.Getenv("HFDOWNLOADER_JUST_DOWNLOAD")
-	if envVar == "1" || envVar == "true" {
-		config.Storage = "./" // Set storage to current directory
-	}
-
-	return &config, nil
-}
-
-func generateConfigFile() error {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-	configPath := filepath.Join(homeDir, ".config", "hfdownloader.json")
-
-	config := DefaultConfig()
-
-	file, err := os.OpenFile(configPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(config); err != nil {
-		return err
-	}
-
-	fmt.Printf("Generated config file at: %s\n", configPath)
-	return nil
+	Token          string
+	NumConnections int
+	SkipVerify     bool
+	Filters        []string
+	DestinationMap map[string]string
+	Repo           string
+	Branch         string
+	AutoConfirm    bool
 }
 
 func main() {
-	config, err := LoadConfig()
-	if err != nil {
-		log.Fatalf("Failed to load configuration: %v", err)
+	config := &Config{
+		NumConnections: 5,
+		DestinationMap: make(map[string]string),
+		Branch:         "main", // default branch
+		AutoConfirm:    false,
 	}
-	var justDownload bool
-	var (
-		install     bool
-		installPath string
-	)
-	ShortString := fmt.Sprintf("a Simple HuggingFace Models Downloader Utility\nVersion: %s", VERSION)
-	currentPath, err := os.Executable()
-	if err != nil {
-		log.Printf("Failed to get execuable path, %s", err)
-	}
-	if currentPath != "" {
-		ShortString = fmt.Sprintf("%s\nRunning on: %s", ShortString, currentPath)
-	}
+
+	var filterMappings []string
+
 	rootCmd := &cobra.Command{
-		Use:           "hfdownloader [model]",
-		Short:         ShortString,
-		SilenceErrors: true,
-		SilenceUsage:  true,
-		Args: func(cmd *cobra.Command, args []string) error {
-			if justDownload && len(args) < 1 {
-				return errors.New("requires a model name argument when using -j")
+		Use:   "hfdownloader",
+		Short: fmt.Sprintf("HuggingFace Fast Downloader v%s", VERSION),
+		Long: `A fast and efficient tool for downloading files from HuggingFace repositories.
+Use -r flag to specify repository in the format 'owner/name'.`,
+		Example: `  hfdownloader -r runwayml/stable-diffusion-v1-5 list
+  hfdownloader -r runwayml/stable-diffusion-v1-5 download -f "*.safetensors"`,
+		SilenceErrors: false,
+		SilenceUsage:  false,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Help()
+		},
+	}
+
+	// List command
+	listCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List files in the repository",
+		Example: `  hfdownloader -r runwayml/stable-diffusion-v1-5 list
+  hfdownloader -r runwayml/stable-diffusion-v1-5 list -b main`,
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if config.Repo == "" {
+				return fmt.Errorf("repository must be specified with -r flag")
 			}
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if justDownload {
-				config.ModelName = args[0] // Use the first argument as the model name
-				config.Storage = "./"
-			}
-			// Validate the ModelName parameter
-			// if !hfdn.IsValidModelName(modelName) { Just realized there are indeed models that don't follow this format :)
-			// 	// fmt.Println("Error:", err)
-			// 	return fmt.Errorf("Invailid Model Name, it should follow the pattern: ModelAuthor/ModelName")
-			// }
-			// Dynamic configuration updates (e.g., for AuthToken)
-			if config.AuthToken == "" {
-				config.AuthToken = os.Getenv("HF_TOKEN")
-				if config.AuthToken == "" {
-					config.AuthToken = os.Getenv("HUGGING_FACE_HUB_TOKEN")
-					if config.AuthToken != "" {
-						fmt.Println("DeprecationWarning: The environment variable 'HUGGING_FACE_HUB_TOKEN' is deprecated and will be removed in a future version. Please use 'HF_TOKEN' instead.")
-					}
-				}
-			}
-			if install {
-				if err := installBinary(installPath); err != nil {
-					log.Fatal(err)
-				}
-				os.Exit(0)
-			}
-			var IsDataset bool
-			ModelOrDataSet := config.ModelName
-			if config.ModelName != "" {
-				fmt.Println("Model:", config.ModelName)
-				IsDataset = false
-			} else if config.DatasetName != "" {
-				fmt.Println("Dataset:", config.DatasetName)
-				IsDataset = true
-				ModelOrDataSet = config.DatasetName
-			} else {
-				cmd.Help()
-				return fmt.Errorf("Error: You must set either modelName or datasetName.")
-			}
-
-			_ = godotenv.Load() // Load .env file if exists
-
-			if config.AuthToken == "" {
-				config.AuthToken = os.Getenv("HF_TOKEN")
-				if config.AuthToken == "" {
-					config.AuthToken = os.Getenv("HUGGING_FACE_HUB_TOKEN")
-					if config.AuthToken != "" {
-						fmt.Println("DeprecationWarning: The environment variable 'HUGGING_FACE_HUB_TOKEN' is deprecated and will be removed in a future version. Please use 'HF_TOKEN' instead.")
-					}
-				}
-			}
-
-			fmt.Printf("Branch: %s\nStorage: %s\nNumberOfConcurrentConnections: %d\nAppend Filter Names to Folder: %t\nSkip SHA256 Check: %t\nToken: %s\n",
-				config.Branch, config.Storage, config.NumConnections, config.OneFolderPerFilter, config.SkipSHA, config.AuthToken)
-
-			for i := 0; i < config.MaxRetries; i++ {
-				if err := hfd.DownloadModel(ModelOrDataSet, config.OneFolderPerFilter, config.SkipSHA, IsDataset, config.Storage, config.Branch, config.NumConnections, config.AuthToken, config.SilentMode); err != nil {
-					fmt.Printf("Warning: attempt %d / %d failed, error: %s\n", i+1, config.MaxRetries, err)
-					time.Sleep(time.Duration(config.RetryInterval) * time.Second)
-					continue
-				}
-				fmt.Printf("\nDownload of %s completed successfully\n", ModelOrDataSet)
-				return nil
-			}
-			return fmt.Errorf("failed to download %s after %d attempts", ModelOrDataSet, config.MaxRetries)
+			return listFiles(config)
 		},
 	}
 
-	// Setup flags and bind them to config properties
-	rootCmd.PersistentFlags().StringVarP(&config.ModelName, "model", "m", config.ModelName, "Model name to download")
-	rootCmd.PersistentFlags().StringVarP(&config.DatasetName, "dataset", "d", config.DatasetName, "Dataset name to download")
-	rootCmd.PersistentFlags().StringVarP(&config.Branch, "branch", "b", config.Branch, "Branch of the model or dataset")
-	rootCmd.PersistentFlags().StringVarP(&config.Storage, "storage", "s", config.Storage, "Storage path for downloads")
-	rootCmd.PersistentFlags().IntVarP(&config.NumConnections, "concurrent", "c", config.NumConnections, "Number of concurrent connections")
-	rootCmd.PersistentFlags().StringVarP(&config.AuthToken, "token", "t", config.AuthToken, "HuggingFace Auth Token")
-	rootCmd.PersistentFlags().BoolVarP(&config.OneFolderPerFilter, "appendFilterFolder", "f", config.OneFolderPerFilter, "Append filter name to folder")
-	rootCmd.PersistentFlags().BoolVarP(&config.SkipSHA, "skipSHA", "k", config.SkipSHA, "Skip SHA256 hash check")
-	rootCmd.PersistentFlags().IntVar(&config.MaxRetries, "maxRetries", config.MaxRetries, "Maximum number of retries for downloads")
-	rootCmd.PersistentFlags().IntVar(&config.RetryInterval, "retryInterval", config.RetryInterval, "Interval between retries in seconds")
-	rootCmd.PersistentFlags().BoolVarP(&justDownload, "justDownload", "j", config.JustDownload, "Just download the model to the current directory and assume the first argument is the model name")
-	rootCmd.Flags().BoolVarP(&install, "install", "i", false, "Install the binary to the OS default bin folder, Unix-like operating systems only")
+	// Download command
+	downloadCmd := &cobra.Command{
+		Use:   "download",
+		Short: "Download files from the repository",
+		Long: `Download files from the repository using patterns and optional destination paths.
+Use -f flag multiple times to specify file patterns and destinations.
+Pattern format: "pattern[:destination]"
 
-	rootCmd.Flags().StringVarP(&installPath, "installPath", "p", "/usr/local/bin/", "install Path (optional)")
-	rootCmd.PersistentFlags().BoolVarP(&config.SilentMode, "silentMode", "q", config.SilentMode, "Disable progress bar output printing")
+Examples:
+  hfdownloader -r runwayml/stable-diffusion-v1-5 download -f "*.safetensors"
+  hfdownloader -r org/model download -b main \
+    -f "model.safetensors:models/my-model.safetensors" \
+    -f "vae.pt:models/vae/"
 
-	// Add the generate-config command
-	generateCmd := &cobra.Command{
-		Use:   "generate-config",
-		Short: "Generates an example configuration file with default values",
+Pattern examples:
+  - "*.safetensors"                              # Download all safetensors files
+  - "model.safetensors:models/my-model.safetensors"  # Download with new name
+  - "model.pt:models/checkpoints/"               # Keep original name in directory`,
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if config.Repo == "" {
+				return fmt.Errorf("repository must be specified with -r flag")
+			}
+			if len(filterMappings) == 0 {
+				return fmt.Errorf("at least one filter (-f) must be specified")
+			}
+			for _, mapping := range filterMappings {
+				pattern, dest, err := parseFilterMapping(mapping)
+				if err != nil {
+					return err
+				}
+				config.Filters = append(config.Filters, pattern)
+				if dest != "" {
+					config.DestinationMap[pattern] = dest
+				}
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return generateConfigFile()
+			return downloadFiles(config)
 		},
 	}
 
-	rootCmd.AddCommand(generateCmd)
+	// Global flags
+	rootCmd.PersistentFlags().StringVarP(&config.Token, "token", "t", os.Getenv("HF_TOKEN"), "HuggingFace API token")
+	rootCmd.PersistentFlags().StringVarP(&config.Repo, "repo", "r", "", "Repository name (required, format: owner/name)")
+	rootCmd.PersistentFlags().StringVarP(&config.Branch, "branch", "b", "main", "Repository branch or commit hash")
+	rootCmd.PersistentFlags().IntVarP(&config.NumConnections, "connections", "c", 5, "Number of concurrent download connections")
+	rootCmd.PersistentFlags().BoolVarP(&config.SkipVerify, "skip-verify", "s", false, "Skip SHA verification")
+	rootCmd.PersistentFlags().BoolVarP(&config.AutoConfirm, "yes", "y", false, "Auto confirm all prompts")
+
+	// Download command specific flags
+	downloadCmd.Flags().StringArrayVarP(&filterMappings, "filter", "f", []string{}, "File filter with optional destination (pattern[:destination])")
+
+	// Add commands to root command
+	rootCmd.AddCommand(listCmd, downloadCmd)
 
 	if err := rootCmd.Execute(); err != nil {
-		log.Fatalln("Error:", err)
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
+}
+
+func parseFilterMapping(mapping string) (pattern string, destination string, err error) {
+	parts := strings.Split(mapping, ":")
+	if len(parts) == 1 {
+		return parts[0], "", nil
+	}
+	if len(parts) == 2 {
+		pattern = parts[0]
+		destination = parts[1]
+
+		// Check if destination exists
+		destInfo, err := os.Stat(destination)
+		if err == nil && destInfo.IsDir() {
+			// If destination exists and is a directory, we'll use the original filename later
+			// when creating the download task, not here
+			fmt.Printf("Warning: destination '%s' is a directory - writing into it\n", parts[1])
+		} else if strings.HasSuffix(destination, "/") {
+			// If destination ends with /, we'll treat it as a directory
+			// and use the original filename later when creating the download task
+			destination = strings.TrimSuffix(destination, "/")
+		}
+		// Otherwise, use the destination as the full file path
+
+		return pattern, destination, nil
+	}
+	return "", "", fmt.Errorf("invalid filter mapping format: %s", mapping)
+}
+
+func parseRepo(repo string, branch string) (*hfclient.RepoRef, error) {
+	// Split repo path (owner/repo)
+	repoParts := strings.Split(repo, "/")
+	if len(repoParts) != 2 {
+		return nil, fmt.Errorf("invalid repository format. Expected 'owner/name', got '%s'", repo)
+	}
+
+	return &hfclient.RepoRef{
+		Owner: repoParts[0],
+		Name:  repoParts[1],
+		Ref:   branch,
+	}, nil
+}
+
+func listFiles(config *Config) error {
+	repoRef, err := parseRepo(config.Repo, config.Branch)
+	if err != nil {
+		return err
+	}
+
+	client := hfclient.NewClient(config.Token)
+	files, err := client.ListFiles(repoRef)
+	if err != nil {
+		return err
+	}
+
+	// Print files in a tree-like format
+	hfclient.PrintFileTree(files)
+	return nil
+}
+
+func downloadFiles(config *Config) error {
+	repoRef, err := parseRepo(config.Repo, config.Branch)
+	if err != nil {
+		return err
+	}
+
+	client := hfclient.NewClient(config.Token)
+	files, err := client.ListFiles(repoRef)
+	if err != nil {
+		return err
+	}
+
+	// Filter files based on patterns
+	matchedFiles := hfclient.FilterFiles(files, config.Filters)
+	if len(matchedFiles) == 0 {
+		return fmt.Errorf("no files matched the specified filters: %v", config.Filters)
+	}
+
+	// Print what we're going to download
+	fmt.Println("Files to download:")
+	for _, file := range matchedFiles {
+		dest := config.DestinationMap[file.Pattern]
+		if dest == "" {
+			dest = file.Path
+		} else {
+			// If destination is or should be a directory, append the original filename
+			destInfo, err := os.Stat(dest)
+			if (err == nil && destInfo.IsDir()) || strings.HasSuffix(dest, "/") {
+				dest = filepath.Join(dest, filepath.Base(file.Path))
+			}
+		}
+
+		// Create destination directory
+		destDir := filepath.Dir(dest)
+		if err := os.MkdirAll(destDir, 0755); err != nil {
+			return fmt.Errorf("failed to create directory %s: %v", destDir, err)
+		}
+
+		fmt.Printf("  %s -> %s (%s)\n", file.Path, dest, formatSize(file.Size))
+	}
+
+	// Confirm with user unless auto-confirm is enabled
+	if !config.AutoConfirm {
+		fmt.Print("\nProceed with download? [y/N] ")
+		var response string
+		fmt.Scanln(&response)
+		if !strings.HasPrefix(strings.ToLower(response), "y") {
+			return fmt.Errorf("download cancelled by user")
+		}
+	} else {
+		fmt.Println("\nAuto-confirming download...")
+	}
+
+	// Create download tasks
+	var tasks []hfclient.DownloadTask
+	for _, file := range matchedFiles {
+		dest := config.DestinationMap[file.Pattern]
+		if dest == "" {
+			dest = file.Path
+		} else {
+			// If destination is or should be a directory, append the original filename
+			destInfo, err := os.Stat(dest)
+			if (err == nil && destInfo.IsDir()) || strings.HasSuffix(dest, "/") {
+				dest = filepath.Join(dest, filepath.Base(file.Path))
+			}
+		}
+		tasks = append(tasks, hfclient.DownloadTask{
+			File:        file,
+			Destination: dest,
+		})
+	}
+
+	// Start the download manager with the specified number of connections
+	dm := hfclient.NewDownloadManager(client, config.NumConnections, config.SkipVerify)
+	return dm.Download(tasks)
+}
+
+// Helper function to format file sizes
+func formatSize(size int64) string {
+	const unit = 1024
+	if size < unit {
+		return fmt.Sprintf("%d B", size)
+	}
+	div, exp := int64(unit), 0
+	for n := size / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(size)/float64(div), "KMGTPE"[exp])
 }
 
 func installBinary(installPath string) error {
