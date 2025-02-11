@@ -64,6 +64,38 @@ func (dm *DownloadManager) Download(tasks []DownloadTask) error {
 	return nil
 }
 
+func (dm *DownloadManager) verifyFile(path string, task DownloadTask) error {
+	if dm.skipVerify {
+		// When skipping SHA verification, verify file size instead
+		fileInfo, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("failed to get file size: %v", err)
+		}
+		if fileInfo.Size() != task.File.Size {
+			return fmt.Errorf("size mismatch:\nExpected: %d\nActual:   %d",
+				task.File.Size, fileInfo.Size())
+		}
+		return nil
+	}
+
+	// Do full SHA verification
+	expectedSha := task.File.GetSha()
+	if expectedSha == "" {
+		return nil // No SHA to verify against
+	}
+
+	actualSha, err := dm.calculateFileSHA(path)
+	if err != nil {
+		return fmt.Errorf("failed to calculate SHA: %v", err)
+	}
+	if actualSha != expectedSha {
+		return fmt.Errorf("SHA mismatch:\nExpected: %s\nActual:   %s",
+			expectedSha, actualSha)
+	}
+
+	return nil
+}
+
 func (dm *DownloadManager) downloadFile(task DownloadTask) error {
 	// Create destination directory
 	destDir := filepath.Dir(task.Destination)
@@ -119,32 +151,15 @@ func (dm *DownloadManager) downloadFile(task DownloadTask) error {
 	f.Close()
 
 	// Verify downloaded file
-	if !dm.skipVerify {
-		expectedSha := task.File.GetSha()
-		if expectedSha != "" {
-			actualSha, err := dm.calculateFileSHA(tmpFile)
-			if err != nil {
-				os.Remove(tmpFile)
-				return fmt.Errorf("failed to calculate SHA: %v", err)
-			}
-			if actualSha != expectedSha {
-				os.Remove(tmpFile)
-				return fmt.Errorf("SHA mismatch for %s:\nExpected: %s\nActual:   %s",
-					task.File.Path, expectedSha, actualSha)
-			}
-		}
-	} else {
-		// When skipping SHA verification, verify file size instead
-		tmpInfo, err := os.Stat(tmpFile)
-		if err != nil {
+	if err := dm.verifyFile(tmpFile, task); err != nil {
+		// Don't delete the file, just rename it with .mismatch extension
+		mismatchFile := tmpFile + ".mismatch"
+		if renameErr := os.Rename(tmpFile, mismatchFile); renameErr != nil {
 			os.Remove(tmpFile)
-			return fmt.Errorf("failed to get downloaded file size: %v", err)
+			return fmt.Errorf("verification failed and could not preserve file: %v", renameErr)
 		}
-		if tmpInfo.Size() != task.File.Size {
-			os.Remove(tmpFile)
-			return fmt.Errorf("size mismatch for %s:\nExpected: %d\nActual:   %d",
-				task.File.Path, task.File.Size, tmpInfo.Size())
-		}
+		return fmt.Errorf("verification failed for %s (preserved as %s): %v",
+			task.File.Path, mismatchFile, err)
 	}
 
 	// Move temporary file to final destination
@@ -164,8 +179,21 @@ func (dm *DownloadManager) calculateFileSHA(path string) (string, error) {
 	defer f.Close()
 
 	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
+	buf := make([]byte, 4*1024*1024) // 4MB buffer for good performance
+
+	for {
+		n, err := f.Read(buf)
+		if n > 0 {
+			if _, err := h.Write(buf[:n]); err != nil {
+				return "", err
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
 	}
 
 	return hex.EncodeToString(h.Sum(nil)), nil
@@ -173,40 +201,16 @@ func (dm *DownloadManager) calculateFileSHA(path string) (string, error) {
 
 func (dm *DownloadManager) verifyExistingFile(task DownloadTask) (bool, error) {
 	// Check if file exists
-	destInfo, err := os.Stat(task.Destination)
-	if err != nil {
+	if _, err := os.Stat(task.Destination); err != nil {
 		return false, err
-	}
-
-	// If verification is skipped, only check file size
-	if dm.skipVerify {
-		if destInfo.Size() == task.File.Size {
-			fmt.Printf("File %s already exists and size matches\n", task.Destination)
-			return true, nil
-		}
-		return false, nil
-	}
-
-	// Otherwise do full SHA verification
-	expectedSha := task.File.GetSha()
-	if expectedSha == "" {
-		return false, nil
 	}
 
 	fmt.Printf("Verifying existing file %s... ", task.Destination)
 
-	// Calculate SHA of existing file
-	actualSha, err := dm.calculateFileSHA(task.Destination)
+	err := dm.verifyFile(task.Destination, task)
 	if err != nil {
-		fmt.Println("failed!")
-		return false, err
-	}
-
-	// Compare SHAs
-	if actualSha != expectedSha {
 		fmt.Println("mismatch!")
-		fmt.Printf("SHA mismatch for %s, will redownload\nExpected: %s\nActual:   %s\n",
-			task.File.Path, expectedSha, actualSha)
+		fmt.Printf("%v\n", err)
 		return false, nil
 	}
 
