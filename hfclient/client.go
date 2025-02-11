@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 )
 
 type Client struct {
@@ -88,6 +90,22 @@ func (c *Client) ListFiles(repo *RepoRef) ([]*File, error) {
 	return files, nil
 }
 
+// encodeFilePath URL encodes each path segment separately to handle spaces and special characters
+func (c *Client) encodeFilePath(path string) string {
+	pathParts := strings.Split(path, "/")
+	for i, part := range pathParts {
+		pathParts[i] = url.PathEscape(part)
+	}
+	return strings.Join(pathParts, "/")
+}
+
+// getResolverURL constructs the HuggingFace resolver URL for a file
+func (c *Client) getResolverURL(file *File) string {
+	encodedPath := c.encodeFilePath(file.Path)
+	return fmt.Sprintf("https://huggingface.co/%s/resolve/%s/%s",
+		file.RepoRef.FullName(), file.RepoRef.Ref, encodedPath)
+}
+
 func (c *Client) getDownloadURL(file *File) (string, error) {
 	if file.IsLFS {
 		// For LFS files, we need to get the actual download URL via the resolver
@@ -95,14 +113,13 @@ func (c *Client) getDownloadURL(file *File) (string, error) {
 	}
 
 	// For regular files, we can construct the URL directly
-	return fmt.Sprintf("https://huggingface.co/%s/resolve/%s/%s",
-		file.RepoRef.FullName(), file.RepoRef.Ref, file.Path), nil
+	return c.getResolverURL(file), nil
 }
 
 func (c *Client) getLFSDownloadURL(file *File) (string, error) {
 	// First get the resolver URL
-	resolverURL := fmt.Sprintf("https://huggingface.co/%s/resolve/%s/%s",
-		file.RepoRef.FullName(), file.RepoRef.Ref, file.Path)
+	resolverURL := c.getResolverURL(file)
+	fmt.Printf("DEBUG: Resolver URL: %s\n", resolverURL)
 
 	// Create request to get the actual download URL
 	req, err := http.NewRequest("GET", resolverURL, nil)
@@ -131,9 +148,17 @@ func (c *Client) getLFSDownloadURL(file *File) (string, error) {
 		return "", fmt.Errorf("unauthorized: please provide a valid token using -t flag or HF_TOKEN environment variable")
 	}
 
-	if resp.StatusCode != http.StatusFound {
-		return "", fmt.Errorf("failed to get LFS download URL: %d", resp.StatusCode)
+	// Handle both redirect and direct file serving cases
+	switch resp.StatusCode {
+	case http.StatusFound:
+		// Got a redirect - use the Location header
+		location := resp.Header.Get("Location")
+		return location, nil
+	case http.StatusOK:
+		// File is being served directly - use the original resolver URL
+		return resolverURL, nil
+	default:
+		// Any other status code is an error
+		return "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
-
-	return resp.Header.Get("Location"), nil
 }

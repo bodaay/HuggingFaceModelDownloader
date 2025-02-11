@@ -80,11 +80,8 @@ func (dm *DownloadManager) downloadFile(task DownloadTask) error {
 		}
 
 		// File exists - verify if it matches
-		if !dm.skipVerify {
-			if ok, err := dm.verifyExistingFile(task); err == nil && ok {
-				fmt.Printf("File %s already exists and verified\n", task.Destination)
-				return nil
-			}
+		if ok, err := dm.verifyExistingFile(task); err == nil && ok {
+			return nil
 		}
 	} else if !os.IsNotExist(err) {
 		// Some other error occurred
@@ -136,6 +133,18 @@ func (dm *DownloadManager) downloadFile(task DownloadTask) error {
 					task.File.Path, expectedSha, actualSha)
 			}
 		}
+	} else {
+		// When skipping SHA verification, verify file size instead
+		tmpInfo, err := os.Stat(tmpFile)
+		if err != nil {
+			os.Remove(tmpFile)
+			return fmt.Errorf("failed to get downloaded file size: %v", err)
+		}
+		if tmpInfo.Size() != task.File.Size {
+			os.Remove(tmpFile)
+			return fmt.Errorf("size mismatch for %s:\nExpected: %d\nActual:   %d",
+				task.File.Path, task.File.Size, tmpInfo.Size())
+		}
 	}
 
 	// Move temporary file to final destination
@@ -164,15 +173,21 @@ func (dm *DownloadManager) calculateFileSHA(path string) (string, error) {
 
 func (dm *DownloadManager) verifyExistingFile(task DownloadTask) (bool, error) {
 	// Check if file exists
-	if _, err := os.Stat(task.Destination); err != nil {
+	destInfo, err := os.Stat(task.Destination)
+	if err != nil {
 		return false, err
 	}
 
-	// If no SHA provided or verification is skipped, we can't verify
+	// If verification is skipped, only check file size
 	if dm.skipVerify {
-		return true, nil
+		if destInfo.Size() == task.File.Size {
+			fmt.Printf("File %s already exists and size matches\n", task.Destination)
+			return true, nil
+		}
+		return false, nil
 	}
 
+	// Otherwise do full SHA verification
 	expectedSha := task.File.GetSha()
 	if expectedSha == "" {
 		return false, nil

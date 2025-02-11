@@ -44,8 +44,8 @@ func main() {
 		Short: fmt.Sprintf("HuggingFace Fast Downloader v%s", VERSION),
 		Long: `A fast and efficient tool for downloading files from HuggingFace repositories.
 Use -r flag to specify repository in the format 'owner/name'.`,
-		Example: `  hfdownloader -r runwayml/stable-diffusion-v1-5 list
-  hfdownloader -r runwayml/stable-diffusion-v1-5 download -f "*.safetensors"`,
+		Example: `  hfdownloader -r black-forest-labs/FLUX.1-dev list
+  hfdownloader -r black-forest-labs/FLUX.1-dev download -f "*.safetensors"`,
 		SilenceErrors: false,
 		SilenceUsage:  false,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -57,8 +57,8 @@ Use -r flag to specify repository in the format 'owner/name'.`,
 	listCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List files in the repository",
-		Example: `  hfdownloader -r runwayml/stable-diffusion-v1-5 list
-  hfdownloader -r runwayml/stable-diffusion-v1-5 list -b main`,
+		Example: `  hfdownloader -r black-forest-labs/FLUX.1-dev list
+  hfdownloader -r black-forest-labs/FLUX.1-dev list -b main`,
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			if config.Repo == "" {
 				return fmt.Errorf("repository must be specified with -r flag")
@@ -79,7 +79,7 @@ Use -f flag multiple times to specify file patterns and destinations.
 Pattern format: "pattern[:destination]"
 
 Examples:
-  hfdownloader -r runwayml/stable-diffusion-v1-5 download -f "*.safetensors"
+  hfdownloader -r black-forest-labs/FLUX.1-dev download -f "*.safetensors"
   hfdownloader -r org/model download -b main \
     -f "model.safetensors:models/my-model.safetensors" \
     -f "vae.pt:models/vae/"
@@ -88,6 +88,7 @@ Pattern examples:
   - "*.safetensors"                              # Download all safetensors files
   - "model.safetensors:models/my-model.safetensors"  # Download with new name
   - "model.pt:models/checkpoints/"               # Keep original name in directory`,
+		SilenceUsage: true,
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			if config.Repo == "" {
 				return fmt.Errorf("repository must be specified with -r flag")
@@ -141,18 +142,33 @@ func parseFilterMapping(mapping string) (pattern string, destination string, err
 		pattern = parts[0]
 		destination = parts[1]
 
-		// Check if destination exists
-		destInfo, err := os.Stat(destination)
-		if err == nil && destInfo.IsDir() {
-			// If destination exists and is a directory, we'll use the original filename later
-			// when creating the download task, not here
-			fmt.Printf("Warning: destination '%s' is a directory - writing into it\n", parts[1])
-		} else if strings.HasSuffix(destination, "/") {
-			// If destination ends with /, we'll treat it as a directory
-			// and use the original filename later when creating the download task
+		// If destination ends with /, it's explicitly a directory
+		if strings.HasSuffix(destination, "/") {
+			// Remove trailing slash for consistency
 			destination = strings.TrimSuffix(destination, "/")
+			// Create directory if it doesn't exist
+			if err := os.MkdirAll(destination, 0755); err != nil {
+				return "", "", fmt.Errorf("failed to create directory %s: %v", destination, err)
+			}
+		} else {
+			// Check if destination exists and is a directory
+			destInfo, err := os.Stat(destination)
+			if err == nil && destInfo.IsDir() {
+				// If it exists and is a directory, we'll use it as is
+				fmt.Printf("Warning: destination '%s' is a directory - writing into it\n", destination)
+			} else if os.IsNotExist(err) {
+				// If it doesn't exist, check if parent directory exists
+				parentDir := filepath.Dir(destination)
+				if parentInfo, err := os.Stat(parentDir); err == nil && parentInfo.IsDir() {
+					// Parent exists and is a directory - treat destination as a file path
+				} else {
+					// Parent doesn't exist or isn't a directory - create directory structure
+					if err := os.MkdirAll(parentDir, 0755); err != nil {
+						return "", "", fmt.Errorf("failed to create directory %s: %v", parentDir, err)
+					}
+				}
+			}
 		}
-		// Otherwise, use the destination as the full file path
 
 		return pattern, destination, nil
 	}
