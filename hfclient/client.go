@@ -119,7 +119,6 @@ func (c *Client) getDownloadURL(file *File) (string, error) {
 func (c *Client) getLFSDownloadURL(file *File) (string, error) {
 	// First get the resolver URL
 	resolverURL := c.getResolverURL(file)
-	fmt.Printf("DEBUG: Resolver URL: %s\n", resolverURL)
 
 	// Create request to get the actual download URL
 	req, err := http.NewRequest("GET", resolverURL, nil)
