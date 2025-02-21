@@ -50,8 +50,12 @@ func NewClient(token string) *Client {
 }
 
 func (c *Client) ListFiles(repo *RepoRef) ([]*File, error) {
+	return c.listFilesRecursive(repo, "")
+}
+
+func (c *Client) listFilesRecursive(repo *RepoRef, path string) ([]*File, error) {
 	url := fmt.Sprintf("https://huggingface.co/api/models/%s/tree/%s/%s",
-		repo.FullName(), repo.Ref, "")
+		repo.FullName(), repo.Ref, c.encodeFilePath(path))
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -81,13 +85,25 @@ func (c *Client) ListFiles(repo *RepoRef) ([]*File, error) {
 		return nil, err
 	}
 
-	// Post-process files to identify LFS objects and set RepoRef
+	// Post-process files and recursively fetch directories
+	var allFiles []*File
 	for _, file := range files {
 		file.IsLFS = file.Size > 0 && file.Sha != ""
 		file.RepoRef = repo
+
+		// If this is a directory (type="directory"), recursively fetch its contents
+		if file.Type == "directory" {
+			subFiles, err := c.listFilesRecursive(repo, file.Path)
+			if err != nil {
+				return nil, fmt.Errorf("failed to list directory %s: %v", file.Path, err)
+			}
+			allFiles = append(allFiles, subFiles...)
+		} else {
+			allFiles = append(allFiles, file)
+		}
 	}
 
-	return files, nil
+	return allFiles, nil
 }
 
 // encodeFilePath URL encodes each path segment separately to handle spaces and special characters
