@@ -53,6 +53,8 @@ type PlanItem struct {
 	SHA256       string `json:"sha256,omitempty"`
 	Size         int64  `json:"size"`
 	AcceptRanges bool   `json:"acceptRanges"`
+	// Subdir holds the matched filter (if any) used when --append-filter-subdir is set.
+	Subdir string `json:"subdir,omitempty"`
 }
 
 type Plan struct {
@@ -99,7 +101,8 @@ func Download(ctx context.Context, job Job, cfg Settings, progress ProgressFunc)
 	if cfg.MaxActiveDownloads <= 0 {
 		cfg.MaxActiveDownloads = runtime.GOMAXPROCS(0)
 	}
-	thresholdBytes, err := parseSizeString(cfg.MultipartThreshold, 32<<20) // 32MiB default
+	// 32MiB default threshold (configurable via cfg.MultipartThreshold)
+	thresholdBytes, err := parseSizeString(cfg.MultipartThreshold, 256<<20)
 	if err != nil {
 		return fmt.Errorf("invalid multipart-threshold: %w", err)
 	}
@@ -139,8 +142,8 @@ func Download(ctx context.Context, job Job, cfg Settings, progress ProgressFunc)
 	var wg sync.WaitGroup
 	errCh := make(chan error, len(plan.Items))
 
-	// To print "skip" only once per file per run
-	var skipOnce sync.Map // map[path]struct{}
+	// To print "skip" only once per final path (including subdir) per run
+	var skipOnce sync.Map // map[finalRelPath]struct{}
 
 	var skippedCount int64
 	var downloadedCount int64
@@ -155,7 +158,14 @@ LOOP:
 		}
 
 		it := item // capture for goroutine
-		emit(ProgressEvent{Event: "plan_item", Path: it.RelativePath, Total: it.Size})
+
+		// Final relative path shown to the user (includes subdir if requested)
+		displayRel := it.RelativePath
+		if job.AppendFilterSubdir && it.Subdir != "" {
+			displayRel = filepath.ToSlash(filepath.Join(it.Subdir, it.RelativePath))
+		}
+
+		emit(ProgressEvent{Event: "plan_item", Path: displayRel, Total: it.Size})
 
 		// Acquire a slot or abort if canceled
 		select {
@@ -173,7 +183,14 @@ LOOP:
 			fileCtx, fileCancel := context.WithCancel(ctx)
 			defer fileCancel()
 
-			dst := filepath.Join(destinationBase(job, cfg), it.RelativePath)
+			// final destination path: OutputDir/<repo>[/<filter>]/<repo-relative-path>
+			base := destinationBase(job, cfg)
+			finalRel := it.RelativePath
+			if job.AppendFilterSubdir && it.Subdir != "" {
+				finalRel = filepath.ToSlash(filepath.Join(it.Subdir, it.RelativePath))
+			}
+			dst := filepath.Join(base, finalRel)
+
 			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 				select { // don't block on emit if we're canceled
 				case errCh <- err:
@@ -192,26 +209,30 @@ LOOP:
 				return
 			}
 			if alreadyOK {
-				// Ensure we print "skip" at most once for this path in this run.
-				if _, loaded := skipOnce.LoadOrStore(it.RelativePath, struct{}{}); !loaded {
-					emit(ProgressEvent{Event: "file_done", Path: it.RelativePath, Message: "skip (" + reason + ")"})
+				// Ensure we print "skip" at most once for this final path in this run.
+				if _, loaded := skipOnce.LoadOrStore(finalRel, struct{}{}); !loaded {
+					emit(ProgressEvent{Event: "file_done", Path: finalRel, Message: "skip (" + reason + ")"})
 					atomic.AddInt64(&skippedCount, 1)
 				}
 				return
 			}
 
-			emit(ProgressEvent{Event: "file_start", Path: it.RelativePath, Total: it.Size})
+			emit(ProgressEvent{Event: "file_start", Path: finalRel, Total: it.Size})
 
 			// Choose single/multipart path
 			var dlErr error
+			// For progress to show the finalRel inside the inner helpers, pass a copy with updated RelativePath.
+			itForIO := it
+			itForIO.RelativePath = finalRel
+
 			if it.Size >= thresholdBytes && it.AcceptRanges {
-				dlErr = downloadMultipart(fileCtx, httpc, cfg.Token, job, cfg, it, dst, emit)
+				dlErr = downloadMultipart(fileCtx, httpc, cfg.Token, job, cfg, itForIO, dst, emit)
 			} else {
-				dlErr = downloadSingle(fileCtx, httpc, cfg.Token, job, cfg, it, dst, emit)
+				dlErr = downloadSingle(fileCtx, httpc, cfg.Token, job, cfg, itForIO, dst, emit)
 			}
 			if dlErr != nil {
 				select {
-				case errCh <- fmt.Errorf("download %s: %w", it.RelativePath, dlErr):
+				case errCh <- fmt.Errorf("download %s: %w", finalRel, dlErr):
 				default:
 				}
 				return
@@ -221,7 +242,7 @@ LOOP:
 			if it.LFS && it.SHA256 != "" {
 				if err := verifySHA256(dst, it.SHA256); err != nil {
 					select {
-					case errCh <- fmt.Errorf("sha256 verify failed: %s: %w", it.RelativePath, err):
+					case errCh <- fmt.Errorf("sha256 verify failed: %s: %w", finalRel, err):
 					default:
 					}
 					return
@@ -230,18 +251,18 @@ LOOP:
 				fi, err := os.Stat(dst)
 				if err != nil || fi.Size() != it.Size {
 					select {
-					case errCh <- fmt.Errorf("size mismatch for %s", it.RelativePath):
+					case errCh <- fmt.Errorf("size mismatch for %s", finalRel):
 					default:
 					}
 					return
 				}
 			} else if cfg.Verify == "sha256" {
 				// For non-LFS, try remote-provided sha via HEAD (if present)
-				_, remoteSha, _ := headForETag(fileCtx, httpc, cfg.Token, it)
+				_, remoteSha, _ := headForETag(fileCtx, httpc, cfg.Token, itForIO)
 				if remoteSha != "" {
 					if err := verifySHA256(dst, remoteSha); err != nil {
 						select {
-						case errCh <- fmt.Errorf("sha256 verify failed: %s: %w", it.RelativePath, err):
+						case errCh <- fmt.Errorf("sha256 verify failed: %s: %w", finalRel, err):
 						default:
 						}
 						return
@@ -249,7 +270,7 @@ LOOP:
 				}
 			}
 
-			emit(ProgressEvent{Event: "file_done", Path: it.RelativePath})
+			emit(ProgressEvent{Event: "file_done", Path: finalRel})
 			atomic.AddInt64(&downloadedCount, 1)
 		}()
 	}
@@ -298,11 +319,8 @@ func validate(job Job, cfg Settings) error {
 // ------------------------
 
 func destinationBase(job Job, cfg Settings) string {
-	base := filepath.Join(cfg.OutputDir, job.Repo)
-	if job.AppendFilterSubdir && len(job.Filters) == 1 {
-		base = filepath.Join(base, job.Filters[0])
-	}
-	return base
+	// Always OutputDir/<repo>; per-file filter subdirs are applied in Download().
+	return filepath.Join(cfg.OutputDir, job.Repo)
 }
 
 func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cfg Settings) (*Plan, error) {
@@ -324,16 +342,18 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 		name := filepath.Base(rel)
 		isLFS := n.LFS != nil
 
-		// Optional LFS filter matching
+		// Determine which filter (if any) matches this file name, prefer the longest match
+		matchedFilter := ""
 		if isLFS && len(job.Filters) > 0 {
-			matched := false
 			for _, f := range job.Filters {
 				if strings.Contains(name, f) {
-					matched = true
-					break
+					if len(f) > len(matchedFilter) {
+						matchedFilter = f
+					}
 				}
 			}
-			if !matched {
+			// If filters provided and none matched, skip typical large LFS blobs
+			if matchedFilter == "" {
 				ln := strings.ToLower(name)
 				ext := strings.ToLower(filepath.Ext(name))
 				if ext == ".bin" || ext == ".act" || ext == ".safetensors" || ext == ".zip" || strings.HasSuffix(ln, ".gguf") || strings.HasSuffix(ln, ".ggml") {
@@ -372,6 +392,7 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 			SHA256:       sha,
 			Size:         size,
 			AcceptRanges: acceptRanges,
+			Subdir:       matchedFilter, // empty when no filter matched
 		})
 		return nil
 	})

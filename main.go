@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -39,6 +41,7 @@ func main() {
 		Version:       Version,
 	}
 
+	// global flags
 	root.PersistentFlags().StringVarP(&ro.token, "token", "t", "", "Hugging Face access token (also reads HF_TOKEN env)")
 	root.PersistentFlags().BoolVar(&ro.jsonOut, "json", false, "Emit machine-readable JSON events (progress, plan, results)")
 	root.PersistentFlags().BoolVarP(&ro.quiet, "quiet", "q", false, "Quiet mode (minimal logs)")
@@ -62,12 +65,14 @@ func main() {
 			if err != nil {
 				return err
 			}
+
+			// Plan-only mode
 			if dryRun {
 				p, err := hfdownloader.PlanRepo(ctx, finalJob, finalCfg)
 				if err != nil {
 					return err
 				}
-				if strings.ToLower(planFmt) == "json" {
+				if strings.ToLower(planFmt) == "json" || ro.jsonOut {
 					enc := json.NewEncoder(os.Stdout)
 					enc.SetIndent("", "  ")
 					return enc.Encode(p)
@@ -78,14 +83,23 @@ func main() {
 				}
 				return nil
 			}
+
+			// Progress mode selection:
+			// 1) --json => strict JSON lines (dominates).
+			// 2) --quiet => minimal plain text.
+			// 3) default => live TUI if available.
 			var progress hfdownloader.ProgressFunc
-			if ro.jsonOut || ro.quiet {
+			if ro.jsonOut {
+				progress = jsonProgress(os.Stdout)
+			} else if ro.quiet {
 				progress = cliProgress(ro, finalJob)
 			} else {
+				// Live TUI (requires ui_progress.go)
 				ui := newLiveRenderer(finalJob, finalCfg)
 				defer ui.Close()
 				progress = ui.Handler()
 			}
+
 			return hfdownloader.Download(ctx, finalJob, finalCfg, progress)
 		},
 	}
@@ -101,7 +115,7 @@ func main() {
 	downloadCmd.Flags().StringVarP(&cfg.OutputDir, "output", "o", "Storage", "Destination base directory")
 	downloadCmd.Flags().IntVarP(&cfg.Concurrency, "connections", "c", 8, "Per-file concurrent connections for LFS range requests")
 	downloadCmd.Flags().IntVar(&cfg.MaxActiveDownloads, "max-active", 3, "Maximum number of files downloading at once")
-	downloadCmd.Flags().StringVar(&cfg.MultipartThreshold, "multipart-threshold", "2566MiB", "Use multipart/range downloads only for files >= this size")
+	downloadCmd.Flags().StringVar(&cfg.MultipartThreshold, "multipart-threshold", "32MiB", "Use multipart/range downloads only for files >= this size")
 	downloadCmd.Flags().StringVar(&cfg.Verify, "verify", "size", "Verification for non-LFS files: none|size|etag|sha256 (LFS verifies sha256 when provided unless --verify=none)")
 	downloadCmd.Flags().IntVar(&cfg.Retries, "retries", 4, "Max retry attempts per HTTP request/part")
 	downloadCmd.Flags().StringVar(&cfg.BackoffInitial, "backoff-initial", "400ms", "Initial retry backoff duration")
@@ -112,11 +126,12 @@ func main() {
 	downloadCmd.Flags().StringVar(&planFmt, "plan-format", "table", "Plan output format for --dry-run: table|json")
 
 	root.AddCommand(downloadCmd)
-
 	root.RunE = downloadCmd.RunE
 	root.SetHelpCommand(&cobra.Command{Use: "help", Hidden: true})
 
 	if err := root.ExecuteContext(ctx); err != nil {
+		// Keep stderr for fatal errors. In --json mode, Download emits structured events
+		// during normal operation; an early CLI error will still show here.
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
@@ -136,7 +151,7 @@ func signalContext(parent context.Context) (context.Context, context.CancelFunc)
 	return ctx, cancel
 }
 
-func finalize(cmd *cobra.Command, ro *rootOpts, args []string, job *hfdownloader.Job, cfg *hfdownloader.Settings, dryRun bool) (hfdownloader.Job, hfdownloader.Settings, error) {
+func finalize(cmd *cobra.Command, ro *rootOpts, args []string, job *hfdownloader.Job, cfg *hfdownloader.Settings, _ bool) (hfdownloader.Job, hfdownloader.Settings, error) {
 	j := *job
 	c := *cfg
 
@@ -243,7 +258,7 @@ func orDefault(s, def string) string {
 	return s
 }
 
-// Simple logger used when --json or --quiet is set
+// Plain-text logger used for --quiet or --verbose modes
 func cliProgress(ro *rootOpts, job hfdownloader.Job) hfdownloader.ProgressFunc {
 	return func(ev hfdownloader.ProgressEvent) {
 		switch ev.Event {
@@ -253,14 +268,28 @@ func cliProgress(ro *rootOpts, job hfdownloader.Job) hfdownloader.ProgressFunc {
 			fmt.Printf("retry %s (attempt %d): %s\n", ev.Path, ev.Attempt, ev.Message)
 		case "file_start":
 			fmt.Printf("downloading: %s (%d bytes)\n", ev.Path, ev.Total)
-		case "file_progress":
-			// no-op in quiet
 		case "file_done":
-			fmt.Printf("done: %s\n", ev.Path)
+			if strings.HasPrefix(ev.Message, "skip") {
+				fmt.Printf("skip: %s %s\n", ev.Path, ev.Message)
+			} else {
+				fmt.Printf("done: %s\n", ev.Path)
+			}
 		case "error":
 			fmt.Fprintf(os.Stderr, "error: %s\n", ev.Message)
 		case "done":
 			fmt.Println(ev.Message)
 		}
+	}
+}
+
+// JSON logger for --json (thread-safe, newline-delimited JSON on stdout)
+func jsonProgress(w io.Writer) hfdownloader.ProgressFunc {
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	var mu sync.Mutex
+	return func(ev hfdownloader.ProgressEvent) {
+		mu.Lock()
+		_ = enc.Encode(ev) // newline-delimited JSON
+		mu.Unlock()
 	}
 }

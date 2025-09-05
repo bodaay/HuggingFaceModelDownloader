@@ -222,7 +222,7 @@ Example:
   "output": "Storage",
   "connections": 8,
   "max-active": 3,
-  "multipart-threshold": "32MiB",
+  "multipart-threshold": "256MiB",
   "verify": "size",
   "retries": 4,
   "backoff-initial": "400ms",
@@ -258,7 +258,7 @@ func main() {
     OutputDir:          "Storage",
     Concurrency:        8,
     MaxActiveDownloads: 3,
-    MultipartThreshold: "32MiB",
+    MultipartThreshold: "256MiB",
     Verify:             "size",    // none|size|etag|sha256
     Retries:            4,
     BackoffInitial:     "400ms",
