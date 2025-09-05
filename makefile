@@ -31,7 +31,7 @@ $(ALL_PLATFORMS):
 	@mkdir -p $(OUTPUT_DIR)
 	@GOOS=$(word 1,$(subst /, ,$@)) GOARCH=$(word 2,$(subst /, ,$@)) \
 		CGO_ENABLED=0 go build -o \
-		$(OUTPUT_DIR)/$(BINARY_NAME)_$(word 1,$(subst /, ,$@))_$(word 2,$(subst /, ,$@))_$(VERSION)$(if $(findstring windows,$@),.exe,) main.go
+		$(OUTPUT_DIR)/$(BINARY_NAME)_$(word 1,$(subst /, ,$@))_$(word 2,$(subst /, ,$@))_$(VERSION)$(if $(findstring windows,$@),.exe,) main.go ui_progress.go
 	@echo "Build completed: $(OUTPUT_DIR)/$(BINARY_NAME)_$(word 1,$(subst /, ,$@))_$(word 2,$(subst /, ,$@))_$(VERSION)$(if $(findstring windows,$@),.exe,)"
 
 clean:
