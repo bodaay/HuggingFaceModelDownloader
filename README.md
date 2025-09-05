@@ -1,112 +1,74 @@
-# HuggingFace Model Downloader
+# HuggingFaceModelDownloader — v2.0.0 (breaking)
 
-The HuggingFace Model Downloader is a utility tool for downloading models and datasets from the HuggingFace website. It offers multithreaded downloading for LFS files and ensures the integrity of downloaded models with SHA256 checksum verification.
+This is a **clean, breaking** redesign of the CLI and library. Compared to v1.x:
+- Old flags are removed. The CLI is simplified and consistent.
+- New engine adds **retries with backoff**, **dry-run plans**, **config file** support,
+  **non-LFS verification policies**, **multipart threshold**, **overall concurrency limit**,
+  and **structured progress** with `--json` output.
 
-## Reason
+## CLI
 
-Git LFS was slow for me, and I couldn't find a single binary for easy model downloading. This tool may also be integrated into future projects for inference using a Go/Python combination.
-
-## One Line Installer (Linux/Mac/Windows WSL2)
-
-The script downloads the correct version based on your OS/architecture and saves the binary as "hfdownloader" in the current folder.
-
-```shell
-bash <(curl -sSL https://g.bodaay.io/hfd) -h
+```bash
+hfdownloader download [REPO] [flags]
 ```
 
-To install it to the default OS bin folder:
+- `REPO`: `owner/name` or `owner/name:filter1,filter2`
 
-```shell
-bash <(curl -sSL https://g.bodaay.io/hfd) -i
+**Key flags**
+- `-o, --output` destination (default: `Storage`)
+- `-b, --revision` branch/tag/sha (default: `main`)
+- `--dataset` treat repo as a dataset
+- `-F, --filters` comma-separated LFS filters (if omitted, parsed from `REPO` suffix)
+- `--append-filter-subdir` put each filter in its own subdir
+- `-c, --connections` per-file range connections (default: `8`)
+- `--max-active` max files downloading at once (default: `GOMAXPROCS`)
+- `--multipart-threshold` only range-download files ≥ threshold (default: `32MiB`)
+- `--verify` non-LFS verification: `none|size|etag|sha256` (LFS verifies sha when provided unless `none`)
+- `--retries`, `--backoff-initial`, `--backoff-max` retry policy
+- `--dry-run` (with `--plan-format table|json`) to print plan only
+- `--resume` (default **true**), `--overwrite` (mutually exclusive behavior)
+- `-t, --token` or `HF_TOKEN` for gated repos
+- `--json`, `--quiet`, `--verbose`
+- `--config` path to JSON config (if not set, `~/.config/hfdownloader.json` is used when present)
+
+**Examples**
+```bash
+# Model with filters
+HF_TOKEN=xxxx hfdownloader download TheBloke/vicuna-13b-v1.3.0-GGML:q4_0,q5_0 \
+  --append-filter-subdir -o ./Models -c 8 --max-active 3
+
+# Dataset
+hfdownloader download facebook/flores --dataset -o ./Datasets
+
+# Plan only
+hfdownloader download TheBloke/Mistral-7B-Instruct-v0.2-GGUF:q4_0 --dry-run --plan-format json
+
+# Stricter verification
+hfdownloader download myorg/myrepo --verify etag
 ```
 
-It will automatically request higher 'sudo' privileges if required. You can specify the install destination with `-p`.
+## Library
 
-```shell
-bash <(curl -sSL https://g.bodaay.io/hfd) -i -p ~/.local/bin/
+New API:
+```go
+err := hfdownloader.Download(context.Background(), hfdownloader.Options{
+    Repo: "owner/name",
+    OutputDir: "Storage",
+    // set flags as needed...
+    Progress: func(ev hfdownloader.ProgressEvent) { ... },
+})
 ```
 
-## Quick Download and Run Examples (Linux/Mac/Windows WSL2)
+Removed v1.x symbols:
+- `DownloadModel` and globals like `NumConnections`, `RequiresAuth`, `AuthToken`.
+Use `Options` + `Download` instead.
 
-The bash script just downloads the binary based on your OS/architecture and runs it.
+## Config
 
-### Download Model: TheBloke/orca_mini_7B-GPTQ
+`hfdownloader generate-config` writes an example to `~/.config/hfdownloader.json`.  
+Download honors `--config` or the default file if present (values act as flag defaults unless overridden on the CLI).
 
-```shell
-bash <(curl -sSL https://g.bodaay.io/hfd) -m TheBloke/orca_mini_7B-GPTQ
-```
+## Notes
 
-### Download Model: TheBloke/vicuna-13b-v1.3.0-GGML and Get GGML Variant: q4_0
-
-```shell
-bash <(curl -sSL https://g.bodaay.io/hfd) -m TheBloke/vicuna-13b-v1.3.0-GGML:q4_0
-```
-
-### Download Model: TheBloke/vicuna-13b-v1.3.0-GGML and Get GGML Variants: q4_0,q5_0 in Separate Folders
-
-```shell
-bash <(curl -sSL https://g.bodaay.io/hfd) -f -m TheBloke/vicuna-13b-v1.3.0-GGML:q4_0,q5_0
-```
-
-### Download Model with 8 Connections and Save into /workspace/
-
-```shell
-bash <(curl -sSL https://g.bodaay.io/hfd) -m TheBloke/vicuna-13b-v1.3.0-GGML:q4_0,q4_K_S -c 8 -s /workspace/
-```
-
-### Download Model to the Current Directory
-
-```shell
-bash <(curl -sSL https://g.bodaay.io/hfd) -j TheBloke/vicuna-13b-v1.3.0-GGML:q4_0
-```
-
-## Usage
-
-```shell
-hfdownloader [flags]
-```
-
-## Flags
-
-- `-m, --model string`: Model/Dataset name (required if dataset not set). You can supply filters for required LFS model files. Filters will discard any LFS file ending with .bin, .act, .safetensors, .zip that are missing the supplied filtered out.
-- `-d, --dataset string`: Dataset name (required if model not set).
-- `-f, --appendFilterFolder bool`: Append the filter name to the folder, use it for GGML quantized filtered download only (optional).
-- `-k, --skipSHA bool`: Skip SHA256 checking for LFS files, useful when trying to resume interrupted downloads and complete missing files quickly (optional).
-- `-b, --branch string`: Model/Dataset branch (optional, default "main").
-- `-s, --storage string`: Storage path (optional, default "Storage").
-- `-c, --concurrent int`: Number of LFS concurrent connections (optional, default 5).
-- `-t, --token string`: HuggingFace Access Token, can be supplied by env variable 'HF_TOKEN' or .env file (optional).
-- `-i, --install bool`: Install the binary to the OS default bin folder, Unix-like operating systems only.
-- `-p, --installPath string`: Specify install path, used with `-i` (optional).
-- `-j, --justDownload bool`: Just download the model to the current directory and assume the first argument is the model name.
-- `-q, --silentMode bool`: Disable progress bar printing.
-- `-h, --help`: Help for hfdownloader.
-
-## Examples
-
-### Model Example
-
-```shell
-hfdownloader -m TheBloke/WizardLM-13B-V1.0-Uncensored-GPTQ -c 10 -s MyModels
-```
-
-### Dataset Example
-
-```shell
-hfdownloader -d facebook/flores -c 10 -s MyDatasets
-```
-
-## Features
-
-- Nested file downloading of the model
-- Multithreaded downloading of large files (LFS)
-- Filter downloads for specific LFS model files (useful for GGML/GGUFs)
-- Simple utility that can be used as a library or a single binary
-- SHA256 checksum verification for downloaded models
-- Skipping previously downloaded files
-- Resume progress for interrupted downloads
-- Simple file size matching for non-LFS files
-- Support for HuggingFace Access Token for restricted models/datasets
-- Configuration File Support: You can now create a configuration file at `~/.config/hfdownloader.json` to set default values for all command flags.
-- Generate Configuration File: A new command `hfdownloader generate-config` generates an example configuration file with default values at the above path.
-- Existing downloads will be updated if the model/dataset already exists in the storage path and new files or versions are available.
+- ETag/sha metadata saved to `.hfdownloader.meta.json` under the repo folder improves skip decisions in future runs.
+- Range requests require `Accept-Ranges: bytes` on the resolved URL. If unsupported, the tool falls back to single GET (based on the plan’s capability check).
