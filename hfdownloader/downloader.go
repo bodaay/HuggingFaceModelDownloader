@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -77,6 +78,8 @@ func PlanRepo(ctx context.Context, job Job, cfg Settings) (*Plan, error) {
 // Skip decisions rely ONLY on the filesystem:
 //   - LFS files: sha256 comparison when SHA is available.
 //   - non-LFS files: size comparison.
+//
+// Cancellation: all loops/sleeps/requests are tied to ctx for fast abort.
 func Download(ctx context.Context, job Job, cfg Settings, progress ProgressFunc) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -129,36 +132,71 @@ func Download(ctx context.Context, job Job, cfg Settings, progress ProgressFunc)
 		return err
 	}
 
-	// Overall concurrency limiter
+	// Overall concurrency limiter (ctx-aware acquisition)
 	type token struct{}
 	lim := make(chan token, cfg.MaxActiveDownloads)
 
 	var wg sync.WaitGroup
 	errCh := make(chan error, len(plan.Items))
 
+	// To print "skip" only once per file per run
+	var skipOnce sync.Map // map[path]struct{}
+
+	var skippedCount int64
+	var downloadedCount int64
+
+LOOP:
 	for _, item := range plan.Items {
-		it := item // capture
+		// Stop scheduling more work once canceled
+		select {
+		case <-ctx.Done():
+			break LOOP
+		default:
+		}
+
+		it := item // capture for goroutine
 		emit(ProgressEvent{Event: "plan_item", Path: it.RelativePath, Total: it.Size})
-		lim <- token{}
+
+		// Acquire a slot or abort if canceled
+		select {
+		case lim <- token{}:
+		case <-ctx.Done():
+			break LOOP
+		}
+
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			defer func() { <-lim }()
 
+			// Per-file context; ensures all inner loops stop on cancellation
+			fileCtx, fileCancel := context.WithCancel(ctx)
+			defer fileCancel()
+
 			dst := filepath.Join(destinationBase(job, cfg), it.RelativePath)
 			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-				errCh <- err
+				select { // don't block on emit if we're canceled
+				case errCh <- err:
+				default:
+				}
 				return
 			}
 
 			// Filesystem-based skip/resume
 			alreadyOK, reason, err := shouldSkipLocal(it, dst)
 			if err != nil {
-				errCh <- err
+				select {
+				case errCh <- err:
+				default:
+				}
 				return
 			}
 			if alreadyOK {
-				emit(ProgressEvent{Event: "file_done", Path: it.RelativePath, Message: "skip (" + reason + ")"})
+				// Ensure we print "skip" at most once for this path in this run.
+				if _, loaded := skipOnce.LoadOrStore(it.RelativePath, struct{}{}); !loaded {
+					emit(ProgressEvent{Event: "file_done", Path: it.RelativePath, Message: "skip (" + reason + ")"})
+					atomic.AddInt64(&skippedCount, 1)
+				}
 				return
 			}
 
@@ -167,46 +205,60 @@ func Download(ctx context.Context, job Job, cfg Settings, progress ProgressFunc)
 			// Choose single/multipart path
 			var dlErr error
 			if it.Size >= thresholdBytes && it.AcceptRanges {
-				dlErr = downloadMultipart(ctx, httpc, cfg.Token, job, cfg, it, dst, emit)
+				dlErr = downloadMultipart(fileCtx, httpc, cfg.Token, job, cfg, it, dst, emit)
 			} else {
-				dlErr = downloadSingle(ctx, httpc, cfg.Token, job, cfg, it, dst, emit)
+				dlErr = downloadSingle(fileCtx, httpc, cfg.Token, job, cfg, it, dst, emit)
 			}
 			if dlErr != nil {
-				errCh <- fmt.Errorf("download %s: %w", it.RelativePath, dlErr)
+				select {
+				case errCh <- fmt.Errorf("download %s: %w", it.RelativePath, dlErr):
+				default:
+				}
 				return
 			}
 
 			// Verify after download
 			if it.LFS && it.SHA256 != "" {
 				if err := verifySHA256(dst, it.SHA256); err != nil {
-					errCh <- fmt.Errorf("sha256 verify failed: %s: %w", it.RelativePath, err)
+					select {
+					case errCh <- fmt.Errorf("sha256 verify failed: %s: %w", it.RelativePath, err):
+					default:
+					}
 					return
 				}
 			} else if cfg.Verify == "size" && it.Size > 0 {
 				fi, err := os.Stat(dst)
 				if err != nil || fi.Size() != it.Size {
-					errCh <- fmt.Errorf("size mismatch for %s", it.RelativePath)
+					select {
+					case errCh <- fmt.Errorf("size mismatch for %s", it.RelativePath):
+					default:
+					}
 					return
 				}
 			} else if cfg.Verify == "sha256" {
 				// For non-LFS, try remote-provided sha via HEAD (if present)
-				_, remoteSha, _ := headForETag(ctx, httpc, cfg.Token, it)
+				_, remoteSha, _ := headForETag(fileCtx, httpc, cfg.Token, it)
 				if remoteSha != "" {
 					if err := verifySHA256(dst, remoteSha); err != nil {
-						errCh <- fmt.Errorf("sha256 verify failed: %s: %w", it.RelativePath, err)
+						select {
+						case errCh <- fmt.Errorf("sha256 verify failed: %s: %w", it.RelativePath, err):
+						default:
+						}
 						return
 					}
 				}
 			}
 
 			emit(ProgressEvent{Event: "file_done", Path: it.RelativePath})
+			atomic.AddInt64(&downloadedCount, 1)
 		}()
 	}
 
+	// Wait for all started workers
 	wg.Wait()
 	close(errCh)
 
-	// Drain errors; handle first non-nil
+	// Drain errors; handle first non-nil (prevents nil deref panic).
 	var firstErr error
 	for e := range errCh {
 		if e != nil {
@@ -219,7 +271,15 @@ func Download(ctx context.Context, job Job, cfg Settings, progress ProgressFunc)
 		return firstErr
 	}
 
-	emit(ProgressEvent{Event: "done", Message: "download complete"})
+	// If canceled, surface context error (fast abort) rather than "complete"
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	emit(ProgressEvent{
+		Event:   "done",
+		Message: fmt.Sprintf("download complete (downloaded %d, skipped %d)", downloadedCount, skippedCount),
+	})
 	return nil
 }
 
@@ -247,14 +307,24 @@ func destinationBase(job Job, cfg Settings) string {
 
 func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cfg Settings) (*Plan, error) {
 	var items []PlanItem
+	seen := make(map[string]struct{}) // ensure each relative path appears once in the plan
+
 	err := walkTree(ctx, httpc, token, job, "", func(n hfNode) error {
 		if n.Type != "file" && n.Type != "blob" {
 			return nil
 		}
 		rel := n.Path
-		name := filepath.Base(rel)
 
+		// Deduplicate by relative path
+		if _, ok := seen[rel]; ok {
+			return nil
+		}
+		seen[rel] = struct{}{}
+
+		name := filepath.Base(rel)
 		isLFS := n.LFS != nil
+
+		// Optional LFS filter matching
 		if isLFS && len(job.Filters) > 0 {
 			matched := false
 			for _, f := range job.Filters {
@@ -459,6 +529,13 @@ func downloadSingle(ctx context.Context, httpc *http.Client, token string, job J
 	retry := newRetry(cfg)
 	var lastErr error
 	for attempt := 0; attempt <= cfg.Retries; attempt++ {
+		// Abort promptly if canceled
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		req, _ := http.NewRequestWithContext(ctx, "GET", it.URL, nil)
 		addAuth(req, token)
 		resp, err := httpc.Do(req)
@@ -468,7 +545,7 @@ func downloadSingle(ctx context.Context, httpc *http.Client, token string, job J
 			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 				lastErr = fmt.Errorf("bad status: %s", resp.Status)
 			} else {
-				_, cerr := io.Copy(out, resp.Body)
+				_, cerr := io.Copy(out, resp.Body) // Read returns fast on ctx cancel
 				resp.Body.Close()
 				if cerr == nil {
 					out.Close()
@@ -479,7 +556,9 @@ func downloadSingle(ctx context.Context, httpc *http.Client, token string, job J
 		}
 		if attempt < cfg.Retries {
 			emit(ProgressEvent{Event: "retry", Path: it.RelativePath, Attempt: attempt + 1, Message: lastErr.Error()})
-			time.Sleep(retry.Next())
+			if d := retry.Next(); !sleepCtx(ctx, d) {
+				return ctx.Err()
+			}
 			continue
 		}
 		break
@@ -542,6 +621,13 @@ func downloadMultipart(ctx context.Context, httpc *http.Client, token string, jo
 			retry := newRetry(cfg)
 			var lastErr error
 			for attempt := 0; attempt <= cfg.Retries; attempt++ {
+				// Abort promptly if canceled
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
 				rq, _ := http.NewRequestWithContext(ctx, "GET", it.URL, nil)
 				addAuth(rq, token)
 				rq.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
@@ -556,7 +642,7 @@ func downloadMultipart(ctx context.Context, httpc *http.Client, token string, jo
 					if err != nil {
 						lastErr = err
 					} else {
-						_, lastErr = io.Copy(out, rs.Body)
+						_, lastErr = io.Copy(out, rs.Body) // returns fast on ctx cancel
 						out.Close()
 					}
 					rs.Body.Close()
@@ -566,20 +652,26 @@ func downloadMultipart(ctx context.Context, httpc *http.Client, token string, jo
 				}
 				if attempt < cfg.Retries {
 					emit(ProgressEvent{Event: "retry", Path: it.RelativePath, Attempt: attempt + 1, Message: lastErr.Error()})
-					time.Sleep(retry.Next())
+					if d := retry.Next(); !sleepCtx(ctx, d) {
+						return
+					}
 				}
 			}
-			errCh <- lastErr
+			select {
+			case errCh <- lastErr:
+			default:
+			}
 		}()
 	}
 
-	// Emit periodic progress
-	done := make(chan struct{})
+	// Emit periodic progress (stops on ctx cancel)
 	go func() {
 		t := time.NewTicker(1 * time.Second)
 		defer t.Stop()
 		for {
 			select {
+			case <-ctx.Done():
+				return
 			case <-t.C:
 				var bytes int64
 				for _, p := range tmpParts {
@@ -588,14 +680,12 @@ func downloadMultipart(ctx context.Context, httpc *http.Client, token string, jo
 					}
 				}
 				emit(ProgressEvent{Event: "file_progress", Path: it.RelativePath, Bytes: bytes, Total: it.Size})
-			case <-done:
-				return
 			}
 		}
 	}()
 
 	wg.Wait()
-	close(done)
+	// Non-blocking error read (if any part failed)
 	select {
 	case e := <-errCh:
 		return e
@@ -690,6 +780,18 @@ func (b *backoff) Next() time.Duration {
 		b.next = b.max
 	}
 	return d
+}
+
+// sleepCtx waits for d or returns false if ctx is canceled first.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func verifySHA256(path string, expected string) error {
