@@ -42,106 +42,100 @@ func IsValidModelName(modelName string) bool {
 }
 
 // ------------------------
-// Downloader entrypoint (v2)
+// Public API
 // ------------------------
 
-func Download(ctx context.Context, opts Options) error {
+type PlanItem struct {
+	RelativePath string `json:"path"`
+	URL          string `json:"url"`
+	LFS          bool   `json:"lfs"`
+	SHA256       string `json:"sha256,omitempty"`
+	Size         int64  `json:"size"`
+	AcceptRanges bool   `json:"acceptRanges"`
+}
+
+type Plan struct {
+	Items []PlanItem `json:"items"`
+}
+
+// Plan builds the file list without downloading.
+func PlanRepo(ctx context.Context, job Job, cfg Settings) (*Plan, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if opts.Repo == "" {
-		return errors.New("missing repo")
+	if err := validate(job, cfg); err != nil {
+		return nil, err
 	}
-	if opts.OutputDir == "" {
-		opts.OutputDir = "Storage"
+	if job.Revision == "" {
+		job.Revision = "main"
 	}
-	if opts.Revision == "" {
-		opts.Revision = "main"
-	}
-	if opts.Concurrency <= 0 {
-		opts.Concurrency = 8
-	}
-	if opts.MaxActiveDownloads <= 0 {
-		opts.MaxActiveDownloads = runtime.GOMAXPROCS(0)
-	}
-	if opts.Retries < 0 {
-		opts.Retries = 0
-	}
+	httpc := buildHTTPClient()
+	return scanRepo(ctx, httpc, cfg.Token, job, cfg)
+}
 
-	thresholdBytes, err := parseSizeString(opts.MultipartThreshold, 32<<20) // 32MiB default
-	if err != nil {
-		return fmt.Errorf("invalid --multipart-threshold: %w", err)
+// Download scans and downloads. Resume is always ON.
+// Skip decisions rely ONLY on the filesystem:
+//   - LFS files: sha256 comparison when SHA is available.
+//   - non-LFS files: size comparison.
+func Download(ctx context.Context, job Job, cfg Settings, progress ProgressFunc) error {
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	// backoffInitial, err := time.ParseDuration(defaultString(opts.BackoffInitial, "400ms"))
-	// if err != nil {
-	// 	return fmt.Errorf("invalid --backoff-initial: %w", err)
-	// }
-	// backoffMax, err := time.ParseDuration(defaultString(opts.BackoffMax, "10s"))
-	// if err != nil {
-	// 	return fmt.Errorf("invalid --backoff-max: %w", err)
-	// }
+	if err := validate(job, cfg); err != nil {
+		return err
+	}
+	if job.Revision == "" {
+		job.Revision = "main"
+	}
+	if cfg.OutputDir == "" {
+		cfg.OutputDir = "Storage"
+	}
+	if cfg.Concurrency <= 0 {
+		cfg.Concurrency = 8
+	}
+	if cfg.MaxActiveDownloads <= 0 {
+		cfg.MaxActiveDownloads = runtime.GOMAXPROCS(0)
+	}
+	thresholdBytes, err := parseSizeString(cfg.MultipartThreshold, 32<<20) // 32MiB default
+	if err != nil {
+		return fmt.Errorf("invalid multipart-threshold: %w", err)
+	}
 
 	httpc := buildHTTPClient()
-	authToken := strings.TrimSpace(opts.Token)
-
 	emit := func(ev ProgressEvent) {
-		if opts.Progress != nil {
+		if progress != nil {
 			if ev.Time.IsZero() {
 				ev.Time = time.Now()
 			}
 			if ev.Repo == "" {
-				ev.Repo = opts.Repo
+				ev.Repo = job.Repo
 			}
 			if ev.Revision == "" {
-				ev.Revision = opts.Revision
+				ev.Revision = job.Revision
 			}
-			opts.Progress(ev)
+			progress(ev)
 		}
 	}
 
 	emit(ProgressEvent{Event: "scan_start", Message: "scanning repo"})
 
-	// Build the plan
-	plan, planErr := scanRepo(ctx, httpc, authToken, opts)
-	if planErr != nil {
-		return planErr
+	plan, err := scanRepo(ctx, httpc, cfg.Token, job, cfg)
+	if err != nil {
+		return err
 	}
 
-	if opts.DryRun {
-		// Print plan and exit
-		if opts.PlanFormat == "json" {
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			if err := enc.Encode(plan); err != nil {
-				return err
-			}
-		} else {
-			fmt.Printf("Plan for %s@%s (%d files):\n", opts.Repo, opts.Revision, len(plan.Items))
-			for _, it := range plan.Items {
-				fmt.Printf("  %s  %8d  lfs=%t\n", it.RelativePath, it.Size, it.LFS)
-			}
-		}
-		return nil
+	// Ensure destination root exists
+	if err := os.MkdirAll(destinationBase(job, cfg), 0o755); err != nil {
+		return err
 	}
 
 	// Overall concurrency limiter
 	type token struct{}
-	lim := make(chan token, opts.MaxActiveDownloads)
-
-	// Load metadata
-	metaPath := filepath.Join(destinationBase(opts), ".hfdownloader.meta.json")
-	meta, _ := loadMeta(metaPath)
-	if meta == nil {
-		meta = &metaFile{Files: map[string]fileMeta{}}
-	}
-
-	// Create destination root
-	if err := os.MkdirAll(destinationBase(opts), 0o755); err != nil {
-		return err
-	}
+	lim := make(chan token, cfg.MaxActiveDownloads)
 
 	var wg sync.WaitGroup
 	errCh := make(chan error, len(plan.Items))
+
 	for _, item := range plan.Items {
 		it := item // capture
 		emit(ProgressEvent{Event: "plan_item", Path: it.RelativePath, Total: it.Size})
@@ -149,67 +143,58 @@ func Download(ctx context.Context, opts Options) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			defer func() { <-lim }() // release
+			defer func() { <-lim }()
 
-			// Determine destination path
-			dst := filepath.Join(destinationBase(opts), it.RelativePath)
+			dst := filepath.Join(destinationBase(job, cfg), it.RelativePath)
 			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 				errCh <- err
 				return
 			}
 
-			// Skip logic based on verify mode & metadata
-			alreadyOK, reason, err := shouldSkip(ctx, httpc, authToken, opts, meta, it, dst)
+			// Filesystem-based skip/resume
+			alreadyOK, reason, err := shouldSkipLocal(it, dst)
 			if err != nil {
 				errCh <- err
 				return
 			}
-			if alreadyOK && !opts.Overwrite {
+			if alreadyOK {
 				emit(ProgressEvent{Event: "file_done", Path: it.RelativePath, Message: "skip (" + reason + ")"})
 				return
 			}
 
 			emit(ProgressEvent{Event: "file_start", Path: it.RelativePath, Total: it.Size})
 
-			// Choose single/multipart
+			// Choose single/multipart path
 			var dlErr error
 			if it.Size >= thresholdBytes && it.AcceptRanges {
-				dlErr = downloadMultipart(ctx, httpc, authToken, opts, it, dst, emit)
+				dlErr = downloadMultipart(ctx, httpc, cfg.Token, job, cfg, it, dst, emit)
 			} else {
-				dlErr = downloadSingle(ctx, httpc, authToken, opts, it, dst, emit)
+				dlErr = downloadSingle(ctx, httpc, cfg.Token, job, cfg, it, dst, emit)
 			}
-
 			if dlErr != nil {
 				errCh <- fmt.Errorf("download %s: %w", it.RelativePath, dlErr)
 				return
 			}
 
-			// Verify
-			if opts.Verify != "none" {
-				if it.LFS && it.SHA256 != "" {
-					if err := verifySHA256(dst, it.SHA256); err != nil {
+			// Verify after download
+			if it.LFS && it.SHA256 != "" {
+				if err := verifySHA256(dst, it.SHA256); err != nil {
+					errCh <- fmt.Errorf("sha256 verify failed: %s: %w", it.RelativePath, err)
+					return
+				}
+			} else if cfg.Verify == "size" && it.Size > 0 {
+				fi, err := os.Stat(dst)
+				if err != nil || fi.Size() != it.Size {
+					errCh <- fmt.Errorf("size mismatch for %s", it.RelativePath)
+					return
+				}
+			} else if cfg.Verify == "sha256" {
+				// For non-LFS, try remote-provided sha via HEAD (if present)
+				_, remoteSha, _ := headForETag(ctx, httpc, cfg.Token, it)
+				if remoteSha != "" {
+					if err := verifySHA256(dst, remoteSha); err != nil {
 						errCh <- fmt.Errorf("sha256 verify failed: %s: %w", it.RelativePath, err)
 						return
-					}
-				} else {
-					switch opts.Verify {
-					case "size":
-						fi, err := os.Stat(dst)
-						if err != nil || fi.Size() != it.Size {
-							errCh <- fmt.Errorf("size mismatch for %s", it.RelativePath)
-							return
-						}
-					case "etag", "sha256":
-						etag, remoteSha, _ := headForETag(ctx, httpc, authToken, it)
-						if opts.Verify == "etag" && etag != "" {
-							meta.Files[it.RelativePath] = fileMeta{ETag: etag, Size: it.Size, Sha256: remoteSha}
-						} else if opts.Verify == "sha256" && remoteSha != "" {
-							if err := verifySHA256(dst, remoteSha); err != nil {
-								errCh <- fmt.Errorf("sha256 verify failed: %s: %w", it.RelativePath, err)
-								return
-							}
-							meta.Files[it.RelativePath] = fileMeta{Sha256: remoteSha, Size: it.Size, ETag: etag}
-						}
 					}
 				}
 			}
@@ -221,21 +206,30 @@ func Download(ctx context.Context, opts Options) error {
 	wg.Wait()
 	close(errCh)
 
-	// Persist metadata only if no errors
-	select {
-	case err := <-errCh:
-		emit(ProgressEvent{Level: "error", Event: "error", Message: err.Error()})
-		return err
-	default:
-		// no error collected
+	// Drain errors; handle first non-nil
+	var firstErr error
+	for e := range errCh {
+		if e != nil {
+			firstErr = e
+			break
+		}
 	}
-
-	if err := saveMeta(metaPath, meta); err != nil {
-		emit(ProgressEvent{Level: "warn", Event: "done", Message: "download complete (metadata save failed: " + err.Error() + ")"})
-		return nil
+	if firstErr != nil {
+		emit(ProgressEvent{Level: "error", Event: "error", Message: firstErr.Error()})
+		return firstErr
 	}
 
 	emit(ProgressEvent{Event: "done", Message: "download complete"})
+	return nil
+}
+
+func validate(job Job, cfg Settings) error {
+	if job.Repo == "" {
+		return errors.New("missing repo")
+	}
+	if !IsValidModelName(job.Repo) {
+		return fmt.Errorf("invalid repo id %q (expected owner/name)", job.Repo)
+	}
 	return nil
 }
 
@@ -243,31 +237,17 @@ func Download(ctx context.Context, opts Options) error {
 // Planning & API
 // ------------------------
 
-type planItem struct {
-	RelativePath string `json:"path"`
-	URL          string `json:"url"`
-	LFS          bool   `json:"lfs"`
-	SHA256       string `json:"sha256,omitempty"`
-	Size         int64  `json:"size"`
-	AcceptRanges bool   `json:"acceptRanges"`
-}
-
-type plan struct {
-	Items []planItem `json:"items"`
-}
-
-func destinationBase(opts Options) string {
-	base := filepath.Join(opts.OutputDir, opts.Repo)
-	if opts.AppendFilterSubdir && len(opts.Filters) == 1 {
-		base = filepath.Join(base, opts.Filters[0])
+func destinationBase(job Job, cfg Settings) string {
+	base := filepath.Join(cfg.OutputDir, job.Repo)
+	if job.AppendFilterSubdir && len(job.Filters) == 1 {
+		base = filepath.Join(base, job.Filters[0])
 	}
 	return base
 }
 
-func scanRepo(ctx context.Context, httpc *http.Client, token string, opts Options) (*plan, error) {
-	var items []planItem
-	// recursively walk tree
-	err := walkTree(ctx, httpc, token, opts, "", func(n hfNode) error {
+func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cfg Settings) (*Plan, error) {
+	var items []PlanItem
+	err := walkTree(ctx, httpc, token, job, "", func(n hfNode) error {
 		if n.Type != "file" && n.Type != "blob" {
 			return nil
 		}
@@ -275,9 +255,9 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, opts Option
 		name := filepath.Base(rel)
 
 		isLFS := n.LFS != nil
-		if isLFS && len(opts.Filters) > 0 {
+		if isLFS && len(job.Filters) > 0 {
 			matched := false
-			for _, f := range opts.Filters {
+			for _, f := range job.Filters {
 				if strings.Contains(name, f) {
 					matched = true
 					break
@@ -295,28 +275,27 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, opts Option
 		// Build URL and file size
 		var urlStr string
 		if isLFS {
-			urlStr = lfsURL(opts, rel)
+			urlStr = lfsURL(job, rel)
 		} else {
-			urlStr = rawURL(opts, rel)
+			urlStr = rawURL(job, rel)
 		}
 		size := n.Size
 		if size == 0 && n.LFS != nil && n.LFS.Size > 0 {
 			size = n.LFS.Size
 		}
 
-		// HEAD for Accept-Ranges (best-effort)
+		// Best-effort Accept-Ranges
 		acceptRanges := false
 		if headOK, accept := quickHeadAcceptRanges(ctx, httpc, token, urlStr); headOK {
 			acceptRanges = accept
 		}
 
-		// Safely select sha256 from node or its LFS metadata (if present)
 		sha := n.Sha256
 		if sha == "" && n.LFS != nil {
 			sha = n.LFS.Sha256
 		}
 
-		items = append(items, planItem{
+		items = append(items, PlanItem{
 			RelativePath: rel,
 			URL:          urlStr,
 			LFS:          isLFS,
@@ -329,29 +308,28 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, opts Option
 	if err != nil {
 		return nil, err
 	}
-
-	return &plan{Items: items}, nil
+	return &Plan{Items: items}, nil
 }
 
-func rawURL(opts Options, path string) string {
-	if opts.IsDataset {
-		return fmt.Sprintf(RawDatasetFileURL, url.PathEscape(opts.Repo), url.PathEscape(opts.Revision), pathEscapeAll(path))
+func rawURL(job Job, path string) string {
+	if job.IsDataset {
+		return fmt.Sprintf(RawDatasetFileURL, url.PathEscape(job.Repo), url.PathEscape(job.Revision), pathEscapeAll(path))
 	}
-	return fmt.Sprintf(RawModelFileURL, url.PathEscape(opts.Repo), url.PathEscape(opts.Revision), pathEscapeAll(path))
+	return fmt.Sprintf(RawModelFileURL, url.PathEscape(job.Repo), url.PathEscape(job.Revision), pathEscapeAll(path))
 }
 
-func lfsURL(opts Options, path string) string {
-	if opts.IsDataset {
-		return fmt.Sprintf(LfsDatasetResolverURL, url.PathEscape(opts.Repo), url.PathEscape(opts.Revision), pathEscapeAll(path))
+func lfsURL(job Job, path string) string {
+	if job.IsDataset {
+		return fmt.Sprintf(LfsDatasetResolverURL, url.PathEscape(job.Repo), url.PathEscape(job.Revision), pathEscapeAll(path))
 	}
-	return fmt.Sprintf(LfsModelResolverURL, url.PathEscape(opts.Repo), url.PathEscape(opts.Revision), pathEscapeAll(path))
+	return fmt.Sprintf(LfsModelResolverURL, url.PathEscape(job.Repo), url.PathEscape(job.Revision), pathEscapeAll(path))
 }
 
-func treeURL(opts Options, prefix string) string {
-	if opts.IsDataset {
-		return fmt.Sprintf(JsonDatasetFileTreeURL, url.PathEscape(opts.Repo), url.PathEscape(opts.Revision), pathEscapeAll(prefix))
+func treeURL(job Job, prefix string) string {
+	if job.IsDataset {
+		return fmt.Sprintf(JsonDatasetFileTreeURL, url.PathEscape(job.Repo), url.PathEscape(job.Revision), pathEscapeAll(prefix))
 	}
-	return fmt.Sprintf(JsonModelsFileTreeURL, url.PathEscape(opts.Repo), url.PathEscape(opts.Revision), pathEscapeAll(prefix))
+	return fmt.Sprintf(JsonModelsFileTreeURL, url.PathEscape(job.Repo), url.PathEscape(job.Revision), pathEscapeAll(prefix))
 }
 
 func pathEscapeAll(p string) string {
@@ -376,8 +354,8 @@ type hfLfsInfo struct {
 	Sha256 string `json:"sha256,omitempty"`
 }
 
-func walkTree(ctx context.Context, httpc *http.Client, token string, opts Options, prefix string, fn func(hfNode) error) error {
-	reqURL := treeURL(opts, prefix)
+func walkTree(ctx context.Context, httpc *http.Client, token string, job Job, prefix string, fn func(hfNode) error) error {
+	reqURL := treeURL(job, prefix)
 	req, _ := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	addAuth(req, token)
 	resp, err := httpc.Do(req)
@@ -387,17 +365,17 @@ func walkTree(ctx context.Context, httpc *http.Client, token string, opts Option
 	defer resp.Body.Close()
 	if resp.StatusCode == 401 {
 		base := AgreementModelURL
-		if opts.IsDataset {
+		if job.IsDataset {
 			base = AgreementDatasetURL
 		}
-		return fmt.Errorf("401 unauthorized: repo requires token or you do not have access (visit %s)", fmt.Sprintf(base, opts.Repo))
+		return fmt.Errorf("401 unauthorized: repo requires token or you do not have access (visit %s)", fmt.Sprintf(base, job.Repo))
 	}
 	if resp.StatusCode == 403 {
 		base := AgreementModelURL
-		if opts.IsDataset {
+		if job.IsDataset {
 			base = AgreementDatasetURL
 		}
-		return fmt.Errorf("403 forbidden: please accept the repository terms: %s", fmt.Sprintf(base, opts.Repo))
+		return fmt.Errorf("403 forbidden: please accept the repository terms: %s", fmt.Sprintf(base, job.Repo))
 	}
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("tree API failed: %s", resp.Status)
@@ -410,7 +388,7 @@ func walkTree(ctx context.Context, httpc *http.Client, token string, opts Option
 	for _, n := range nodes {
 		switch n.Type {
 		case "directory", "tree":
-			if err := walkTree(ctx, httpc, token, opts, n.Path, fn); err != nil {
+			if err := walkTree(ctx, httpc, token, job, n.Path, fn); err != nil {
 				return err
 			}
 		default:
@@ -457,7 +435,7 @@ func quickHeadAcceptRanges(ctx context.Context, httpc *http.Client, token string
 	return true, strings.Contains(strings.ToLower(resp.Header.Get("Accept-Ranges")), "bytes")
 }
 
-func headForETag(ctx context.Context, httpc *http.Client, token string, it planItem) (etag string, remoteSha string, _ error) {
+func headForETag(ctx context.Context, httpc *http.Client, token string, it PlanItem) (etag string, remoteSha string, _ error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, "HEAD", it.URL, nil)
@@ -470,7 +448,7 @@ func headForETag(ctx context.Context, httpc *http.Client, token string, it planI
 	return resp.Header.Get("ETag"), resp.Header.Get("x-amz-meta-sha256"), nil
 }
 
-func downloadSingle(ctx context.Context, httpc *http.Client, token string, opts Options, it planItem, dst string, emit func(ProgressEvent)) error {
+func downloadSingle(ctx context.Context, httpc *http.Client, token string, job Job, cfg Settings, it PlanItem, dst string, emit func(ProgressEvent)) error {
 	tmp := dst + ".part"
 	out, err := os.Create(tmp)
 	if err != nil {
@@ -478,9 +456,9 @@ func downloadSingle(ctx context.Context, httpc *http.Client, token string, opts 
 	}
 	defer out.Close()
 
-	retry := newRetry(opts)
+	retry := newRetry(cfg)
 	var lastErr error
-	for attempt := 0; attempt <= opts.Retries; attempt++ {
+	for attempt := 0; attempt <= cfg.Retries; attempt++ {
 		req, _ := http.NewRequestWithContext(ctx, "GET", it.URL, nil)
 		addAuth(req, token)
 		resp, err := httpc.Do(req)
@@ -499,7 +477,7 @@ func downloadSingle(ctx context.Context, httpc *http.Client, token string, opts 
 				lastErr = cerr
 			}
 		}
-		if attempt < opts.Retries {
+		if attempt < cfg.Retries {
 			emit(ProgressEvent{Event: "retry", Path: it.RelativePath, Attempt: attempt + 1, Message: lastErr.Error()})
 			time.Sleep(retry.Next())
 			continue
@@ -509,7 +487,7 @@ func downloadSingle(ctx context.Context, httpc *http.Client, token string, opts 
 	return lastErr
 }
 
-func downloadMultipart(ctx context.Context, httpc *http.Client, token string, opts Options, it planItem, dst string, emit func(ProgressEvent)) error {
+func downloadMultipart(ctx context.Context, httpc *http.Client, token string, job Job, cfg Settings, it PlanItem, dst string, emit func(ProgressEvent)) error {
 	// HEAD to resolve size
 	req, _ := http.NewRequestWithContext(ctx, "HEAD", it.URL, nil)
 	addAuth(req, token)
@@ -526,25 +504,23 @@ func downloadMultipart(ctx context.Context, httpc *http.Client, token string, op
 		}
 	}
 	if it.Size == 0 {
-		// Fallback to single
-		return downloadSingle(ctx, httpc, token, opts, it, dst, emit)
+		// Fallback
+		return downloadSingle(ctx, httpc, token, job, cfg, it, dst, emit)
 	}
 
 	// Plan parts
-	n := opts.Concurrency
+	n := cfg.Concurrency
 	chunk := it.Size / int64(n)
 	if chunk <= 0 {
 		chunk = it.Size
 		n = 1
 	}
 	tmpParts := make([]string, n)
-
-	// Prepare part names
 	for i := 0; i < n; i++ {
 		tmpParts[i] = fmt.Sprintf("%s.part-%02d", dst, i)
 	}
 
-	// Download parts in parallel
+	// Download parts in parallel with resume
 	var wg sync.WaitGroup
 	errCh := make(chan error, n)
 	for i := 0; i < n; i++ {
@@ -558,14 +534,14 @@ func downloadMultipart(ctx context.Context, httpc *http.Client, token string, op
 		go func() {
 			defer wg.Done()
 			tmp := tmpParts[i]
-			// Resume: if resume enabled and file exists with expected size, skip re-download
-			if fi, err := os.Stat(tmp); err == nil && fi.Size() == (end-start+1) && opts.Resume {
+			// Resume part: skip if already correct size
+			if fi, err := os.Stat(tmp); err == nil && fi.Size() == (end-start+1) {
 				return
 			}
 
-			retry := newRetry(opts)
+			retry := newRetry(cfg)
 			var lastErr error
-			for attempt := 0; attempt <= opts.Retries; attempt++ {
+			for attempt := 0; attempt <= cfg.Retries; attempt++ {
 				rq, _ := http.NewRequestWithContext(ctx, "GET", it.URL, nil)
 				addAuth(rq, token)
 				rq.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
@@ -588,7 +564,7 @@ func downloadMultipart(ctx context.Context, httpc *http.Client, token string, op
 						return
 					}
 				}
-				if attempt < opts.Retries {
+				if attempt < cfg.Retries {
 					emit(ProgressEvent{Event: "retry", Path: it.RelativePath, Attempt: attempt + 1, Message: lastErr.Error()})
 					time.Sleep(retry.Next())
 				}
@@ -620,7 +596,6 @@ func downloadMultipart(ctx context.Context, httpc *http.Client, token string, op
 
 	wg.Wait()
 	close(done)
-
 	select {
 	case e := <-errCh:
 		return e
@@ -647,12 +622,9 @@ func downloadMultipart(ctx context.Context, httpc *http.Client, token string, op
 		in.Close()
 	}
 	out.Close()
-
-	// Atomic rename
 	if err := os.Rename(dst+".part", dst); err != nil {
 		return err
 	}
-	// Cleanup parts
 	for _, p := range tmpParts {
 		_ = os.Remove(p)
 	}
@@ -660,74 +632,31 @@ func downloadMultipart(ctx context.Context, httpc *http.Client, token string, op
 }
 
 // ------------------------
-// Skip logic & metadata
+// Skip logic (filesystem-based; no persistent metadata)
 // ------------------------
 
-type fileMeta struct {
-	ETag   string `json:"etag,omitempty"`
-	Size   int64  `json:"size,omitempty"`
-	Sha256 string `json:"sha256,omitempty"`
-}
-type metaFile struct {
-	Files map[string]fileMeta `json:"files"`
-}
-
-func loadMeta(path string) (*metaFile, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var mf metaFile
-	if err := json.Unmarshal(b, &mf); err != nil {
-		return nil, err
-	}
-	if mf.Files == nil {
-		mf.Files = map[string]fileMeta{}
-	}
-	return &mf, nil
-}
-func saveMeta(path string, mf *metaFile) error {
-	tmp := path + ".tmp"
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	b, _ := json.MarshalIndent(mf, "", "  ")
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
-
-func shouldSkip(ctx context.Context, httpc *http.Client, token string, opts Options, meta *metaFile, it planItem, dst string) (bool, string, error) {
-	if opts.Overwrite {
-		return false, "", nil
-	}
+func shouldSkipLocal(it PlanItem, dst string) (bool, string, error) {
 	fi, err := os.Stat(dst)
 	if err != nil {
-		return false, "", nil // does not exist
+		// no file
+		return false, "", nil
 	}
-
-	// Prefer metadata when available
-	if m, ok := meta.Files[it.RelativePath]; ok {
-		if opts.Verify == "etag" && m.ETag != "" {
-			etag, _, _ := headForETag(ctx, httpc, token, it)
-			if etag != "" && etag == m.ETag {
-				return true, "etag match", nil
-			}
-		}
-		if it.LFS && it.SHA256 != "" && m.Sha256 == it.SHA256 {
+	// Quick size check first: if known and different, don't skip
+	if it.Size > 0 && fi.Size() != it.Size {
+		return false, "", nil
+	}
+	// LFS with known sha: compute and compare
+	if it.LFS && it.SHA256 != "" {
+		if err := verifySHA256(dst, it.SHA256); err == nil {
 			return true, "sha256 match", nil
 		}
-		if m.Size > 0 && fi.Size() == m.Size {
-			return true, "size match", nil
-		}
+		// size matched but sha mismatched -> re-download
+		return false, "", nil
 	}
-
-	// Fallback to size check
-	if fi.Size() == it.Size && it.Size > 0 {
+	// Non-LFS (or unknown sha): size match is sufficient
+	if it.Size > 0 && fi.Size() == it.Size {
 		return true, "size match", nil
 	}
-
 	return false, "", nil
 }
 
@@ -742,17 +671,18 @@ type backoff struct {
 	jitter time.Duration
 }
 
-func newRetry(opts Options) *backoff {
+func newRetry(cfg Settings) *backoff {
 	init := 400 * time.Millisecond
 	max := 10 * time.Second
-	if d, err := time.ParseDuration(defaultString(opts.BackoffInitial, "400ms")); err == nil {
+	if d, err := time.ParseDuration(defaultString(cfg.BackoffInitial, "400ms")); err == nil {
 		init = d
 	}
-	if d, err := time.ParseDuration(defaultString(opts.BackoffMax, "10s")); err == nil {
+	if d, err := time.ParseDuration(defaultString(cfg.BackoffMax, "10s")); err == nil {
 		max = d
 	}
 	return &backoff{next: init, max: max, mult: 1.6, jitter: 120 * time.Millisecond}
 }
+
 func (b *backoff) Next() time.Duration {
 	d := b.next + time.Duration(int64(b.jitter)*int64(time.Now().UnixNano()%3)/2)
 	b.next = time.Duration(float64(b.next) * b.mult)
@@ -811,15 +741,6 @@ func parseSizeString(s string, def int64) (int64, error) {
 	default:
 		return 0, fmt.Errorf("unknown unit %q", unit)
 	}
-}
-
-func firstNonEmpty(s ...string) string {
-	for _, v := range s {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 func defaultString(s string, def string) string {
