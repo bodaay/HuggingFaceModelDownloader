@@ -2,3 +2,4 @@
 output/
 Models/
 Storage/
+.DS_Store
