@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -385,6 +386,15 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 			sha = n.LFS.Sha256
 		}
 
+		// download LFS pointer file to get SHA256
+		if n.LFS != nil && sha == "" {
+			urlStrRawLFSPointer := rawURL(job, rel)
+			sha_ret, sha_value := downloadLFSPointerSHA256(ctx, httpc, token, urlStrRawLFSPointer)
+			if sha_ret {
+				sha = sha_value
+			}
+		}
+
 		items = append(items, PlanItem{
 			RelativePath: rel,
 			URL:          urlStr,
@@ -740,6 +750,60 @@ func downloadMultipart(ctx context.Context, httpc *http.Client, token string, jo
 		_ = os.Remove(p)
 	}
 	return nil
+}
+
+func downloadLFSPointerSHA256(ctx context.Context, httpc *http.Client, token string, urlStr string) (bool, string) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	// issue HEAD request for 'Content-Length' to make sure file is not "large" i.e. should be less than 1 MByte
+	{
+		req, _ := http.NewRequestWithContext(ctx, "HEAD", urlStr, nil)
+		addAuth(req, token)
+		resp, err := httpc.Do(req)
+		if err != nil {
+			return false, ""
+		}
+		if resp.StatusCode == http.StatusOK {
+			contentLengthStr := resp.Header.Get("Content-Length")
+			if contentLengthStr == "" {
+				// empty content length! bail out
+				return false, ""
+			}
+			contentLength, _ := strconv.ParseInt(contentLengthStr, 10, 64)
+			if contentLength > 1048576 {
+				// pointer file bigger than 1 MB, probably not a pointer, skip downloading!
+				return false, ""
+			}
+		} else {
+			// request returned an error, bail out
+			return false, ""
+		}
+	}
+
+	// get raw LFS pointer file
+	req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
+	addAuth(req, token)
+	resp, err := httpc.Do(req)
+	if err != nil {
+		return false, ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false, ""
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		// look for a line like 'oid sha256:<hash_value>'
+		if strings.HasPrefix(line, "oid") && strings.Contains(line, "sha256:") {
+			line_parts := strings.Split(line, ":")
+			sha256_value := line_parts[1]
+			return true, sha256_value
+		}
+	}
+	return false, ""
 }
 
 // ------------------------
