@@ -384,6 +384,11 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 		if sha == "" && n.LFS != nil {
 			sha = n.LFS.Sha256
 		}
+		
+		// missing LFS SHA256, use LFS OID as SHA256 instead
+		if isLFS && sha == "" {
+			sha = n.LFS.Oid
+		}
 
 		items = append(items, PlanItem{
 			RelativePath: rel,
