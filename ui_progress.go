@@ -24,7 +24,7 @@ type liveRenderer struct {
 	cfg hfdownloader.Settings
 
 	mu        sync.Mutex
-	start     time.Time
+	start     time.Time // wall-clock start time (kept for potential future use)
 	events    chan hfdownloader.ProgressEvent
 	done      chan struct{}
 	stopped   bool
@@ -40,7 +40,7 @@ type liveRenderer struct {
 	// per-file state
 	files map[string]*fileState
 
-	// overall rolling speed
+	// overall counters (currently unused but kept for potential future smoothing)
 	lastTotalBytes int64
 	lastTick       time.Time
 }
@@ -52,9 +52,10 @@ type fileState struct {
 	status string // "queued","downloading","done","skip","error"
 	err    string
 
-	// rolling speed
+	// rolling speed (last observed)
 	lastBytes int64
 	lastTime  time.Time
+	speed     float64
 
 	// metrics
 	started time.Time
@@ -147,8 +148,22 @@ func (lr *liveRenderer) apply(ev hfdownloader.ProgressEvent) {
 		fs := lr.ensure(ev.Path)
 		fs.total = ev.Total
 		fs.bytes = ev.Bytes
+		now := time.Now()
 		if fs.lastTime.IsZero() {
-			fs.lastTime = time.Now()
+			// initialize rolling window
+			fs.lastTime = now
+			fs.lastBytes = ev.Bytes
+			fs.speed = 0
+		} else {
+			dt := now.Sub(fs.lastTime).Seconds()
+			if dt > 0 {
+				delta := ev.Bytes - fs.lastBytes
+				if delta < 0 {
+					delta = 0
+				}
+				fs.speed = float64(delta) / dt
+			}
+			fs.lastTime = now
 			fs.lastBytes = ev.Bytes
 		}
 	case "file_done":
@@ -221,18 +236,13 @@ func (lr *liveRenderer) render(final bool) {
 		queued = 0
 	}
 
-	// overall speed
-	now := time.Now()
+	// overall "current" speed: sum of per-file rolling speeds for active downloads
 	speed := float64(0)
-	if !lr.lastTick.IsZero() && now.After(lr.lastTick) {
-		deltaB := aggBytes - lr.lastTotalBytes
-		deltaT := now.Sub(lr.lastTick).Seconds()
-		if deltaT > 0 {
-			speed = float64(deltaB) / deltaT
+	for _, fs := range active {
+		if fs.speed > 0 {
+			speed += fs.speed
 		}
 	}
-	lr.lastTick = now
-	lr.lastTotalBytes = aggBytes
 
 	// overall ETA
 	var etaStr string
@@ -386,17 +396,7 @@ func renderFileRow(fs *fileState, w int, lr *liveRenderer) string {
 	}
 
 	// speed (per-file)
-	now := time.Now()
-	speed := float64(0)
-	if !fs.lastTime.IsZero() {
-		dt := now.Sub(fs.lastTime).Seconds()
-		if dt > 0 {
-			delta := fs.bytes - fs.lastBytes
-			speed = float64(delta) / dt
-		}
-	}
-	fs.lastTime = now
-	fs.lastBytes = fs.bytes
+	speed := fs.speed
 	speedTxt := pad(humanBytes(int64(speed))+"/s", speedW)
 
 	// eta
