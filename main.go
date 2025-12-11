@@ -178,6 +178,8 @@ func finalize(cmd *cobra.Command, ro *rootOpts, args []string, job *hfdownloader
 	if !hfdownloader.IsValidModelName(j.Repo) {
 		return j, c, fmt.Errorf("invalid repo id %q (expected owner/name)", j.Repo)
 	}
+	// propagate verbose flag into settings so the library can emit debug logs
+	c.Verbose = ro.verbose
 	return j, c, nil
 }
 

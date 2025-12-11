@@ -29,8 +29,9 @@ const (
 	RawDatasetFileURL      = "https://huggingface.co/datasets/%s/raw/%s/%s"
 	LfsModelResolverURL    = "https://huggingface.co/%s/resolve/%s/%s"
 	LfsDatasetResolverURL  = "https://huggingface.co/datasets/%s/resolve/%s/%s"
-	JsonModelsFileTreeURL  = "https://huggingface.co/api/models/%s/tree/%s/%s"
-	JsonDatasetFileTreeURL = "https://huggingface.co/api/datasets/%s/tree/%s/%s"
+	// Tree endpoints: prefer documented base form with optional query params for path, pagination, etc.
+	JsonModelsFileTreeURL  = "https://huggingface.co/api/models/%s/tree/%s"
+	JsonDatasetFileTreeURL = "https://huggingface.co/api/datasets/%s/tree/%s"
 )
 
 // IsValidModelName checks "owner/name".
@@ -66,6 +67,8 @@ func PlanRepo(ctx context.Context, job Job, cfg Settings) (*Plan, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// Attach settings for optional verbose logging inside lower layers.
+	ctx = context.WithValue(ctx, settingsKey{}, cfg)
 	if err := validate(job, cfg); err != nil {
 		return nil, err
 	}
@@ -86,6 +89,8 @@ func Download(ctx context.Context, job Job, cfg Settings, progress ProgressFunc)
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// Attach settings for optional verbose logging inside lower layers.
+	ctx = context.WithValue(ctx, settingsKey{}, cfg)
 	if err := validate(job, cfg); err != nil {
 		return err
 	}
@@ -404,23 +409,34 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 
 func rawURL(job Job, path string) string {
 	if job.IsDataset {
-		return fmt.Sprintf(RawDatasetFileURL, url.PathEscape(job.Repo), url.PathEscape(job.Revision), pathEscapeAll(path))
+		return fmt.Sprintf(RawDatasetFileURL, job.Repo, url.PathEscape(job.Revision), pathEscapeAll(path))
 	}
-	return fmt.Sprintf(RawModelFileURL, url.PathEscape(job.Repo), url.PathEscape(job.Revision), pathEscapeAll(path))
+	return fmt.Sprintf(RawModelFileURL, job.Repo, url.PathEscape(job.Revision), pathEscapeAll(path))
 }
 
 func lfsURL(job Job, path string) string {
 	if job.IsDataset {
-		return fmt.Sprintf(LfsDatasetResolverURL, url.PathEscape(job.Repo), url.PathEscape(job.Revision), pathEscapeAll(path))
+		return fmt.Sprintf(LfsDatasetResolverURL, job.Repo, url.PathEscape(job.Revision), pathEscapeAll(path))
 	}
-	return fmt.Sprintf(LfsModelResolverURL, url.PathEscape(job.Repo), url.PathEscape(job.Revision), pathEscapeAll(path))
+	return fmt.Sprintf(LfsModelResolverURL, job.Repo, url.PathEscape(job.Revision), pathEscapeAll(path))
 }
 
 func treeURL(job Job, prefix string) string {
+	base := JsonModelsFileTreeURL
 	if job.IsDataset {
-		return fmt.Sprintf(JsonDatasetFileTreeURL, url.PathEscape(job.Repo), url.PathEscape(job.Revision), pathEscapeAll(prefix))
+		base = JsonDatasetFileTreeURL
 	}
-	return fmt.Sprintf(JsonModelsFileTreeURL, url.PathEscape(job.Repo), url.PathEscape(job.Revision), pathEscapeAll(prefix))
+
+	// Base URL: /api/models/{repo}/tree/{revision}
+	// NOTE: repo id must NOT include an url-encoded slash; use raw repo id segment.
+	baseURL := fmt.Sprintf(base, job.Repo, url.PathEscape(job.Revision))
+	// No prefix: return base URL directly (root tree)
+	if strings.TrimSpace(prefix) == "" {
+		return baseURL
+	}
+	// Subdirectories: append as path segments (legacy, but still supported and
+	// has the expected recursive semantics for this tool).
+	return fmt.Sprintf("%s/%s", baseURL, pathEscapeAll(prefix))
 }
 
 func pathEscapeAll(p string) string {
@@ -445,10 +461,19 @@ type hfLfsInfo struct {
 	Sha256 string `json:"sha256,omitempty"`
 }
 
+// settingsKey is used to optionally thread Settings through context for verbose logging.
+type settingsKey struct{}
+
 func walkTree(ctx context.Context, httpc *http.Client, token string, job Job, prefix string, fn func(hfNode) error) error {
 	reqURL := treeURL(job, prefix)
 	req, _ := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	addAuth(req, token)
+
+	// Best-effort verbose logging of outgoing tree calls when enabled.
+	if jobCfg, ok := ctx.Value(settingsKey{}).(Settings); ok && jobCfg.Verbose {
+		fmt.Fprintf(os.Stderr, "[hfdownloader] tree GET %s\n", req.URL.String())
+	}
+
 	resp, err := httpc.Do(req)
 	if err != nil {
 		return err
@@ -469,7 +494,26 @@ func walkTree(ctx context.Context, httpc *http.Client, token string, job Job, pr
 		return fmt.Errorf("403 forbidden: please accept the repository terms: %s", fmt.Sprintf(base, job.Repo))
 	}
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("tree API failed: %s", resp.Status)
+		// Enrich error with Hub-provided headers/body when available.
+		var msg strings.Builder
+		msg.WriteString(resp.Status)
+		if em := resp.Header.Get("X-Error-Message"); em != "" {
+			msg.WriteString(" - ")
+			msg.WriteString(em)
+		}
+		if rid := resp.Header.Get("X-Request-Id"); rid != "" {
+			msg.WriteString(" (request-id: ")
+			msg.WriteString(rid)
+			msg.WriteString(")")
+		}
+		// Best-effort small body snippet for debugging (non-JSON-safe, but only in error).
+		bodySnippet := make([]byte, 512)
+		n, _ := resp.Body.Read(bodySnippet)
+		if n > 0 {
+			msg.WriteString(" body=")
+			msg.Write(bodySnippet[:n])
+		}
+		return fmt.Errorf("tree API failed: %s", msg.String())
 	}
 	var nodes []hfNode
 	dec := json.NewDecoder(resp.Body)

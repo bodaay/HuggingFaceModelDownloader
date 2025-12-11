@@ -19,6 +19,8 @@ type Settings struct {
 	BackoffInitial     string
 	BackoffMax         string
 	Token              string
+	// Verbose enables additional debug logging (e.g. HTTP calls) when true.
+	Verbose            bool
 }
 
 type ProgressEvent struct {
