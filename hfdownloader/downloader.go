@@ -404,23 +404,23 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 
 func rawURL(job Job, path string) string {
 	if job.IsDataset {
-		return fmt.Sprintf(RawDatasetFileURL, url.PathEscape(job.Repo), url.PathEscape(job.Revision), pathEscapeAll(path))
+		return fmt.Sprintf(RawDatasetFileURL, pathEscapeAll(job.Repo), url.PathEscape(job.Revision), pathEscapeAll(path))
 	}
-	return fmt.Sprintf(RawModelFileURL, url.PathEscape(job.Repo), url.PathEscape(job.Revision), pathEscapeAll(path))
+	return fmt.Sprintf(RawModelFileURL, pathEscapeAll(job.Repo), url.PathEscape(job.Revision), pathEscapeAll(path))
 }
 
 func lfsURL(job Job, path string) string {
 	if job.IsDataset {
-		return fmt.Sprintf(LfsDatasetResolverURL, url.PathEscape(job.Repo), url.PathEscape(job.Revision), pathEscapeAll(path))
+		return fmt.Sprintf(LfsDatasetResolverURL, pathEscapeAll(job.Repo), url.PathEscape(job.Revision), pathEscapeAll(path))
 	}
-	return fmt.Sprintf(LfsModelResolverURL, url.PathEscape(job.Repo), url.PathEscape(job.Revision), pathEscapeAll(path))
+	return fmt.Sprintf(LfsModelResolverURL, pathEscapeAll(job.Repo), url.PathEscape(job.Revision), pathEscapeAll(path))
 }
 
 func treeURL(job Job, prefix string) string {
 	if job.IsDataset {
-		return fmt.Sprintf(JsonDatasetFileTreeURL, url.PathEscape(job.Repo), url.PathEscape(job.Revision), pathEscapeAll(prefix))
+		return fmt.Sprintf(JsonDatasetFileTreeURL, pathEscapeAll(job.Repo), url.PathEscape(job.Revision), pathEscapeAll(prefix))
 	}
-	return fmt.Sprintf(JsonModelsFileTreeURL, url.PathEscape(job.Repo), url.PathEscape(job.Revision), pathEscapeAll(prefix))
+	return fmt.Sprintf(JsonModelsFileTreeURL, pathEscapeAll(job.Repo), url.PathEscape(job.Revision), pathEscapeAll(prefix))
 }
 
 func pathEscapeAll(p string) string {
