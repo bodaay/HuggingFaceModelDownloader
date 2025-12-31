@@ -845,6 +845,11 @@
     formData.forEach((value, key) => {
       if (key === 'dataset' || key === 'appendFilterSubdir') {
         obj[key] = true;
+      } else if (key === 'filters' || key === 'excludes') {
+        // Convert comma-separated string to array
+        if (value && value.trim()) {
+          obj[key] = value.split(',').map(s => s.trim()).filter(s => s);
+        }
       } else if (value) {
         obj[key] = value;
       }

@@ -162,6 +162,24 @@ cd HuggingFaceModelDownloader
 go build -o hfdownloader ./cmd/hfdownloader
 ```
 
+### Option 4: Docker 🐳
+
+```bash
+# Build the image
+docker build -t hfdownloader .
+
+# Run CLI in container
+docker run --rm -v ./models:/data hfdownloader download TheBloke/Mistral-7B-GGUF -o /data
+
+# Run web server
+docker run --rm -p 8080:8080 -v ./models:/data hfdownloader serve \
+  --models-dir /data/Models \
+  --datasets-dir /data/Datasets
+
+# With HuggingFace token
+docker run --rm -e HF_TOKEN=hf_xxx -p 8080:8080 hfdownloader serve
+```
+
 ---
 
 ## 🌐 Web UI
@@ -188,7 +206,8 @@ hfdownloader serve \
   --port 3000 \
   --models-dir ./Models \
   --datasets-dir ./Datasets \
-  --token hf_xxx
+  --token hf_xxx \
+  --endpoint https://hf-mirror.com  # Optional: use mirror
 ```
 
 ---
@@ -222,6 +241,12 @@ export HF_TOKEN=hf_xxxxx
 # Filter specific files (case-insensitive)
 hfdownloader download TheBloke/Mistral-7B-GGUF:q4_k_m,q5_k_m
 
+# Exclude files by pattern
+hfdownloader download TheBloke/Mistral-7B-GGUF -E .md,fp16,onnx
+
+# Combine filters and excludes
+hfdownloader download owner/repo -F q4_k_m,q5_k_m -E .md
+
 # Organize filtered files into subdirs
 hfdownloader download TheBloke/Mistral-7B-GGUF:q4_0,q8_0 --append-filter-subdir
 # Result: ./Storage/Mistral-7B-GGUF/q4_0/file.gguf
@@ -235,6 +260,9 @@ hfdownloader download owner/repo -b v1.0
 
 # Dry run (preview files)
 hfdownloader download owner/repo --dry-run --plan-format json
+
+# Use HuggingFace mirror (e.g., for China)
+hfdownloader download owner/repo --endpoint https://hf-mirror.com
 ```
 
 ### Flags Reference
@@ -258,6 +286,7 @@ hfdownloader download owner/repo --dry-run --plan-format json
 | `--dataset` | `false` | Treat as dataset |
 | `-b, --revision` | `main` | Branch, tag, or commit |
 | `-F, --filters` | - | Comma-separated LFS filters |
+| `-E, --exclude` | - | Comma-separated patterns to exclude |
 
 </details>
 
@@ -291,6 +320,7 @@ hfdownloader download owner/repo --dry-run --plan-format json
 |------|---------|-------------|
 | `-t, --token` | `$HF_TOKEN` | HuggingFace access token |
 | `--config` | `~/.config/hfdownloader.yaml` | Config file path |
+| `--endpoint` | `https://huggingface.co` | Custom HF endpoint (mirrors) |
 
 </details>
 

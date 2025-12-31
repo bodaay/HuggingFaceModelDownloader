@@ -55,6 +55,25 @@ docker run --rm -p 8080:8080 -v ./models:/data hfdownloader serve --models-dir /
 - Created `Dockerfile` with multi-stage build
 - Updated API to support `excludes` in download requests
 - Updated settings endpoint to include custom endpoint config
+- **Web UI:** Added "Exclude" input field to Model and Dataset download forms
+- **Web UI:** Updated version display to v2.3.1
+
+---
+
+## 🙏 Acknowledgments
+
+Special thanks to the community members whose PRs inspired these features:
+
+| Contributor | PR | Feature |
+|-------------|-----|---------|
+| **[@jeroenkroese](https://github.com/jeroenkroese)** | [#41](https://github.com/bodaay/HuggingFaceModelDownloader/pull/41) | Exclude file patterns |
+| **[@windtail](https://github.com/windtail)** | [#38](https://github.com/bodaay/HuggingFaceModelDownloader/pull/38) | Custom HuggingFace endpoint |
+| **[@cdeving](https://github.com/cdeving)** | [#50](https://github.com/bodaay/HuggingFaceModelDownloader/pull/50) | Docker support |
+
+Also thanks to the community for bug reports and PRs that helped identify issues in v2.3.0:
+- URL escaping fix (related to #60)
+- TUI speed improvements (related to #59)
+- API 400 fixes (related to #58)
 
 ---
 
@@ -193,15 +212,6 @@ git clone https://github.com/bodaay/HuggingFaceModelDownloader
 cd HuggingFaceModelDownloader
 go build -o hfdownloader ./cmd/hfdownloader
 ```
-
----
-
-## 🙏 Acknowledgments
-
-Thanks to the community for bug reports and PRs that helped identify issues:
-- URL escaping fix (related to #60)
-- TUI speed improvements (related to #59)
-- API 400 fixes (related to #58)
 
 ---
 

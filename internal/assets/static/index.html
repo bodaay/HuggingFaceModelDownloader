@@ -78,7 +78,7 @@
           <span class="status-dot"></span>
           <span class="status-text">Connecting...</span>
         </div>
-        <div class="version">v2.3.0</div>
+        <div class="version">v2.3.1</div>
       </div>
     </nav>
 
@@ -198,6 +198,17 @@
             </div>
 
             <div class="form-group">
+              <label for="modelExcludesInput">Exclude (optional)</label>
+              <input 
+                type="text" 
+                id="modelExcludesInput" 
+                name="excludes" 
+                placeholder=".md, fp16, onnx"
+              >
+              <span class="input-hint">Comma-separated. Skip files matching these patterns.</span>
+            </div>
+
+            <div class="form-group">
               <label class="checkbox-label">
                 <input type="checkbox" id="modelFilterSubdirCheck" name="appendFilterSubdir">
                 <span class="checkbox-custom"></span>
@@ -278,6 +289,17 @@
                 placeholder="train, test, validation"
               >
               <span class="input-hint">Comma-separated. Filter LFS files by name pattern.</span>
+            </div>
+
+            <div class="form-group">
+              <label for="datasetExcludesInput">Exclude (optional)</label>
+              <input 
+                type="text" 
+                id="datasetExcludesInput" 
+                name="excludes" 
+                placeholder=".md, .txt, raw"
+              >
+              <span class="input-hint">Comma-separated. Skip files matching these patterns.</span>
             </div>
 
             <div class="form-actions">
