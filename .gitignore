@@ -1,5 +1,24 @@
+# Build artifacts
+/hfdownloader
+/hfdownloader.exe
+/output/
+
+# Downloaded models/data
+/Models/
+/Storage/
+/Datasets/
+
+# Environment and IDE
 .env
-output/
-Models/
-Storage/
 .DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test artifacts
+*.test
+*.out
+coverage.txt
+test_models/
+TODO_Internal.md

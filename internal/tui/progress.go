@@ -1,4 +1,7 @@
-package main
+// Copyright 2025
+// SPDX-License-Identifier: Apache-2.0
+
+package tui
 
 import (
 	"fmt"
@@ -12,25 +15,25 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/bodaay/HuggingFaceModelDownloader/hfdownloader"
+	"github.com/bodaay/HuggingFaceModelDownloader/pkg/hfdownloader"
 )
 
-// liveRenderer renders a cross-platform, adaptive, colorful progress table.
+// LiveRenderer renders a cross-platform, adaptive, colorful progress table.
 // - Uses ANSI when available; plain text fallback otherwise.
 // - Adapts to terminal width/height.
 // - Shows job header + totals + active file rows with progress bars.
-type liveRenderer struct {
+type LiveRenderer struct {
 	job hfdownloader.Job
 	cfg hfdownloader.Settings
 
-	mu        sync.Mutex
-	start     time.Time
-	events    chan hfdownloader.ProgressEvent
-	done      chan struct{}
-	stopped   bool
-	hideCur   bool
-	supports  bool // ANSI + interactive
-	noColor   bool
+	mu         sync.Mutex
+	start      time.Time
+	events     chan hfdownloader.ProgressEvent
+	done       chan struct{}
+	stopped    bool
+	hideCur    bool
+	supports   bool // ANSI + interactive
+	noColor    bool
 	lastRedraw time.Time
 
 	// aggregate
@@ -40,9 +43,10 @@ type liveRenderer struct {
 	// per-file state
 	files map[string]*fileState
 
-	// overall rolling speed
+	// overall rolling speed (EMA smoothed)
 	lastTotalBytes int64
 	lastTick       time.Time
+	smoothedSpeed  float64 // EMA smoothed overall speed
 }
 
 type fileState struct {
@@ -52,16 +56,29 @@ type fileState struct {
 	status string // "queued","downloading","done","skip","error"
 	err    string
 
-	// rolling speed
-	lastBytes int64
-	lastTime  time.Time
+	// rolling speed (EMA smoothed)
+	lastBytes     int64
+	lastTime      time.Time
+	smoothedSpeed float64 // EMA smoothed per-file speed
 
 	// metrics
 	started time.Time
 }
 
-func newLiveRenderer(job hfdownloader.Job, cfg hfdownloader.Settings) *liveRenderer {
-	lr := &liveRenderer{
+// EMA smoothing factor (0.1 = very smooth, 0.5 = responsive)
+const speedSmoothingFactor = 0.3
+
+func smoothSpeed(current, previous float64) float64 {
+	if previous == 0 {
+		return current
+	}
+	// Exponential moving average
+	return speedSmoothingFactor*current + (1-speedSmoothingFactor)*previous
+}
+
+// NewLiveRenderer creates a new live TUI renderer.
+func NewLiveRenderer(job hfdownloader.Job, cfg hfdownloader.Settings) *LiveRenderer {
+	lr := &LiveRenderer{
 		job:     job,
 		cfg:     cfg,
 		start:   time.Now(),
@@ -81,7 +98,8 @@ func newLiveRenderer(job hfdownloader.Job, cfg hfdownloader.Settings) *liveRende
 	return lr
 }
 
-func (lr *liveRenderer) Close() {
+// Close stops the renderer and restores the terminal.
+func (lr *LiveRenderer) Close() {
 	lr.mu.Lock()
 	if lr.stopped {
 		lr.mu.Unlock()
@@ -99,7 +117,8 @@ func (lr *liveRenderer) Close() {
 	fmt.Fprintln(os.Stdout)
 }
 
-func (lr *liveRenderer) Handler() hfdownloader.ProgressFunc {
+// Handler returns a ProgressFunc that feeds events to the renderer.
+func (lr *LiveRenderer) Handler() hfdownloader.ProgressFunc {
 	return func(ev hfdownloader.ProgressEvent) {
 		select {
 		case lr.events <- ev:
@@ -109,7 +128,7 @@ func (lr *liveRenderer) Handler() hfdownloader.ProgressFunc {
 	}
 }
 
-func (lr *liveRenderer) loop() {
+func (lr *LiveRenderer) loop() {
 	ticker := time.NewTicker(150 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -125,7 +144,7 @@ func (lr *liveRenderer) loop() {
 	}
 }
 
-func (lr *liveRenderer) apply(ev hfdownloader.ProgressEvent) {
+func (lr *LiveRenderer) apply(ev hfdownloader.ProgressEvent) {
 	lr.mu.Lock()
 	defer lr.mu.Unlock()
 
@@ -145,11 +164,19 @@ func (lr *liveRenderer) apply(ev hfdownloader.ProgressEvent) {
 		}
 	case "file_progress":
 		fs := lr.ensure(ev.Path)
-		fs.total = ev.Total
-		fs.bytes = ev.Bytes
+		// Only update total if it's provided and reasonable
+		if ev.Total > 0 {
+			fs.total = ev.Total
+		}
+		// Prefer Downloaded (cumulative) over Bytes (legacy/delta)
+		if ev.Downloaded > 0 {
+			fs.bytes = ev.Downloaded
+		} else if ev.Bytes > 0 {
+			fs.bytes = ev.Bytes
+		}
 		if fs.lastTime.IsZero() {
 			fs.lastTime = time.Now()
-			fs.lastBytes = ev.Bytes
+			fs.lastBytes = fs.bytes
 		}
 	case "file_done":
 		fs := lr.ensure(ev.Path)
@@ -170,7 +197,7 @@ func (lr *liveRenderer) apply(ev hfdownloader.ProgressEvent) {
 	}
 }
 
-func (lr *liveRenderer) ensure(path string) *fileState {
+func (lr *LiveRenderer) ensure(path string) *fileState {
 	if fs, ok := lr.files[path]; ok {
 		return fs
 	}
@@ -179,7 +206,7 @@ func (lr *liveRenderer) ensure(path string) *fileState {
 	return fs
 }
 
-func (lr *liveRenderer) render(final bool) {
+func (lr *LiveRenderer) render(final bool) {
 	lr.mu.Lock()
 	defer lr.mu.Unlock()
 
@@ -221,18 +248,24 @@ func (lr *liveRenderer) render(final bool) {
 		queued = 0
 	}
 
-	// overall speed
+	// overall speed (EMA smoothed)
 	now := time.Now()
-	speed := float64(0)
 	if !lr.lastTick.IsZero() && now.After(lr.lastTick) {
 		deltaB := aggBytes - lr.lastTotalBytes
 		deltaT := now.Sub(lr.lastTick).Seconds()
-		if deltaT > 0 {
-			speed = float64(deltaB) / deltaT
+		if deltaT > 0.05 { // Only update if enough time passed (50ms min)
+			instantSpeed := float64(deltaB) / deltaT
+			if instantSpeed >= 0 { // Ignore negative deltas (can happen with rounding)
+				lr.smoothedSpeed = smoothSpeed(instantSpeed, lr.smoothedSpeed)
+			}
+			lr.lastTick = now
+			lr.lastTotalBytes = aggBytes
 		}
+	} else if lr.lastTick.IsZero() {
+		lr.lastTick = now
+		lr.lastTotalBytes = aggBytes
 	}
-	lr.lastTick = now
-	lr.lastTotalBytes = aggBytes
+	speed := lr.smoothedSpeed
 
 	// overall ETA
 	var etaStr string
@@ -250,17 +283,17 @@ func (lr *liveRenderer) render(final bool) {
 	}
 
 	// Header
-	jobline := fmt.Sprintf("Repo: %s   Rev: %s   Dataset: %v", lr.job.Repo, orDefault(lr.job.Revision, "main"), lr.job.IsDataset)
+	rev := lr.job.Revision
+	if rev == "" {
+		rev = "main"
+	}
+	jobline := fmt.Sprintf("Repo: %s   Rev: %s   Dataset: %v", lr.job.Repo, rev, lr.job.IsDataset)
 	fmt.Fprintln(os.Stdout, colorize(bold(jobline), "fg=cyan", lr))
 	cfgline := fmt.Sprintf("Out: %s   Conns: %d   MaxActive: %d   Verify: %s   Retries: %d   Threshold: %s",
 		lr.cfg.OutputDir, lr.cfg.Concurrency, lr.cfg.MaxActiveDownloads, lr.cfg.Verify, lr.cfg.Retries, lr.cfg.MultipartThreshold)
 	fmt.Fprintln(os.Stdout, dim(cfgline))
 
 	// Totals line with bar
-	totalStr := fmt.Sprintf("Files: %d  Done:%d  Skip:%d  Err:%d  Active:%d  Queue:%d",
-		lr.totalFiles, doneCnt, skipCnt, errCnt, len(active), queued)
-	_ = totalStr // reserved, can be printed if desired
-
 	prog := float64(0)
 	if lr.totalBytes > 0 {
 		prog = float64(aggBytes) / float64(lr.totalBytes)
@@ -329,7 +362,7 @@ func (lr *liveRenderer) render(final bool) {
 	}
 }
 
-func renderFileRow(fs *fileState, w int, lr *liveRenderer) string {
+func renderFileRow(fs *fileState, w int, lr *LiveRenderer) string {
 	// column widths (adaptive)
 	statusW := 9
 	speedW := 10
@@ -385,21 +418,27 @@ func renderFileRow(fs *fileState, w int, lr *liveRenderer) string {
 		progress = string(runes[:progressW])
 	}
 
-	// speed (per-file)
+	// speed (per-file, EMA smoothed)
 	now := time.Now()
-	speed := float64(0)
 	if !fs.lastTime.IsZero() {
 		dt := now.Sub(fs.lastTime).Seconds()
-		if dt > 0 {
+		if dt > 0.05 { // Only update if enough time passed (50ms min)
 			delta := fs.bytes - fs.lastBytes
-			speed = float64(delta) / dt
+			instantSpeed := float64(delta) / dt
+			if instantSpeed >= 0 {
+				fs.smoothedSpeed = smoothSpeed(instantSpeed, fs.smoothedSpeed)
+			}
+			fs.lastTime = now
+			fs.lastBytes = fs.bytes
 		}
+	} else {
+		fs.lastTime = now
+		fs.lastBytes = fs.bytes
 	}
-	fs.lastTime = now
-	fs.lastBytes = fs.bytes
+	speed := fs.smoothedSpeed
 	speedTxt := pad(humanBytes(int64(speed))+"/s", speedW)
 
-	// eta
+	// eta (use smoothed speed for stable ETA)
 	eta := "—"
 	if speed > 0 && fs.total > 0 && fs.bytes < fs.total {
 		rem := float64(fs.total-fs.bytes) / speed
@@ -443,7 +482,7 @@ func pad(s string, w int) string {
 	return s + strings.Repeat(" ", w-r)
 }
 
-func renderBar(width int, p float64, lr *liveRenderer) string {
+func renderBar(width int, p float64, lr *LiveRenderer) string {
 	if width < 3 {
 		width = 3
 	}
@@ -509,11 +548,10 @@ func ansiOkay() bool {
 	return true
 }
 
-func colorize(s, style string, lr *liveRenderer) string {
+func colorize(s, style string, lr *LiveRenderer) string {
 	if lr.noColor || !lr.supports {
 		return s
 	}
-	// minimal: parse fg=color
 	switch style {
 	case "fg=green":
 		return "\x1b[32m" + s + "\x1b[0m"
@@ -532,5 +570,6 @@ func colorize(s, style string, lr *liveRenderer) string {
 	}
 }
 
-func bold(s string) string  { return "\x1b[1m" + s + "\x1b[0m" }
-func dim(s string) string   { return "\x1b[2m" + s + "\x1b[0m" }
+func bold(s string) string { return "\x1b[1m" + s + "\x1b[0m" }
+func dim(s string) string  { return "\x1b[2m" + s + "\x1b[0m" }
+

@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HF Downloader</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤗</text></svg>">
+</head>
+<body>
+  <div class="scanlines"></div>
+  
+  <div class="app">
+    <!-- Sidebar -->
+    <nav class="sidebar">
+      <div class="logo">
+        <span class="logo-icon">🤗</span>
+        <span class="logo-text">HF<span class="logo-accent">Downloader</span></span>
+      </div>
+      
+      <ul class="nav-links">
+        <li class="nav-item active" data-page="dashboard">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7" height="7" rx="1"/>
+            <rect x="14" y="3" width="7" height="7" rx="1"/>
+            <rect x="3" y="14" width="7" height="7" rx="1"/>
+            <rect x="14" y="14" width="7" height="7" rx="1"/>
+          </svg>
+          <span>Dashboard</span>
+        </li>
+        
+        <li class="nav-divider">Downloads</li>
+        
+        <li class="nav-item" data-page="models">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+            <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+            <line x1="12" y1="22.08" x2="12" y2="12"/>
+          </svg>
+          <span>Models</span>
+        </li>
+        <li class="nav-item" data-page="datasets">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+            <line x1="8" y1="7" x2="16" y2="7"/>
+            <line x1="8" y1="11" x2="14" y2="11"/>
+          </svg>
+          <span>Datasets</span>
+        </li>
+        
+        <li class="nav-divider">History</li>
+        
+        <li class="nav-item" data-page="history">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <polyline points="12 6 12 12 16 14"/>
+          </svg>
+          <span>All Downloads</span>
+        </li>
+        
+        <li class="nav-divider">System</li>
+        
+        <li class="nav-item" data-page="settings">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+          <span>Settings</span>
+        </li>
+      </ul>
+      
+      <div class="sidebar-footer">
+        <div class="connection-status" id="connectionStatus">
+          <span class="status-dot"></span>
+          <span class="status-text">Connecting...</span>
+        </div>
+        <div class="version">v2.3.0</div>
+      </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <!-- Dashboard Page -->
+      <section class="page active" id="page-dashboard">
+        <header class="page-header">
+          <h1>Dashboard</h1>
+          <div class="header-stats">
+            <div class="stat">
+              <span class="stat-value" id="activeCount">0</span>
+              <span class="stat-label">Active</span>
+            </div>
+            <div class="stat">
+              <span class="stat-value" id="queuedCount">0</span>
+              <span class="stat-label">Queued</span>
+            </div>
+            <div class="stat">
+              <span class="stat-value" id="completedCount">0</span>
+              <span class="stat-label">Done</span>
+            </div>
+          </div>
+        </header>
+
+        <div class="dashboard-content">
+          <!-- Active Downloads -->
+          <div class="card">
+            <div class="card-header">
+              <h2>Active Downloads</h2>
+              <button class="btn btn-ghost" id="pauseAllBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <rect x="6" y="4" width="4" height="16"/>
+                  <rect x="14" y="4" width="4" height="16"/>
+                </svg>
+                Pause All
+              </button>
+            </div>
+            <div class="downloads-list" id="activeDownloads">
+              <div class="empty-state">
+                <div class="empty-icon">📭</div>
+                <p>No active downloads</p>
+                <div class="empty-actions">
+                  <a href="#" class="btn btn-primary" data-navigate="models">Download Model</a>
+                  <a href="#" class="btn btn-ghost" data-navigate="datasets">Download Dataset</a>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Global Progress -->
+          <div class="card card-compact">
+            <div class="card-header">
+              <h2>Overall Progress</h2>
+            </div>
+            <div class="global-progress">
+              <div class="progress-bar-container">
+                <div class="progress-bar" id="globalProgress" style="--progress: 0%">
+                  <div class="progress-glow"></div>
+                </div>
+              </div>
+              <div class="progress-stats">
+                <span id="globalBytes">0 B / 0 B</span>
+                <span id="globalSpeed">— MB/s</span>
+                <span id="globalEta">—</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Models Page -->
+      <section class="page" id="page-models">
+        <header class="page-header">
+          <h1>Download Model</h1>
+          <span class="page-badge">→ ./Models</span>
+        </header>
+
+        <div class="download-form-container">
+          <form class="download-form card" id="modelForm" data-type="model">
+            <div class="form-group">
+              <label for="modelRepoInput">Repository</label>
+              <div class="input-with-hint">
+                <input 
+                  type="text" 
+                  id="modelRepoInput" 
+                  name="repo" 
+                  placeholder="TheBloke/Mistral-7B-Instruct-v0.2-GGUF"
+                  autocomplete="off"
+                  spellcheck="false"
+                  required
+                >
+                <span class="input-hint">Format: owner/model or owner/model:filter1,filter2</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="modelRevisionInput">Revision</label>
+              <input 
+                type="text" 
+                id="modelRevisionInput" 
+                name="revision" 
+                placeholder="main"
+                value="main"
+              >
+            </div>
+
+            <div class="form-group">
+              <label for="modelFiltersInput">Filters (optional)</label>
+              <input 
+                type="text" 
+                id="modelFiltersInput" 
+                name="filters" 
+                placeholder="q4_k_m, q5_k_m, q8_0"
+              >
+              <span class="input-hint">Comma-separated. Only downloads LFS files matching these patterns (e.g., quantizations).</span>
+            </div>
+
+            <div class="form-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="modelFilterSubdirCheck" name="appendFilterSubdir">
+                <span class="checkbox-custom"></span>
+                Organize by filter (creates subdirectories like q4_k_m/, q5_k_m/)
+              </label>
+            </div>
+
+            <div class="form-actions">
+              <button type="button" class="btn btn-ghost btn-preview" data-form="modelForm">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                </svg>
+                Preview Files
+              </button>
+              <button type="submit" class="btn btn-primary btn-glow">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                </svg>
+                Download Model
+              </button>
+            </div>
+          </form>
+
+          <!-- Preview Panel -->
+          <div class="preview-panel card" id="modelPreviewPanel" style="display: none;">
+            <div class="card-header">
+              <h2>Files to Download</h2>
+              <button class="btn btn-icon btn-close-preview">×</button>
+            </div>
+            <div class="preview-content"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Datasets Page -->
+      <section class="page" id="page-datasets">
+        <header class="page-header">
+          <h1>Download Dataset</h1>
+          <span class="page-badge">→ ./Datasets</span>
+        </header>
+
+        <div class="download-form-container">
+          <form class="download-form card" id="datasetForm" data-type="dataset">
+            <div class="form-group">
+              <label for="datasetRepoInput">Repository</label>
+              <div class="input-with-hint">
+                <input 
+                  type="text" 
+                  id="datasetRepoInput" 
+                  name="repo" 
+                  placeholder="facebook/flores"
+                  autocomplete="off"
+                  spellcheck="false"
+                  required
+                >
+                <span class="input-hint">Format: owner/dataset</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="datasetRevisionInput">Revision</label>
+              <input 
+                type="text" 
+                id="datasetRevisionInput" 
+                name="revision" 
+                placeholder="main"
+                value="main"
+              >
+            </div>
+
+            <div class="form-group">
+              <label for="datasetFiltersInput">Filters (optional)</label>
+              <input 
+                type="text" 
+                id="datasetFiltersInput" 
+                name="filters" 
+                placeholder="train, test, validation"
+              >
+              <span class="input-hint">Comma-separated. Filter LFS files by name pattern.</span>
+            </div>
+
+            <div class="form-actions">
+              <button type="button" class="btn btn-ghost btn-preview" data-form="datasetForm">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                </svg>
+                Preview Files
+              </button>
+              <button type="submit" class="btn btn-primary btn-glow">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                  <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                </svg>
+                Download Dataset
+              </button>
+            </div>
+          </form>
+
+          <!-- Preview Panel -->
+          <div class="preview-panel card" id="datasetPreviewPanel" style="display: none;">
+            <div class="card-header">
+              <h2>Files to Download</h2>
+              <button class="btn btn-icon btn-close-preview">×</button>
+            </div>
+            <div class="preview-content"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- History Page -->
+      <section class="page" id="page-history">
+        <header class="page-header">
+          <h1>Download History</h1>
+          <button class="btn btn-ghost" id="clearHistoryBtn">Clear All</button>
+        </header>
+
+        <div class="card">
+          <div class="history-list" id="historyList">
+            <div class="empty-state">
+              <div class="empty-icon">📋</div>
+              <p>No download history yet</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Settings Page -->
+      <section class="page" id="page-settings">
+        <header class="page-header">
+          <h1>Settings</h1>
+        </header>
+
+        <div class="settings-grid">
+          <div class="card">
+            <div class="card-header">
+              <h2>Authentication</h2>
+            </div>
+            <div class="form-group">
+              <label for="tokenInput">HuggingFace Token</label>
+              <div class="input-password">
+                <input 
+                  type="password" 
+                  id="tokenInput" 
+                  name="token" 
+                  placeholder="hf_xxxxxxxxxxxxxxxxxxxxxxxxxx"
+                >
+                <button type="button" class="btn btn-icon toggle-password">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                    <circle cx="12" cy="12" r="3"/>
+                  </svg>
+                </button>
+              </div>
+              <span class="input-hint">Required for private repos. Get yours at huggingface.co/settings/tokens</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h2>Performance</h2>
+            </div>
+            <div class="form-group">
+              <label for="connectionsInput">Connections per file</label>
+              <input type="number" id="connectionsInput" name="connections" value="8" min="1" max="32">
+            </div>
+            <div class="form-group">
+              <label for="maxActiveInput">Max concurrent files</label>
+              <input type="number" id="maxActiveInput" name="maxActive" value="3" min="1" max="16">
+            </div>
+            <div class="form-group">
+              <label for="thresholdInput">Multipart threshold</label>
+              <input type="text" id="thresholdInput" name="multipartThreshold" value="32MiB">
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h2>Reliability</h2>
+            </div>
+            <div class="form-group">
+              <label for="retriesInput">Retry attempts</label>
+              <input type="number" id="retriesInput" name="retries" value="4" min="0" max="20">
+            </div>
+            <div class="form-group">
+              <label for="verifySelect">File verification</label>
+              <select id="verifySelect" name="verify">
+                <option value="size">Size only</option>
+                <option value="etag">ETag</option>
+                <option value="sha256">SHA-256</option>
+                <option value="none">None</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h2>Appearance</h2>
+            </div>
+            <div class="form-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="scanlineCheck" checked>
+                <span class="checkbox-custom"></span>
+                CRT scanline effect
+              </label>
+            </div>
+            <div class="form-group">
+              <label for="accentSelect">Accent color</label>
+              <select id="accentSelect">
+                <option value="cyan">Cyan (default)</option>
+                <option value="green">Matrix Green</option>
+                <option value="purple">Synthwave Purple</option>
+                <option value="amber">Retro Amber</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-actions">
+          <button class="btn btn-primary" id="saveSettingsBtn">Save Settings</button>
+          <button class="btn btn-ghost" id="resetSettingsBtn">Reset to Defaults</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>
+
