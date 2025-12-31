@@ -13,17 +13,18 @@ import (
 	"time"
 )
 
-// API URL templates for HuggingFace Hub
-const (
-	AgreementModelURL      = "https://huggingface.co/%s"
-	AgreementDatasetURL    = "https://huggingface.co/datasets/%s"
-	RawModelFileURL        = "https://huggingface.co/%s/raw/%s/%s"
-	RawDatasetFileURL      = "https://huggingface.co/datasets/%s/raw/%s/%s"
-	LfsModelResolverURL    = "https://huggingface.co/%s/resolve/%s/%s"
-	LfsDatasetResolverURL  = "https://huggingface.co/datasets/%s/resolve/%s/%s"
-	JsonModelsFileTreeURL  = "https://huggingface.co/api/models/%s/tree/%s/%s"
-	JsonDatasetFileTreeURL = "https://huggingface.co/api/datasets/%s/tree/%s/%s"
-)
+// DefaultEndpoint is the default HuggingFace Hub URL.
+// Can be overridden via Settings.Endpoint for mirrors or enterprise deployments.
+// Credits: Custom endpoint feature suggested by windtail (#38)
+const DefaultEndpoint = "https://huggingface.co"
+
+// getEndpoint returns the endpoint to use, falling back to default if empty.
+func getEndpoint(endpoint string) string {
+	if endpoint == "" {
+		return DefaultEndpoint
+	}
+	return strings.TrimSuffix(endpoint, "/")
+}
 
 // hfNode represents a file or directory in the HuggingFace repo tree.
 type hfNode struct {
@@ -90,8 +91,8 @@ func headForETag(ctx context.Context, httpc *http.Client, token string, it PlanI
 }
 
 // walkTree recursively walks the HuggingFace repo tree.
-func walkTree(ctx context.Context, httpc *http.Client, token string, job Job, prefix string, fn func(hfNode) error) error {
-	reqURL := treeURL(job, prefix)
+func walkTree(ctx context.Context, httpc *http.Client, token, endpoint string, job Job, prefix string, fn func(hfNode) error) error {
+	reqURL := treeURL(endpoint, job, prefix)
 	req, _ := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	addAuth(req, token)
 	resp, err := httpc.Do(req)
@@ -101,18 +102,10 @@ func walkTree(ctx context.Context, httpc *http.Client, token string, job Job, pr
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 401 {
-		base := AgreementModelURL
-		if job.IsDataset {
-			base = AgreementDatasetURL
-		}
-		return fmt.Errorf("401 unauthorized: repo requires token or you do not have access (visit %s)", fmt.Sprintf(base, job.Repo))
+		return fmt.Errorf("401 unauthorized: repo requires token or you do not have access (visit %s)", agreementURL(endpoint, job))
 	}
 	if resp.StatusCode == 403 {
-		base := AgreementModelURL
-		if job.IsDataset {
-			base = AgreementDatasetURL
-		}
-		return fmt.Errorf("403 forbidden: please accept the repository terms: %s", fmt.Sprintf(base, job.Repo))
+		return fmt.Errorf("403 forbidden: please accept the repository terms: %s", agreementURL(endpoint, job))
 	}
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("tree API failed: %s", resp.Status)
@@ -127,7 +120,7 @@ func walkTree(ctx context.Context, httpc *http.Client, token string, job Job, pr
 	for _, n := range nodes {
 		switch n.Type {
 		case "directory", "tree":
-			if err := walkTree(ctx, httpc, token, job, n.Path, fn); err != nil {
+			if err := walkTree(ctx, httpc, token, endpoint, job, n.Path, fn); err != nil {
 				return err
 			}
 		default:
@@ -139,35 +132,46 @@ func walkTree(ctx context.Context, httpc *http.Client, token string, job Job, pr
 	return nil
 }
 
-// URL builders
+// URL builders - all accept endpoint to support custom mirrors
 
-func rawURL(job Job, path string) string {
+func rawURL(endpoint string, job Job, path string) string {
+	ep := getEndpoint(endpoint)
 	// Note: job.Repo contains "/" which must NOT be escaped (HuggingFace requires literal slash)
 	if job.IsDataset {
-		return fmt.Sprintf(RawDatasetFileURL, job.Repo, url.PathEscape(job.Revision), pathEscapeAll(path))
+		return fmt.Sprintf("%s/datasets/%s/raw/%s/%s", ep, job.Repo, url.PathEscape(job.Revision), pathEscapeAll(path))
 	}
-	return fmt.Sprintf(RawModelFileURL, job.Repo, url.PathEscape(job.Revision), pathEscapeAll(path))
+	return fmt.Sprintf("%s/%s/raw/%s/%s", ep, job.Repo, url.PathEscape(job.Revision), pathEscapeAll(path))
 }
 
-func lfsURL(job Job, path string) string {
+func lfsURL(endpoint string, job Job, path string) string {
+	ep := getEndpoint(endpoint)
 	if job.IsDataset {
-		return fmt.Sprintf(LfsDatasetResolverURL, job.Repo, url.PathEscape(job.Revision), pathEscapeAll(path))
+		return fmt.Sprintf("%s/datasets/%s/resolve/%s/%s", ep, job.Repo, url.PathEscape(job.Revision), pathEscapeAll(path))
 	}
-	return fmt.Sprintf(LfsModelResolverURL, job.Repo, url.PathEscape(job.Revision), pathEscapeAll(path))
+	return fmt.Sprintf("%s/%s/resolve/%s/%s", ep, job.Repo, url.PathEscape(job.Revision), pathEscapeAll(path))
 }
 
-func treeURL(job Job, prefix string) string {
+func treeURL(endpoint string, job Job, prefix string) string {
+	ep := getEndpoint(endpoint)
 	// Build URL without trailing slash when prefix is empty
 	if prefix == "" {
 		if job.IsDataset {
-			return fmt.Sprintf("https://huggingface.co/api/datasets/%s/tree/%s", job.Repo, url.PathEscape(job.Revision))
+			return fmt.Sprintf("%s/api/datasets/%s/tree/%s", ep, job.Repo, url.PathEscape(job.Revision))
 		}
-		return fmt.Sprintf("https://huggingface.co/api/models/%s/tree/%s", job.Repo, url.PathEscape(job.Revision))
+		return fmt.Sprintf("%s/api/models/%s/tree/%s", ep, job.Repo, url.PathEscape(job.Revision))
 	}
 	if job.IsDataset {
-		return fmt.Sprintf(JsonDatasetFileTreeURL, job.Repo, url.PathEscape(job.Revision), pathEscapeAll(prefix))
+		return fmt.Sprintf("%s/api/datasets/%s/tree/%s/%s", ep, job.Repo, url.PathEscape(job.Revision), pathEscapeAll(prefix))
 	}
-	return fmt.Sprintf(JsonModelsFileTreeURL, job.Repo, url.PathEscape(job.Revision), pathEscapeAll(prefix))
+	return fmt.Sprintf("%s/api/models/%s/tree/%s/%s", ep, job.Repo, url.PathEscape(job.Revision), pathEscapeAll(prefix))
+}
+
+func agreementURL(endpoint string, job Job) string {
+	ep := getEndpoint(endpoint)
+	if job.IsDataset {
+		return fmt.Sprintf("%s/datasets/%s", ep, job.Repo)
+	}
+	return fmt.Sprintf("%s/%s", ep, job.Repo)
 }
 
 func pathEscapeAll(p string) string {
@@ -177,4 +181,5 @@ func pathEscapeAll(p string) string {
 	}
 	return strings.Join(segs, "/")
 }
+
 

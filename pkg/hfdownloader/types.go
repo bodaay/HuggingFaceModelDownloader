@@ -53,6 +53,18 @@ type Job struct {
 	//   - []string{"gguf"} matches all GGUF files
 	Filters []string
 
+	// Excludes specify patterns to exclude from download, matched case-insensitively.
+	// Files matching any exclude pattern will be skipped, even if they match a filter.
+	// Excludes are applied after filters.
+	//
+	// Examples:
+	//   - []string{".md"} excludes all markdown files
+	//   - []string{"fp16", "fp32"} excludes full precision models
+	//   - []string{"onnx"} excludes ONNX format files
+	//
+	// Credits: Feature suggested by jeroenkroese (#41)
+	Excludes []string
+
 	// AppendFilterSubdir puts each filter's matched files in a subdirectory
 	// named after the filter. Useful for organizing multiple quantizations.
 	//
@@ -137,6 +149,18 @@ type Settings struct {
 	// Get yours at: https://huggingface.co/settings/tokens
 	// Can also be set via HF_TOKEN environment variable.
 	Token string
+
+	// Endpoint is the base URL for HuggingFace Hub API.
+	// Use this to specify a custom mirror or enterprise endpoint.
+	// If empty, defaults to "https://huggingface.co".
+	//
+	// Examples:
+	//   - "https://huggingface.co" (default)
+	//   - "https://hf-mirror.com" (China mirror)
+	//   - "https://your-enterprise.com/hf" (enterprise)
+	//
+	// Credits: Feature suggested by windtail (#38)
+	Endpoint string
 }
 
 // ProgressEvent represents a progress update during download.

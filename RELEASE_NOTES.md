@@ -1,6 +1,66 @@
+# Release Notes - v2.3.1
+
+> **Release Date:** December 31, 2025
+
+## 🎉 Community Features
+
+This release incorporates contributions and suggestions from the community:
+
+### ✨ New Features
+
+#### 🚫 Exclude Patterns (`--exclude`, `-E`)
+Exclude specific files from downloads. Thanks to **@jeroenkroese** ([#41](https://github.com/bodaay/HuggingFaceModelDownloader/pull/41))!
+
+```bash
+# Exclude markdown and ONNX files
+hfdownloader download TheBloke/Mistral-7B-GGUF -E .md,onnx
+
+# Exclude full precision models
+hfdownloader download owner/repo -E fp16,fp32
+```
+
+#### 🌍 Custom Endpoint (`--endpoint`)
+Use HuggingFace mirrors or enterprise endpoints. Thanks to **@windtail** ([#38](https://github.com/bodaay/HuggingFaceModelDownloader/pull/38))!
+
+```bash
+# Use China mirror
+hfdownloader download owner/repo --endpoint https://hf-mirror.com
+
+# Use enterprise endpoint
+hfdownloader serve --endpoint https://your-enterprise.com/hf
+```
+
+#### 🐳 Docker Support
+Run hfdownloader in containers. Thanks to **@cdeving** ([#50](https://github.com/bodaay/HuggingFaceModelDownloader/pull/50))!
+
+```bash
+# Build Docker image
+docker build -t hfdownloader .
+
+# Run CLI in container
+docker run --rm -v ./models:/data hfdownloader download TheBloke/Mistral-7B-GGUF -o /data
+
+# Run web server in container
+docker run --rm -p 8080:8080 -v ./models:/data hfdownloader serve --models-dir /data/Models
+```
+
+---
+
+## 📋 Changes
+
+- Added `--exclude` / `-E` flag to CLI download command
+- Added `--endpoint` flag to both download and serve commands
+- Added `Excludes` field to Job struct
+- Added `Endpoint` field to Settings struct
+- Created `Dockerfile` with multi-stage build
+- Updated API to support `excludes` in download requests
+- Updated settings endpoint to include custom endpoint config
+
+---
+
 # Release Notes - v2.3.0
 
-> **Release Date:** December 31, 2024
+> **Release Date:** December 31, 2025
 
 ## 🎉 Highlights
 

@@ -48,7 +48,7 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 	var items []PlanItem
 	seen := make(map[string]struct{}) // ensure each relative path appears once in the plan
 
-	err := walkTree(ctx, httpc, token, job, "", func(n hfNode) error {
+	err := walkTree(ctx, httpc, token, cfg.Endpoint, job, "", func(n hfNode) error {
 		if n.Type != "file" && n.Type != "blob" {
 			return nil
 		}
@@ -61,12 +61,22 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 		seen[rel] = struct{}{}
 
 		name := filepath.Base(rel)
+		nameLower := strings.ToLower(name)
+		relLower := strings.ToLower(rel)
 		isLFS := n.LFS != nil
+
+		// Check excludes first - if file matches any exclude pattern, skip it
+		// Credits: Exclude feature suggested by jeroenkroese (#41)
+		for _, ex := range job.Excludes {
+			exLower := strings.ToLower(ex)
+			if strings.Contains(nameLower, exLower) || strings.Contains(relLower, exLower) {
+				return nil // excluded
+			}
+		}
 
 		// Determine which filter (if any) matches this file name, prefer the longest match
 		// Filter matching is case-insensitive (e.g., q4_0 matches Q4_0)
 		matchedFilter := ""
-		nameLower := strings.ToLower(name)
 		if isLFS && len(job.Filters) > 0 {
 			for _, f := range job.Filters {
 				fLower := strings.ToLower(f)
@@ -89,9 +99,9 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 		// Build URL and file size
 		var urlStr string
 		if isLFS {
-			urlStr = lfsURL(job, rel)
+			urlStr = lfsURL(cfg.Endpoint, job, rel)
 		} else {
-			urlStr = rawURL(job, rel)
+			urlStr = rawURL(cfg.Endpoint, job, rel)
 		}
 		size := n.Size
 		if size == 0 && n.LFS != nil && n.LFS.Size > 0 {

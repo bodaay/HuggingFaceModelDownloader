@@ -24,6 +24,7 @@ func newServeCmd(ro *RootOpts) *cobra.Command {
 		datasetsDir string
 		conns       int
 		active      int
+		endpoint    string
 	)
 
 	cmd := &cobra.Command{
@@ -39,7 +40,8 @@ Output paths are configured server-side only (not via API) for security.
 Example:
   hfdownloader serve
   hfdownloader serve --port 3000
-  hfdownloader serve --models-dir ./Models --datasets-dir ./Datasets`,
+  hfdownloader serve --models-dir ./Models --datasets-dir ./Datasets
+  hfdownloader serve --endpoint https://hf-mirror.com`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Build server config
 			cfg := server.Config{
@@ -49,6 +51,7 @@ Example:
 				DatasetsDir: datasetsDir,
 				Concurrency: conns,
 				MaxActive:   active,
+				Endpoint:    endpoint,
 			}
 
 			// Get token from flag or env
@@ -82,6 +85,7 @@ Example:
 	cmd.Flags().StringVar(&datasetsDir, "datasets-dir", "./Datasets", "Output directory for datasets")
 	cmd.Flags().IntVarP(&conns, "connections", "c", 8, "Connections per file")
 	cmd.Flags().IntVar(&active, "max-active", 3, "Max concurrent file downloads")
+	cmd.Flags().StringVar(&endpoint, "endpoint", "", "Custom HuggingFace endpoint URL (e.g., https://hf-mirror.com)")
 
 	return cmd
 }

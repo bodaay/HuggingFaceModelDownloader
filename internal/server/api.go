@@ -21,6 +21,7 @@ type DownloadRequest struct {
 	Revision           string   `json:"revision,omitempty"`
 	Dataset            bool     `json:"dataset,omitempty"`
 	Filters            []string `json:"filters,omitempty"`
+	Excludes           []string `json:"excludes,omitempty"`
 	AppendFilterSubdir bool     `json:"appendFilterSubdir,omitempty"`
 	DryRun             bool     `json:"dryRun,omitempty"`
 }
@@ -51,6 +52,7 @@ type SettingsResponse struct {
 	MultipartThreshold string `json:"multipartThreshold"`
 	Verify             string `json:"verify"`
 	Retries            int    `json:"retries"`
+	Endpoint           string `json:"endpoint,omitempty"`
 }
 
 // ErrorResponse represents an API error.
@@ -71,7 +73,7 @@ type SuccessResponse struct {
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":  "ok",
-		"version": "2.3.0",
+		"version": "2.3.1",
 		"time":    time.Now().UTC().Format(time.RFC3339),
 	})
 }

@@ -31,6 +31,7 @@ type Job struct {
 	Revision  string            `json:"revision"`
 	IsDataset bool              `json:"isDataset,omitempty"`
 	Filters   []string          `json:"filters,omitempty"`
+	Excludes  []string          `json:"excludes,omitempty"`
 	OutputDir string            `json:"outputDir"`
 	Status    JobStatus         `json:"status"`
 	Progress  JobProgress       `json:"progress"`
@@ -118,6 +119,7 @@ func (m *JobManager) CreateJob(req DownloadRequest) (*Job, bool, error) {
 		Revision:  revision,
 		IsDataset: req.Dataset,
 		Filters:   req.Filters,
+		Excludes:  req.Excludes,
 		OutputDir: outputDir, // Server-controlled, not from request
 		Status:    JobStatusQueued,
 		CreatedAt: time.Now(),
@@ -256,6 +258,7 @@ func (m *JobManager) runJob(job *Job) {
 		Revision:           job.Revision,
 		IsDataset:          job.IsDataset,
 		Filters:            job.Filters,
+		Excludes:           job.Excludes,
 		AppendFilterSubdir: false,
 	}
 
@@ -269,6 +272,7 @@ func (m *JobManager) runJob(job *Job) {
 		Retries:            4,
 		BackoffInitial:     "400ms",
 		BackoffMax:         "10s",
+		Endpoint:           m.config.Endpoint,
 	}
 
 	// Progress callback - NOTE: must not hold lock when calling notifyListeners

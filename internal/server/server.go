@@ -25,6 +25,7 @@ type Config struct {
 	Concurrency    int
 	MaxActive      int
 	AllowedOrigins []string // CORS origins
+	Endpoint       string   // Custom HuggingFace endpoint (e.g., for mirrors)
 }
 
 // DefaultConfig returns sensible defaults.

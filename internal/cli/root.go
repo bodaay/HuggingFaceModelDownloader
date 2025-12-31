@@ -137,6 +137,7 @@ func newDownloadCmd(ctx context.Context, ro *RootOpts) *cobra.Command {
 	cmd.Flags().BoolVar(&job.IsDataset, "dataset", false, "Treat repo as a dataset")
 	cmd.Flags().StringVarP(&job.Revision, "revision", "b", "main", "Revision/branch to download (e.g. main, refs/pr/1)")
 	cmd.Flags().StringSliceVarP(&job.Filters, "filters", "F", nil, "Comma-separated filters to match LFS artifacts (e.g. q4_0,q5_0)")
+	cmd.Flags().StringSliceVarP(&job.Excludes, "exclude", "E", nil, "Comma-separated patterns to exclude (e.g. .md,fp16)")
 	cmd.Flags().BoolVar(&job.AppendFilterSubdir, "append-filter-subdir", false, "Append each filter as a subdirectory")
 
 	// Settings flags
@@ -148,6 +149,7 @@ func newDownloadCmd(ctx context.Context, ro *RootOpts) *cobra.Command {
 	cmd.Flags().IntVar(&cfg.Retries, "retries", 4, "Max retry attempts per HTTP request/part")
 	cmd.Flags().StringVar(&cfg.BackoffInitial, "backoff-initial", "400ms", "Initial retry backoff duration")
 	cmd.Flags().StringVar(&cfg.BackoffMax, "backoff-max", "10s", "Maximum retry backoff duration")
+	cmd.Flags().StringVar(&cfg.Endpoint, "endpoint", "", "Custom HuggingFace endpoint URL (e.g. https://hf-mirror.com)")
 
 	// CLI-only flags
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Plan only: print the file list and exit")
@@ -273,6 +275,7 @@ func applySettingsDefaults(cmd *cobra.Command, ro *RootOpts, dst *hfdownloader.S
 	setInt("retries", func(v int) { dst.Retries = v })
 	setStr("backoff-initial", func(v string) { dst.BackoffInitial = v })
 	setStr("backoff-max", func(v string) { dst.BackoffMax = v })
+	setStr("endpoint", func(v string) { dst.Endpoint = v })
 
 	if !cmd.Flags().Changed("token") && os.Getenv("HF_TOKEN") == "" {
 		if v, ok := cfg["token"]; ok && v != nil {
