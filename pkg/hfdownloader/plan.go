@@ -117,6 +117,11 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 			sha = n.LFS.Sha256
 		}
 
+		// if sha not loaded from HF json repo API use the LFS file OID instead (the HF API does not contain the SHA256 hash, so this is alway true for LFS files)
+		if sha == "" && n.LFS != nil {
+			sha = n.LFS.Oid
+		}
+
 		items = append(items, PlanItem{
 			RelativePath: rel,
 			URL:          urlStr,
