@@ -220,8 +220,9 @@ func (lr *LiveRenderer) render(final bool) {
 		h = 12
 	}
 
-	// aggregate totals
+	// aggregate totals - compute from individual file states (more accurate)
 	var aggBytes int64
+	var aggTotal int64
 	var active []*fileState
 	var doneCnt, skipCnt, errCnt int
 	for _, fs := range lr.files {
@@ -237,11 +238,17 @@ func (lr *LiveRenderer) render(final bool) {
 		if fs.status == "error" {
 			errCnt++
 		}
+		// Accumulate total from each file's known total (more accurate than plan_item accumulation)
+		aggTotal += fs.total
 		if fs.bytes > 0 {
 			aggBytes += fs.bytes
 		} else if fs.status == "done" || fs.status == "skip" {
 			aggBytes += fs.total
 		}
+	}
+	// Use computed total if we have files, otherwise fall back to plan_item total
+	if aggTotal > 0 {
+		lr.totalBytes = aggTotal
 	}
 	queued := lr.totalFiles - (len(active) + doneCnt + skipCnt + errCnt)
 	if queued < 0 {

@@ -113,6 +113,15 @@ func Download(ctx context.Context, job Job, cfg Settings, progress ProgressFunc)
 		return err
 	}
 
+	// Emit ALL plan_item events upfront so TUI knows total size immediately
+	for _, item := range plan.Items {
+		displayRel := item.RelativePath
+		if job.AppendFilterSubdir && item.Subdir != "" {
+			displayRel = filepath.ToSlash(filepath.Join(item.Subdir, item.RelativePath))
+		}
+		emit(ProgressEvent{Event: "plan_item", Path: displayRel, Total: item.Size})
+	}
+
 	// Ensure destination root exists
 	if err := os.MkdirAll(destinationBase(job, cfg), 0o755); err != nil {
 		return err
@@ -141,14 +150,6 @@ LOOP:
 		}
 
 		it := item // capture for goroutine
-
-		// Final relative path shown to the user (includes subdir if requested)
-		displayRel := it.RelativePath
-		if job.AppendFilterSubdir && it.Subdir != "" {
-			displayRel = filepath.ToSlash(filepath.Join(it.Subdir, it.RelativePath))
-		}
-
-		emit(ProgressEvent{Event: "plan_item", Path: displayRel, Total: it.Size})
 
 		// Acquire a slot or abort if canceled
 		select {

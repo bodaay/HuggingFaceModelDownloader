@@ -103,9 +103,12 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 		} else {
 			urlStr = rawURL(cfg.Endpoint, job, rel)
 		}
-		size := n.Size
-		if size == 0 && n.LFS != nil && n.LFS.Size > 0 {
+		// For LFS files, ALWAYS use LFS.Size (n.Size is the pointer file size, not actual)
+		var size int64
+		if n.LFS != nil && n.LFS.Size > 0 {
 			size = n.LFS.Size
+		} else {
+			size = n.Size
 		}
 
 		// Assume LFS files support range requests (HuggingFace always does)

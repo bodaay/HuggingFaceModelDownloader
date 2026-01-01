@@ -141,7 +141,7 @@ func newDownloadCmd(ctx context.Context, ro *RootOpts) *cobra.Command {
 	cmd.Flags().BoolVar(&job.AppendFilterSubdir, "append-filter-subdir", false, "Append each filter as a subdirectory")
 
 	// Settings flags
-	cmd.Flags().StringVarP(&cfg.OutputDir, "output", "o", "Storage", "Destination base directory")
+	cmd.Flags().StringVarP(&cfg.OutputDir, "output", "o", "", "Destination base directory (default: Models or Datasets)")
 	cmd.Flags().IntVarP(&cfg.Concurrency, "connections", "c", 8, "Per-file concurrent connections for LFS range requests")
 	cmd.Flags().IntVar(&cfg.MaxActiveDownloads, "max-active", 3, "Maximum number of files downloading at once")
 	cmd.Flags().StringVar(&cfg.MultipartThreshold, "multipart-threshold", "32MiB", "Use multipart/range downloads only for files >= this size")
@@ -202,6 +202,16 @@ func finalize(cmd *cobra.Command, ro *RootOpts, args []string, job *hfdownloader
 	}
 	if !hfdownloader.IsValidModelName(j.Repo) {
 		return j, c, fmt.Errorf("invalid repo id %q (expected owner/name)", j.Repo)
+	}
+
+	// Set default output directory based on type (Models or Datasets)
+	// Only if user didn't explicitly set --output
+	if c.OutputDir == "" {
+		if j.IsDataset {
+			c.OutputDir = "Datasets"
+		} else {
+			c.OutputDir = "Models"
+		}
 	}
 
 	return j, c, nil
@@ -267,7 +277,8 @@ func applySettingsDefaults(cmd *cobra.Command, ro *RootOpts, dst *hfdownloader.S
 		}
 	}
 
-	setStr("output", func(v string) { dst.OutputDir = v })
+	// Note: We don't load "output" from config - it's now dynamic based on model/dataset type
+	// setStr("output", func(v string) { dst.OutputDir = v })
 	setInt("connections", func(v int) { dst.Concurrency = v })
 	setInt("max-active", func(v int) { dst.MaxActiveDownloads = v })
 	setStr("multipart-threshold", func(v string) { dst.MultipartThreshold = v })

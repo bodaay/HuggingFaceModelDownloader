@@ -82,3 +82,4 @@ echo "Build complete! Binaries are in: ${OUTPUT_DIR}/"
 echo ""
 ls -lh "${OUTPUT_DIR}"/hfdownloader_*_${VERSION}* 2>/dev/null || true
 
+

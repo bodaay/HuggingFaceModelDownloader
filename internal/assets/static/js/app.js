@@ -42,6 +42,9 @@
     pages: $$('.page'),
     downloadForm: $('#downloadForm'),
     activeDownloads: $('#activeDownloads'),
+    completedDownloads: $('#completedDownloads'),
+    downloadingCount: $('#downloadingCount'),
+    completedFilesCount: $('#completedFilesCount'),
     globalProgress: $('#globalProgress'),
     globalBytes: $('#globalBytes'),
     globalSpeed: $('#globalSpeed'),
@@ -348,138 +351,179 @@
   }
 
   function renderDownloads() {
-    const container = elements.activeDownloads;
+    const activeContainer = elements.activeDownloads;
+    const completedContainer = elements.completedDownloads;
     
-    if (state.activeDownloads.size === 0) {
-      container.innerHTML = `
+    // Group jobs by status
+    const activeJobs = [];   // running or queued
+    const completedJobs = []; // complete, failed, cancelled
+    
+    state.activeDownloads.forEach((dl, jobId) => {
+      const jobData = { ...dl, jobId };
+      if (dl.status === 'active' || dl.status === 'queued') {
+        activeJobs.push(jobData);
+      } else {
+        completedJobs.push(jobData);
+      }
+    });
+
+    // Count active files
+    let activeFileCount = 0;
+    activeJobs.forEach(job => {
+      if (job.files && job.files.length > 0) {
+        activeFileCount += job.files.filter(f => f.status === 'active').length;
+      }
+    });
+    
+    // Update counters
+    if (elements.downloadingCount) {
+      elements.downloadingCount.textContent = `${activeJobs.length} model${activeJobs.length !== 1 ? 's' : ''}, ${activeFileCount} file${activeFileCount !== 1 ? 's' : ''}`;
+    }
+    if (elements.completedFilesCount) {
+      elements.completedFilesCount.textContent = `${completedJobs.length} model${completedJobs.length !== 1 ? 's' : ''}`;
+    }
+
+    // Render active jobs (grouped by model)
+    if (activeJobs.length === 0) {
+      activeContainer.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-icon">⏸</div>
+          <p>No downloads in progress</p>
+        </div>
+      `;
+    } else {
+      let html = '';
+      
+      activeJobs.forEach(job => {
+        const jobProgress = job.total > 0 ? (job.downloaded / job.total * 100) : 0;
+        const fileInfo = job.totalFiles > 0 ? `${job.completedFiles}/${job.totalFiles} files` : '';
+        
+        html += `
+          <div class="job-group" data-job-id="${escapeHtml(job.jobId)}">
+            <div class="job-header">
+              <div class="job-info">
+                <span class="job-status ${job.status === 'active' ? 'active' : 'queued'}">${job.status === 'active' ? '▶' : '◎'}</span>
+                <span class="job-name">${escapeHtml(job.repo || job.path)}</span>
+                <span class="job-meta">${formatBytes(job.downloaded)}/${formatBytes(job.total)} ${fileInfo ? '• ' + fileInfo : ''}</span>
+              </div>
+              <button class="btn btn-icon btn-cancel" data-job-id="${escapeHtml(job.jobId)}" title="Cancel">×</button>
+            </div>
+            <div class="job-progress-bar">
+              <div class="job-progress-fill ${job.status === 'active' ? 'animated' : ''}" style="width: ${jobProgress.toFixed(1)}%"></div>
+            </div>
+        `;
+        
+        // Show active files for this job (max 5)
+        if (job.files && job.files.length > 0) {
+          const activeFiles = job.files.filter(f => f.status === 'active').slice(0, 5);
+          if (activeFiles.length > 0) {
+            html += '<div class="job-files">';
+            activeFiles.forEach(file => {
+              const fileProgress = file.totalBytes > 0 ? (file.downloaded / file.totalBytes * 100) : 0;
+              const fileName = file.path.split('/').pop();
+              
+              html += `
+                <div class="file-item downloading">
+                  <span class="file-status">▶</span>
+                  <span class="file-name" title="${escapeHtml(file.path)}">${escapeHtml(fileName)}</span>
+                  <div class="file-progress-bar">
+                    <div class="file-progress-fill animated" style="width: ${fileProgress.toFixed(1)}%"></div>
+                  </div>
+                  <span class="file-size">${formatBytes(file.downloaded)}/${formatBytes(file.totalBytes)}</span>
+                </div>
+              `;
+            });
+            
+            const remainingActive = job.files.filter(f => f.status === 'active').length - 5;
+            if (remainingActive > 0) {
+              html += `<div class="file-item more-files">... and ${remainingActive} more downloading</div>`;
+            }
+            html += '</div>';
+          }
+        }
+        
+        html += '</div>'; // close job-group
+      });
+      
+      activeContainer.innerHTML = html;
+      
+      // Attach cancel handlers
+      activeContainer.querySelectorAll('.btn-cancel').forEach(btn => {
+        btn.addEventListener('click', () => cancelJob(btn.dataset.jobId));
+      });
+    }
+
+    // Render completed jobs (grouped by model, scrollable)
+    if (completedJobs.length === 0) {
+      completedContainer.innerHTML = `
         <div class="empty-state">
           <div class="empty-icon">📭</div>
-          <p>No active downloads</p>
+          <p>No completed downloads</p>
           <div class="empty-actions">
             <a href="#" class="btn btn-primary" data-navigate="models">Download Model</a>
             <a href="#" class="btn btn-ghost" data-navigate="datasets">Download Dataset</a>
           </div>
         </div>
       `;
-      return;
-    }
-
-    let html = '';
-    state.activeDownloads.forEach((dl, id) => {
-      const progress = dl.total > 0 ? (dl.downloaded / dl.total * 100).toFixed(1) : 0;
+    } else {
+      // Preserve scroll position
+      const scrollTop = completedContainer.scrollTop;
       
-      // Status icons and classes
-      let statusIcon, statusClass;
-      switch (dl.status) {
-        case 'active':
-          statusIcon = '▶';
-          statusClass = 'active';
-          break;
-        case 'complete':
-          statusIcon = '✓';
-          statusClass = 'complete';
-          break;
-        case 'error':
-          statusIcon = '✕';
-          statusClass = 'error';
-          break;
-        case 'cancelled':
-          statusIcon = '⊘';
-          statusClass = 'cancelled';
-          break;
-        case 'queued':
-          statusIcon = '◎';
-          statusClass = 'queued';
-          break;
-        default:
-          statusIcon = '•';
-          statusClass = 'pending';
-      }
-
-      // File progress info
-      const fileInfo = dl.totalFiles > 0 
-        ? `${dl.completedFiles}/${dl.totalFiles} files`
-        : '';
-
-      // Build per-file progress HTML (like the TUI)
-      let filesHtml = '';
-      if (dl.files && dl.files.length > 0) {
-        filesHtml = '<div class="file-list">';
-        dl.files.forEach(file => {
-          const fileProgress = file.totalBytes > 0 ? (file.downloaded / file.totalBytes * 100) : 0;
-          const fileName = file.path.split('/').pop(); // Just the filename
-          
-          let fileStatusIcon, fileStatusClass;
-          switch (file.status) {
-            case 'active':
-              fileStatusIcon = '▶';
-              fileStatusClass = 'downloading';
-              break;
-            case 'complete':
-              fileStatusIcon = '✓';
-              fileStatusClass = 'done';
-              break;
-            default:
-              fileStatusIcon = '○';
-              fileStatusClass = 'pending';
-          }
-
-          filesHtml += `
-            <div class="file-item ${fileStatusClass}">
-              <span class="file-status">${fileStatusIcon}</span>
-              <span class="file-name" title="${escapeHtml(file.path)}">${escapeHtml(fileName)}</span>
-              <div class="file-progress-bar">
-                <div class="file-progress-fill ${file.status === 'active' ? 'animated' : ''}" style="width: ${fileProgress}%"></div>
+      let html = '';
+      // Show most recent first
+      [...completedJobs].reverse().forEach(job => {
+        const statusIcon = job.status === 'complete' ? '✓' : (job.status === 'error' ? '✕' : '⊘');
+        const statusClass = job.status === 'complete' ? 'success' : (job.status === 'error' ? 'error' : 'cancelled');
+        
+        html += `
+          <div class="job-group completed" data-job-id="${escapeHtml(job.jobId)}">
+            <div class="job-header">
+              <div class="job-info">
+                <span class="job-status ${statusClass}">${statusIcon}</span>
+                <span class="job-name">${escapeHtml(job.repo || job.path)}</span>
+                <span class="job-meta">${formatBytes(job.total)} • ${job.totalFiles || 0} files</span>
               </div>
-              <span class="file-size">${formatBytes(file.downloaded)}/${formatBytes(file.totalBytes)}</span>
+              <button class="btn btn-icon btn-remove" data-job-id="${escapeHtml(job.jobId)}" title="Remove">🗑</button>
             </div>
-          `;
-        });
-        filesHtml += '</div>';
-      }
-
-      html += `
-        <div class="download-item ${dl.status === 'active' ? 'is-active' : ''}" data-job-id="${escapeHtml(id)}">
-          <div class="download-header">
-            <div class="download-status ${statusClass}">${statusIcon}</div>
-            <div class="download-info">
-              <div class="download-name">${escapeHtml(dl.repo || dl.path)}</div>
-              <div class="download-meta">
-                ${formatBytes(dl.downloaded)} / ${formatBytes(dl.total)}
-                ${dl.speed > 0 ? `• ${formatBytes(dl.speed)}/s` : ''}
-                ${fileInfo ? `• ${fileInfo}` : ''}
-              </div>
-            </div>
-            <div class="download-progress">
-              <div class="progress-bar-container">
-                <div class="progress-bar ${dl.status === 'active' ? 'animated' : ''}" style="--progress: ${progress}%">
-                  ${dl.status === 'active' ? '<div class="progress-glow"></div>' : ''}
+        `;
+        
+        // Show completed files (collapsed by default, show first 3)
+        if (job.files && job.files.length > 0) {
+          const completedFiles = job.files.filter(f => f.status === 'complete').slice(0, 3);
+          if (completedFiles.length > 0) {
+            html += '<div class="job-files">';
+            completedFiles.forEach(file => {
+              const fileName = file.path.split('/').pop();
+              html += `
+                <div class="file-item done">
+                  <span class="file-status">✓</span>
+                  <span class="file-name" title="${escapeHtml(file.path)}">${escapeHtml(fileName)}</span>
+                  <span class="file-size">${formatBytes(file.totalBytes)}</span>
                 </div>
-              </div>
-            </div>
-            <div class="download-actions">
-              ${dl.status === 'active' || dl.status === 'queued' 
-                ? `<button class="btn btn-icon btn-cancel" data-job-id="${escapeHtml(id)}" title="Cancel">×</button>`
-                : `<button class="btn btn-icon btn-remove" data-job-id="${escapeHtml(id)}" title="Remove">🗑</button>`
-              }
-            </div>
-          </div>
-          ${filesHtml}
-        </div>
-      `;
-    });
-
-    container.innerHTML = html;
-
-    // Attach cancel handlers
-    container.querySelectorAll('.btn-cancel').forEach(btn => {
-      btn.addEventListener('click', () => cancelJob(btn.dataset.jobId));
-    });
-
-    // Attach remove handlers
-    container.querySelectorAll('.btn-remove').forEach(btn => {
-      btn.addEventListener('click', () => removeJob(btn.dataset.jobId));
-    });
+              `;
+            });
+            
+            const remainingFiles = job.files.filter(f => f.status === 'complete').length - 3;
+            if (remainingFiles > 0) {
+              html += `<div class="file-item more-files">... and ${remainingFiles} more files</div>`;
+            }
+            html += '</div>';
+          }
+        }
+        
+        html += '</div>'; // close job-group
+      });
+      
+      completedContainer.innerHTML = html;
+      
+      // Restore scroll position
+      completedContainer.scrollTop = scrollTop;
+      
+      // Attach remove handlers
+      completedContainer.querySelectorAll('.btn-remove').forEach(btn => {
+        btn.addEventListener('click', () => removeJob(btn.dataset.jobId));
+      });
+    }
   }
 
   function removeJob(jobId) {

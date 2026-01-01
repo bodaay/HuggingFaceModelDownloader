@@ -105,22 +105,30 @@
         </header>
 
         <div class="dashboard-content">
-          <!-- Active Downloads -->
+          <!-- Active Downloads (fixed height, shows currently downloading files) -->
           <div class="card">
             <div class="card-header">
-              <h2>Active Downloads</h2>
-              <button class="btn btn-ghost" id="pauseAllBtn">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                  <rect x="6" y="4" width="4" height="16"/>
-                  <rect x="14" y="4" width="4" height="16"/>
-                </svg>
-                Pause All
-              </button>
+              <h2>📥 Downloading</h2>
+              <span class="card-badge" id="downloadingCount">0 files</span>
             </div>
-            <div class="downloads-list" id="activeDownloads">
+            <div class="downloads-list downloads-active" id="activeDownloads">
+              <div class="empty-state">
+                <div class="empty-icon">⏸</div>
+                <p>No files downloading</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Completed Downloads (scrollable) -->
+          <div class="card card-scrollable">
+            <div class="card-header">
+              <h2>✅ Completed</h2>
+              <span class="card-badge" id="completedFilesCount">0 files</span>
+            </div>
+            <div class="downloads-list downloads-completed" id="completedDownloads">
               <div class="empty-state">
                 <div class="empty-icon">📭</div>
-                <p>No active downloads</p>
+                <p>No completed downloads</p>
                 <div class="empty-actions">
                   <a href="#" class="btn btn-primary" data-navigate="models">Download Model</a>
                   <a href="#" class="btn btn-ghost" data-navigate="datasets">Download Dataset</a>

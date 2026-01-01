@@ -379,6 +379,206 @@ code, .mono {
   padding: 1rem 1.5rem;
 }
 
+.card-scrollable {
+  flex: 1;
+  min-height: 200px;
+  max-height: 400px;
+  display: flex;
+  flex-direction: column;
+}
+
+.card-scrollable .downloads-list {
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent) var(--bg-tertiary);
+}
+
+.card-scrollable .downloads-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.card-scrollable .downloads-list::-webkit-scrollbar-track {
+  background: var(--bg-tertiary);
+}
+
+.card-scrollable .downloads-list::-webkit-scrollbar-thumb {
+  background: var(--accent);
+  border-radius: 3px;
+}
+
+.card-badge {
+  font-size: 0.75rem;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-sm);
+}
+
+/* Active downloads - fixed height container */
+.downloads-active {
+  max-height: 350px;
+  overflow-y: auto;
+}
+
+/* Completed downloads - more compact items */
+.downloads-completed .file-item {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.downloads-completed .file-item:last-child {
+  border-bottom: none;
+}
+
+.downloads-completed .file-item.done {
+  opacity: 0.8;
+}
+
+.downloads-completed .file-item.done .file-name {
+  color: var(--success);
+}
+
+.file-item.more-files {
+  color: var(--text-secondary);
+  font-style: italic;
+  padding: 0.5rem;
+  text-align: center;
+}
+
+/* Job Groups (grouped by model) */
+.job-group {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.job-group:last-child {
+  margin-bottom: 0;
+}
+
+.job-group.completed {
+  opacity: 0.85;
+}
+
+.job-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.job-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.job-status {
+  font-size: 0.9rem;
+  width: 1.5rem;
+  text-align: center;
+}
+
+.job-status.active {
+  color: var(--accent);
+  animation: pulse 1.5s infinite;
+}
+
+.job-status.queued {
+  color: var(--text-secondary);
+}
+
+.job-status.success {
+  color: var(--success);
+}
+
+.job-status.error {
+  color: var(--error);
+}
+
+.job-status.cancelled {
+  color: var(--text-muted);
+}
+
+.job-name {
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.job-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.job-progress-bar {
+  height: 4px;
+  background: var(--bg-secondary);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 0.75rem;
+}
+
+.job-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.job-progress-fill.animated {
+  background: linear-gradient(
+    90deg,
+    var(--accent) 0%,
+    var(--accent-glow) 50%,
+    var(--accent) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.job-files {
+  padding-left: 1.5rem;
+  border-left: 2px solid var(--border);
+  margin-left: 0.5rem;
+}
+
+.job-files .file-item {
+  padding: 0.35rem 0;
+  font-size: 0.85rem;
+}
+
+.job-files .file-progress-bar {
+  max-width: 100px;
+}
+
+.job-group .btn-cancel,
+.job-group .btn-remove {
+  opacity: 0.6;
+  transition: opacity var(--transition-fast);
+}
+
+.job-group:hover .btn-cancel,
+.job-group:hover .btn-remove {
+  opacity: 1;
+}
+
 /* =========================================
    Buttons
    ========================================= */
