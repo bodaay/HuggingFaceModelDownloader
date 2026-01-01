@@ -132,7 +132,7 @@ if [ "$install_mode" = true ]; then
     # Check if in PATH
     if command -v "$binary_name" &>/dev/null; then
         ok "${binary_name} is in your PATH. Run: ${binary_name} --help"
-    else
+else
         warn "${install_path} is not in your PATH."
         echo "    Add this to your shell profile:"
         echo "    export PATH=\"${install_path}:\$PATH\""

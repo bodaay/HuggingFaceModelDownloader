@@ -1,4 +1,4 @@
-# Release Notes - v2.3.1
+# Release Notes - v2.3.3
 
 > **Release Date:** December 31, 2025
 

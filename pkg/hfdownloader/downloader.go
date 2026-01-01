@@ -421,11 +421,11 @@ func downloadMultipart(ctx context.Context, httpc *http.Client, token string, jo
 					} else {
 						_, lastErr = io.Copy(out, rs.Body)
 						out.Close()
-						rs.Body.Close()
-						if lastErr == nil {
-							return
-						}
+					rs.Body.Close()
+					if lastErr == nil {
+						return
 					}
+				}
 				}
 
 				if attempt < cfg.Retries {

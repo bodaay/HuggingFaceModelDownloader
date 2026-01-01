@@ -402,19 +402,19 @@ Use as a Go library for programmatic downloads:
 package main
 
 import (
-    "context"
+  "context"
     "fmt"
-    "log"
+  "log"
 
     "github.com/bodaay/HuggingFaceModelDownloader/pkg/hfdownloader"
 )
 
 func main() {
-    job := hfdownloader.Job{
+  job := hfdownloader.Job{
         Repo:     "TheBloke/Mistral-7B-Instruct-v0.2-GGUF",
         Revision: "main",
         Filters:  []string{"q4_k_m"},
-    }
+  }
 
     cfg := hfdownloader.DefaultSettings()
     cfg.OutputDir = "./Models"
@@ -426,12 +426,12 @@ func main() {
             if e.Event == "file_progress" {
                 fmt.Printf("\r%s: %.1f%%", e.Path, 
                     float64(e.Bytes)/float64(e.Total)*100)
-            }
+    }
         })
 
     if err != nil {
-        log.Fatal(err)
-    }
+    log.Fatal(err)
+  }
     fmt.Println("\n✅ Download complete!")
 }
 ```
