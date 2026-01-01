@@ -17,26 +17,32 @@ import (
 
 // Config holds server configuration.
 type Config struct {
-	Addr           string
-	Port           int
-	Token          string // HuggingFace token
-	ModelsDir      string // Output directory for models (not configurable via API)
-	DatasetsDir    string // Output directory for datasets (not configurable via API)
-	Concurrency    int
-	MaxActive      int
-	AllowedOrigins []string // CORS origins
-	Endpoint       string   // Custom HuggingFace endpoint (e.g., for mirrors)
+	Addr               string
+	Port               int
+	Token              string // HuggingFace token
+	ModelsDir          string // Output directory for models (not configurable via API)
+	DatasetsDir        string // Output directory for datasets (not configurable via API)
+	Concurrency        int
+	MaxActive          int
+	MultipartThreshold string // Minimum size for multipart download
+	Verify             string // Verification mode: none, size, sha256
+	Retries            int    // Number of retry attempts
+	AllowedOrigins     []string // CORS origins
+	Endpoint           string   // Custom HuggingFace endpoint (e.g., for mirrors)
 }
 
 // DefaultConfig returns sensible defaults.
 func DefaultConfig() Config {
 	return Config{
-		Addr:        "0.0.0.0",
-		Port:        8080,
-		ModelsDir:   "./Models",
-		DatasetsDir: "./Datasets",
-		Concurrency: 8,
-		MaxActive:   3,
+		Addr:               "0.0.0.0",
+		Port:               8080,
+		ModelsDir:          "./Models",
+		DatasetsDir:        "./Datasets",
+		Concurrency:        8,
+		MaxActive:          3,
+		MultipartThreshold: "32MiB",
+		Verify:             "size",
+		Retries:            4,
 	}
 }
 

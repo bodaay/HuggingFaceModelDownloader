@@ -18,13 +18,16 @@ import (
 
 func newServeCmd(ro *RootOpts) *cobra.Command {
 	var (
-		addr        string
-		port        int
-		modelsDir   string
-		datasetsDir string
-		conns       int
-		active      int
-		endpoint    string
+		addr               string
+		port               int
+		modelsDir          string
+		datasetsDir        string
+		conns              int
+		active             int
+		multipartThreshold string
+		verify             string
+		retries            int
+		endpoint           string
 	)
 
 	cmd := &cobra.Command{
@@ -45,13 +48,16 @@ Example:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Build server config
 			cfg := server.Config{
-				Addr:        addr,
-				Port:        port,
-				ModelsDir:   modelsDir,
-				DatasetsDir: datasetsDir,
-				Concurrency: conns,
-				MaxActive:   active,
-				Endpoint:    endpoint,
+				Addr:               addr,
+				Port:               port,
+				ModelsDir:          modelsDir,
+				DatasetsDir:        datasetsDir,
+				Concurrency:        conns,
+				MaxActive:          active,
+				MultipartThreshold: multipartThreshold,
+				Verify:             verify,
+				Retries:            retries,
+				Endpoint:           endpoint,
 			}
 
 			// Get token from flag or env
@@ -85,6 +91,9 @@ Example:
 	cmd.Flags().StringVar(&datasetsDir, "datasets-dir", "./Datasets", "Output directory for datasets")
 	cmd.Flags().IntVarP(&conns, "connections", "c", 8, "Connections per file")
 	cmd.Flags().IntVar(&active, "max-active", 3, "Max concurrent file downloads")
+	cmd.Flags().StringVar(&multipartThreshold, "multipart-threshold", "32MiB", "Use multipart for files >= this size")
+	cmd.Flags().StringVar(&verify, "verify", "size", "Verification mode: none|size|sha256")
+	cmd.Flags().IntVar(&retries, "retries", 4, "Max retry attempts per HTTP request")
 	cmd.Flags().StringVar(&endpoint, "endpoint", "", "Custom HuggingFace endpoint URL (e.g., https://hf-mirror.com)")
 
 	return cmd

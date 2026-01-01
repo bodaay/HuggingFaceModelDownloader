@@ -210,6 +210,19 @@ hfdownloader serve \
   --endpoint https://hf-mirror.com  # Optional: use mirror
 ```
 
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-p, --port` | `8080` | Port to listen on |
+| `--addr` | `0.0.0.0` | Address to bind to |
+| `--models-dir` | `./Models` | Output directory for models |
+| `--datasets-dir` | `./Datasets` | Output directory for datasets |
+| `-c, --connections` | `8` | Connections per file |
+| `--max-active` | `3` | Max concurrent file downloads |
+| `--multipart-threshold` | `32MiB` | Use multipart for files >= this size |
+| `--verify` | `size` | Verification: `none\|size\|sha256` |
+| `--retries` | `4` | Max retry attempts |
+| `--endpoint` | - | Custom HF endpoint (e.g., mirror) |
+
 ---
 
 ## 💻 CLI Reference

@@ -176,10 +176,12 @@ func (s *Server) handlePlanInternal(w http.ResponseWriter, req DownloadRequest) 
 
 	// Create job for scanning
 	dlJob := hfdownloader.Job{
-		Repo:      req.Repo,
-		Revision:  revision,
-		IsDataset: req.Dataset,
-		Filters:   req.Filters,
+		Repo:               req.Repo,
+		Revision:           revision,
+		IsDataset:          req.Dataset,
+		Filters:            req.Filters,
+		Excludes:           req.Excludes,
+		AppendFilterSubdir: req.AppendFilterSubdir,
 	}
 
 	// Use server-configured output directory (not from request for security)
@@ -191,6 +193,7 @@ func (s *Server) handlePlanInternal(w http.ResponseWriter, req DownloadRequest) 
 	settings := hfdownloader.Settings{
 		OutputDir: outputDir,
 		Token:     s.config.Token,
+		Endpoint:  s.config.Endpoint,
 	}
 
 	// Collect plan items
@@ -289,9 +292,10 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		DatasetsDir:        s.config.DatasetsDir,
 		Concurrency:        s.config.Concurrency,
 		MaxActive:          s.config.MaxActive,
-		MultipartThreshold: "32MiB",
-		Verify:             "size",
-		Retries:            4,
+		MultipartThreshold: s.config.MultipartThreshold,
+		Verify:             s.config.Verify,
+		Retries:            s.config.Retries,
+		Endpoint:           s.config.Endpoint,
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -301,9 +305,12 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 // Note: Output directories cannot be changed via API for security.
 func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Token       *string `json:"token,omitempty"`
-		Concurrency *int    `json:"connections,omitempty"`
-		MaxActive   *int    `json:"maxActive,omitempty"`
+		Token              *string `json:"token,omitempty"`
+		Concurrency        *int    `json:"connections,omitempty"`
+		MaxActive          *int    `json:"maxActive,omitempty"`
+		MultipartThreshold *string `json:"multipartThreshold,omitempty"`
+		Verify             *string `json:"verify,omitempty"`
+		Retries            *int    `json:"retries,omitempty"`
 		// Note: ModelsDir and DatasetsDir are NOT updatable via API for security
 	}
 
@@ -313,7 +320,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update config (only safe fields)
-	if req.Token != nil && *req.Token != "" {
+	if req.Token != nil {
 		s.config.Token = *req.Token
 	}
 	if req.Concurrency != nil && *req.Concurrency > 0 {
@@ -321,6 +328,15 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.MaxActive != nil && *req.MaxActive > 0 {
 		s.config.MaxActive = *req.MaxActive
+	}
+	if req.MultipartThreshold != nil && *req.MultipartThreshold != "" {
+		s.config.MultipartThreshold = *req.MultipartThreshold
+	}
+	if req.Verify != nil && *req.Verify != "" {
+		s.config.Verify = *req.Verify
+	}
+	if req.Retries != nil && *req.Retries > 0 {
+		s.config.Retries = *req.Retries
 	}
 
 	// Also update job manager config

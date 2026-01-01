@@ -726,14 +726,30 @@
   // Settings
   // =========================================
 
-  function initSettings() {
-    // Load settings from localStorage
-    const saved = localStorage.getItem('hfdownloader_settings');
-    if (saved) {
-      try {
-        Object.assign(state.settings, JSON.parse(saved));
+  async function initSettings() {
+    // Load settings from server first (authoritative), then merge localStorage for UI prefs
+    try {
+      const resp = await fetch('/api/settings');
+      if (resp.ok) {
+        const serverSettings = await resp.json();
+        // Map server field names to our state
+        state.settings.token = serverSettings.token || '';
+        state.settings.connections = serverSettings.connections || 8;
+        state.settings.maxActive = serverSettings.maxActive || 3;
+        state.settings.multipartThreshold = serverSettings.multipartThreshold || '32MiB';
+        state.settings.verify = serverSettings.verify || 'size';
+        state.settings.retries = serverSettings.retries || 4;
         applySettings();
-      } catch (e) {}
+      }
+    } catch (e) {
+      // Fallback to localStorage if server unavailable
+      const saved = localStorage.getItem('hfdownloader_settings');
+      if (saved) {
+        try {
+          Object.assign(state.settings, JSON.parse(saved));
+          applySettings();
+        } catch (e) {}
+      }
     }
 
     // Scanline toggle
@@ -919,10 +935,10 @@
   // Init
   // =========================================
 
-  function init() {
+  async function init() {
     initNavigation();
     initDownloadForms();
-    initSettings();
+    await initSettings();
     initPasswordToggles();
 
     // Connect WebSocket
