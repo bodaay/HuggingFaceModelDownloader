@@ -57,43 +57,6 @@ generate_windows_versioninfo() {
     minor=${minor:-0}
     patch=${patch:-0}
     
-    # Create Windows application manifest
-    cat > "${MAIN_PKG}/hfdownloader.exe.manifest" << 'MANIFEST'
-<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity
-    type="win32"
-    name="HuggingFaceModelDownloader"
-    version="1.0.0.0"
-    processorArchitecture="amd64"/>
-  <description>HuggingFace Model Downloader - Download AI models from HuggingFace Hub</description>
-  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
-    <security>
-      <requestedPrivileges>
-        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
-      </requestedPrivileges>
-    </security>
-  </trustInfo>
-  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
-    <application>
-      <!-- Windows 10/11 -->
-      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
-      <!-- Windows 8.1 -->
-      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}"/>
-      <!-- Windows 8 -->
-      <supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}"/>
-      <!-- Windows 7 -->
-      <supportedOS Id="{35138b9a-5d96-4fbd-8e2d-a2440225f93a}"/>
-    </application>
-  </compatibility>
-  <application xmlns="urn:schemas-microsoft-com:asm.v3">
-    <windowsSettings>
-      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
-    </windowsSettings>
-  </application>
-</assembly>
-MANIFEST
-
     cat > "${MAIN_PKG}/versioninfo.json" << EOF
 {
     "FixedFileInfo": {
@@ -116,30 +79,26 @@ MANIFEST
         "FileSubType": "00"
     },
     "StringFileInfo": {
-        "Comments": "HuggingFace Model Downloader - Download AI models from HuggingFace Hub",
-        "CompanyName": "HuggingFace Model Downloader Project",
-        "FileDescription": "HuggingFace Model Downloader CLI Tool",
+        "Comments": "HuggingFace Model Downloader - Download models from HuggingFace Hub",
+        "CompanyName": "Open Source",
+        "FileDescription": "HuggingFace Model Downloader",
         "FileVersion": "${VERSION}",
         "InternalName": "hfdownloader",
-        "LegalCopyright": "Copyright (c) 2024-2026 HuggingFace Model Downloader Contributors. Apache-2.0 License.",
-        "LegalTrademarks": "",
+        "LegalCopyright": "Apache-2.0 License",
         "OriginalFilename": "hfdownloader.exe",
-        "PrivateBuild": "",
         "ProductName": "HuggingFace Model Downloader",
-        "ProductVersion": "${VERSION}",
-        "SpecialBuild": ""
+        "ProductVersion": "${VERSION}"
     },
     "VarFileInfo": {
         "Translation": {
             "LangID": "0409",
             "CharsetID": "04B0"
         }
-    },
-    "ManifestPath": "hfdownloader.exe.manifest"
+    }
 }
 EOF
     
-    echo "  Generating Windows version resource with manifest..."
+    echo "  Generating Windows version resource..."
     (cd "${MAIN_PKG}" && goversioninfo -o resource_windows_amd64.syso)
     return 0
 }
@@ -147,7 +106,6 @@ EOF
 # Cleanup Windows version info files
 cleanup_windows_versioninfo() {
     rm -f "${MAIN_PKG}/versioninfo.json"
-    rm -f "${MAIN_PKG}/hfdownloader.exe.manifest"
     rm -f "${MAIN_PKG}/resource_windows_amd64.syso"
 }
 
