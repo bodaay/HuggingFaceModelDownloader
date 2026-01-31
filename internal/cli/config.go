@@ -16,7 +16,7 @@ import (
 // DefaultConfig returns the default configuration.
 func DefaultConfig() map[string]any {
 	return map[string]any{
-		"output":              "Storage",
+		"cache-dir":           "", // Empty = use HF_HOME env or ~/.cache/huggingface
 		"connections":         8,
 		"max-active":          3,
 		"multipart-threshold": "32MiB",
@@ -97,7 +97,7 @@ CLI flags always override config file values.`,
 			fmt.Println()
 			fmt.Println("Edit this file to set your defaults. For example:")
 			fmt.Println("  - Set your HuggingFace token")
-			fmt.Println("  - Change default output directory")
+			fmt.Println("  - Change default cache directory (cache-dir)")
 			fmt.Println("  - Adjust connection settings")
 
 			return nil

@@ -12,20 +12,28 @@ import (
 	"strings"
 )
 
-// verifySHA256 computes the SHA256 of a file and compares it to expected.
-func verifySHA256(path string, expected string) error {
+// computeSHA256 computes and returns the SHA256 hash of a file.
+func computeSHA256(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer f.Close()
 
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
-		return err
+		return "", err
 	}
 
-	sum := hex.EncodeToString(h.Sum(nil))
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// verifySHA256 computes the SHA256 of a file and compares it to expected.
+func verifySHA256(path string, expected string) error {
+	sum, err := computeSHA256(path)
+	if err != nil {
+		return err
+	}
 	if !strings.EqualFold(sum, expected) {
 		return fmt.Errorf("sha256 mismatch: expected %s got %s", expected, sum)
 	}

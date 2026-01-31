@@ -1,236 +1,168 @@
-# Release Notes - v2.3.3
+# Release Notes - v3.0.0
 
-> **Release Date:** December 31, 2025
+> **Release Date:** January 2026
+> **The HuggingFace-Native Release**
 
-## 🎉 Community Features
+## Highlights
 
-This release incorporates contributions and suggestions from the community:
+Version 3.0.0 is a major release that brings **full HuggingFace CLI compatibility**. Your downloads are now stored in the standard HuggingFace cache structure, making them instantly accessible to Transformers, Diffusers, and any other HuggingFace-based tools.
 
-### ✨ New Features
+---
 
-#### 🚫 Exclude Patterns (`--exclude`, `-E`)
-Exclude specific files from downloads. Thanks to **@jeroenkroese** ([#41](https://github.com/bodaay/HuggingFaceModelDownloader/pull/41))!
+## New Features
+
+### HuggingFace Cache Structure (Default)
+
+Downloads now go directly to `~/.cache/huggingface/hub/` - the same location used by `huggingface_hub`, Transformers, and other HuggingFace tools.
 
 ```bash
-# Exclude markdown and ONNX files
-hfdownloader download TheBloke/Mistral-7B-GGUF -E .md,onnx
+# Download a model - it's immediately available to Transformers
+hfdownloader download microsoft/DialoGPT-medium
 
-# Exclude full precision models
-hfdownloader download owner/repo -E fp16,fp32
+# Use it directly in Python - no copying needed!
+from transformers import AutoModel
+model = AutoModel.from_pretrained("microsoft/DialoGPT-medium")
 ```
 
-#### 🌍 Custom Endpoint (`--endpoint`)
-Use HuggingFace mirrors or enterprise endpoints. Thanks to **@windtail** ([#38](https://github.com/bodaay/HuggingFaceModelDownloader/pull/38))!
+### Dual-Layer Storage
+
+Get the best of both worlds:
+- **HuggingFace cache**: Content-addressable blobs for deduplication
+- **Human-readable symlinks**: Easy file browsing at `~/.cache/huggingface/hub/models--{owner}--{repo}/snapshots/{revision}/`
+
+### Multi-Revision Support
+
+Download specific branches, tags, or commits:
 
 ```bash
-# Use China mirror
-hfdownloader download owner/repo --endpoint https://hf-mirror.com
+# Download a specific branch
+hfdownloader download TheBloke/Mistral-7B-Instruct-v0.2-GGUF --revision main
 
-# Use enterprise endpoint
-hfdownloader serve --endpoint https://your-enterprise.com/hf
+# Download a specific tag
+hfdownloader download owner/repo --revision v1.0.0
 ```
 
-#### 🐳 Docker Support
-Run hfdownloader in containers. Thanks to **@cdeving** ([#50](https://github.com/bodaay/HuggingFaceModelDownloader/pull/50))!
+### Model Analysis
+
+Understand models before downloading with the new `analyze` command:
 
 ```bash
-# Build Docker image
-docker build -t hfdownloader .
-
-# Run CLI in container
-docker run --rm -v ./models:/data hfdownloader download TheBloke/Mistral-7B-GGUF -o /data
-
-# Run web server in container
-docker run --rm -p 8080:8080 -v ./models:/data hfdownloader serve --models-dir /data/Models
+hfdownloader analyze microsoft/DialoGPT-medium
 ```
 
----
+Shows:
+- Model architecture and framework
+- File types and sizes
+- Quantization formats available
+- Recommended filters for your use case
 
-## 📋 Changes
+### Enhanced Web UI
 
-- Added `--exclude` / `-E` flag to CLI download command
-- Added `--endpoint` flag to both download and serve commands
-- Added `Excludes` field to Job struct
-- Added `Endpoint` field to Settings struct
-- Created `Dockerfile` with multi-stage build
-- Updated API to support `excludes` in download requests
-- Updated settings endpoint to include custom endpoint config
-- **Web UI:** Added "Exclude" input field to Model and Dataset download forms
-- **Web UI:** Updated version display to v2.3.1
+- **Revision picker** - Select branches/tags from a dropdown
+- **Model analysis** - Analyze before downloading
+- **Cache browser** - Explore your local HuggingFace cache
+- **Authentication** - Secure your web server with `--auth-user` and `--auth-pass`
 
----
+### Web Authentication
 
-## 🙏 Acknowledgments
+Secure your web server when exposing to networks:
 
-Special thanks to the community members whose PRs inspired these features:
-
-| Contributor | PR | Feature |
-|-------------|-----|---------|
-| **[@jeroenkroese](https://github.com/jeroenkroese)** | [#41](https://github.com/bodaay/HuggingFaceModelDownloader/pull/41) | Exclude file patterns |
-| **[@windtail](https://github.com/windtail)** | [#38](https://github.com/bodaay/HuggingFaceModelDownloader/pull/38) | Custom HuggingFace endpoint |
-| **[@cdeving](https://github.com/cdeving)** | [#50](https://github.com/bodaay/HuggingFaceModelDownloader/pull/50) | Docker support |
-
-Also thanks to the community for bug reports and PRs that helped identify issues in v2.3.0:
-- URL escaping fix (related to #60)
-- TUI speed improvements (related to #59)
-- API 400 fixes (related to #58)
-
----
-
-# Release Notes - v2.3.0
-
-> **Release Date:** December 31, 2025
-
-## 🎉 Highlights
-
-This is a **major release** introducing a brand new **Web UI**, complete project restructuring, and numerous bug fixes. The project has been reorganized into a clean, modular architecture following Go best practices.
-
----
-
-## ✨ New Features
-
-### 🌐 Web Interface
-- **Beautiful Terminal-Noir themed Web UI** for managing downloads
-- Real-time progress updates via WebSocket
-- Separate pages for downloading **Models** and **Datasets**
-- Per-file progress bars with live status updates
-- Settings management (connections, retries, verification mode)
-- Job deduplication - prevents duplicate downloads of the same repo
-
-### 🚀 One-Liner Web Mode
-Start the web UI instantly with:
 ```bash
-bash <(curl -sSL https://g.bodaay.io/hfd) -w
-```
-Automatically opens your browser to `http://localhost:8080`
-
-### 🔧 New CLI Commands
-- `hfdownloader serve` - Start the web server
-- `hfdownloader version` - Show version information
-- `hfdownloader config` - Manage configuration
-
-### 📦 Reusable Go Package
-The downloader is now available as an importable package:
-```go
-import "github.com/bodaay/HuggingFaceModelDownloader/pkg/hfdownloader"
+hfdownloader serve --auth-user admin --auth-pass secret
 ```
 
----
+### Legacy Mode
 
-## 🐛 Bug Fixes
+Still need the old flat directory structure? Use `--legacy`:
 
-### Fixed: "error: tree API failed: 400 Bad Request"
-- Repository paths with slashes (e.g., `Qwen/Qwen3-0.6B`) were being incorrectly URL-escaped
-- Now correctly handles repo IDs without double-escaping the slash
-
-### Fixed: TUI Speed/ETA Display Jumping Around
-- Implemented **Exponential Moving Average (EMA)** for smooth speed calculations
-- Added minimum time interval (50ms) before recalculating speed
-- Both per-file and overall speeds are now stable and readable
-
-### Fixed: TUI Total File Size Fluctuating
-- File totals no longer get overwritten with incorrect values during progress updates
-- Now only updates total if a valid value is provided
-
-### Fixed: Downloads Appearing Stuck
-- Removed blocking HEAD requests during repository scanning
-- Large repos (90+ files) now start downloading within seconds instead of minutes
-- Assumed LFS files support range requests (they always do on HuggingFace)
-
-### Fixed: Web UI Progress Not Updating
-- Added `progressReader` wrapper for real-time progress during single-file downloads
-- Progress events now use correct `Downloaded` field (cumulative bytes)
-- UI throttled to 10fps to prevent DOM thrashing
-
----
-
-## 🏗️ Architecture Changes
-
-### Project Structure
-The codebase has been completely reorganized:
-
-```
-├── cmd/hfdownloader/     # CLI entry point
-├── internal/
-│   ├── cli/              # CLI commands (Cobra)
-│   ├── server/           # Web server & API
-│   ├── tui/              # Terminal UI
-│   └── assets/           # Embedded web assets
-├── pkg/hfdownloader/     # Reusable download library
-└── scripts/              # Installation scripts
-```
-
-### Security Improvements
-- **Output path is server-controlled** - Cannot be changed via API or Web UI
-- Separate directories for models (`./Models/`) and datasets (`./Datasets/`)
-- Token is never logged or exposed in API responses
-
-### Testing
-- Comprehensive unit tests for `JobManager`, API handlers, and WebSocket
-- Integration tests for end-to-end download flows
-- Test coverage for job deduplication and cancellation
-
----
-
-## 📊 Performance Improvements
-
-| Improvement | Before | After |
-|-------------|--------|-------|
-| Large repo scan (90+ files) | 5+ minutes | ~2 seconds |
-| Progress update frequency | 1 second | 200ms |
-| Speed display stability | Jumpy/erratic | Smooth (EMA) |
-| Web UI responsiveness | Laggy | Throttled 10fps |
-
----
-
-## 🔄 Breaking Changes
-
-- Main package moved from `hfdownloader/` to `pkg/hfdownloader/`
-- CLI now uses Cobra commands instead of flags-only
-- `main.go` replaced with `cmd/hfdownloader/main.go`
-- Old `makefile` replaced with `build.sh`
-
----
-
-## 📥 Installation
-
-### One-Liner (Recommended)
 ```bash
-# Install to /usr/local/bin
+hfdownloader download TheBloke/Mistral-7B-Instruct-v0.2-GGUF --legacy -o ./models
+```
+
+---
+
+## Docker
+
+Docker images are now automatically published to GitHub Container Registry:
+
+```bash
+# Pull the image
+docker pull ghcr.io/bodaay/huggingfacemodeldownloader:3.0.0
+
+# Run with HuggingFace cache mount
+docker run --rm -p 8080:8080 \
+  -v ~/.cache/huggingface:/home/hfdownloader/.cache/huggingface \
+  ghcr.io/bodaay/huggingfacemodeldownloader:3.0.0 serve
+```
+
+---
+
+## Quick Start
+
+```bash
+# Analyze a model (no download)
+bash <(curl -sSL https://g.bodaay.io/hfd) analyze TheBloke/Mistral-7B-Instruct-v0.2-GGUF
+
+# Download Q4_K_M quantization only
+bash <(curl -sSL https://g.bodaay.io/hfd) download TheBloke/Mistral-7B-Instruct-v0.2-GGUF:q4_k_m
+
+# Start web UI with authentication
+bash <(curl -sSL https://g.bodaay.io/hfd) serve --auth-user admin --auth-pass secret
+
+# Install permanently
 bash <(curl -sSL https://g.bodaay.io/hfd) -i
-
-# Start Web UI
-bash <(curl -sSL https://g.bodaay.io/hfd) -w
-
-# Download a model directly
-bash <(curl -sSL https://g.bodaay.io/hfd) download TheBloke/Mistral-7B-GGUF
-```
-
-### From Source
-```bash
-git clone https://github.com/bodaay/HuggingFaceModelDownloader
-cd HuggingFaceModelDownloader
-go build -o hfdownloader ./cmd/hfdownloader
 ```
 
 ---
 
-## 📋 Full Changelog
+## Migration from V2
 
-**New Files:**
-- `cmd/hfdownloader/main.go` - New CLI entry point
-- `internal/server/*` - Complete web server implementation
-- `internal/assets/*` - Embedded web UI (HTML/CSS/JS)
-- `pkg/hfdownloader/*` - Modular download library
-- `build.sh` - Cross-platform build script
+V3 uses a different storage structure by default. Your V2 downloads remain intact.
 
-**Modified:**
-- `scripts/gist_gethfd.sh` - Added `-w` flag for web mode
-- `README.md` - Updated documentation with web UI info
-- `go.mod` - Added new dependencies (Cobra, Gorilla WebSocket)
+**Option 1**: Keep using legacy mode for existing workflows
+```bash
+hfdownloader download owner/repo --legacy -o ./models
+```
 
-**Removed:**
-- `hfdownloader/` - Moved to `pkg/hfdownloader/`
-- `main.go` - Replaced by `cmd/hfdownloader/main.go`
-- `makefile` - Replaced by `build.sh`
+**Option 2**: Re-download to HuggingFace cache (recommended)
+```bash
+# New downloads go to ~/.cache/huggingface/hub/ by default
+hfdownloader download owner/repo
+```
 
+---
+
+## Breaking Changes
+
+- **Default storage location changed**: Downloads now go to `~/.cache/huggingface/hub/` instead of `./Models/`
+- **Directory structure changed**: Uses HuggingFace blob/symlink structure instead of flat files
+- **`-o` flag behavior changed**: In V3 mode, sets `HF_HOME`; in legacy mode, sets direct output path
+
+---
+
+## Full Changelog
+
+### New Features
+- HuggingFace cache structure as default storage
+- `analyze` command for model inspection
+- `--revision` flag for multi-branch downloads
+- Web UI revision picker
+- Web UI cache browser
+- Web UI authentication (`--auth-user`, `--auth-pass`)
+- GitHub Actions for automated releases
+- GitHub Container Registry for Docker images
+
+### Improvements
+- Dual-layer storage (blobs + symlinks)
+- Better progress display
+- Improved error messages
+
+### Legacy Support
+- `--legacy` flag for V2-style flat directory structure
+- Existing V2 workflows continue to work
+
+---
+
+---
+
+**Full Changelog**: https://github.com/bodaay/HuggingFaceModelDownloader/compare/v2.3.3...v3.0.0

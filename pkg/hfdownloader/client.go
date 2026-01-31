@@ -43,15 +43,20 @@ type hfLfsInfo struct {
 }
 
 // buildHTTPClient creates an HTTP client with sensible defaults.
+// Deprecated: Use BuildHTTPClient(proxy) for proxy support.
 func buildHTTPClient() *http.Client {
-	tr := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		MaxIdleConns:          64,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
+	client, _ := BuildHTTPClient(nil)
+	return client
+}
+
+// buildHTTPClientWithProxy creates an HTTP client with proxy support.
+func buildHTTPClientWithProxy(proxy *ProxyConfig) *http.Client {
+	client, err := BuildHTTPClient(proxy)
+	if err != nil {
+		// Fallback to no proxy on error
+		client, _ = BuildHTTPClient(&ProxyConfig{NoEnvProxy: true})
 	}
-	return &http.Client{Transport: tr}
+	return client
 }
 
 // addAuth adds authentication and user-agent headers to a request.
@@ -180,6 +185,41 @@ func pathEscapeAll(p string) string {
 		segs[i] = url.PathEscape(segs[i])
 	}
 	return strings.Join(segs, "/")
+}
+
+// RepoInfo contains metadata about a HuggingFace repository.
+type RepoInfo struct {
+	SHA          string `json:"sha"`           // Commit hash
+	LastModified string `json:"lastModified"`  // ISO timestamp
+}
+
+// fetchRepoInfo fetches repository metadata including the commit SHA for a given revision.
+func fetchRepoInfo(ctx context.Context, httpc *http.Client, token, endpoint string, job Job) (*RepoInfo, error) {
+	ep := getEndpoint(endpoint)
+	var reqURL string
+	if job.IsDataset {
+		reqURL = fmt.Sprintf("%s/api/datasets/%s/revision/%s", ep, job.Repo, url.PathEscape(job.Revision))
+	} else {
+		reqURL = fmt.Sprintf("%s/api/models/%s/revision/%s", ep, job.Repo, url.PathEscape(job.Revision))
+	}
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	addAuth(req, token)
+	resp, err := httpc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("repo info API failed: %s", resp.Status)
+	}
+
+	var info RepoInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil, err
+	}
+	return &info, nil
 }
 
 

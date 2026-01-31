@@ -1,160 +1,403 @@
 <div align="center">
 
-# 🤗 HuggingFace Downloader
+# HuggingFace Downloader
 
-**The fastest way to download models and datasets from the Hugging Face Hub**
+**The fastest, smartest way to download models from HuggingFace Hub**
 
-[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://go.dev)
+[![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/bodaay/HuggingFaceModelDownloader?color=green)](https://github.com/bodaay/HuggingFaceModelDownloader/releases)
 [![Downloads](https://img.shields.io/github/downloads/bodaay/HuggingFaceModelDownloader/total?color=purple)](https://github.com/bodaay/HuggingFaceModelDownloader/releases)
+[![Build](https://github.com/bodaay/HuggingFaceModelDownloader/actions/workflows/release.yml/badge.svg)](https://github.com/bodaay/HuggingFaceModelDownloader/actions/workflows/release.yml)
+[![Docker](https://github.com/bodaay/HuggingFaceModelDownloader/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/bodaay/HuggingFaceModelDownloader/actions/workflows/docker-publish.yml)
 
-**Resumable** • **Multipart** • **Beautiful TUI** • **Web UI** • **Go Library**
+**Parallel downloads** • **Smart GGUF analyzer** • **Python compatible** • **Full proxy support**
 
-[Quick Start](#-quick-start) •
-[Installation](#-installation) •
-[Web UI](#-web-ui) •
-[CLI Reference](#-cli-reference) •
-[Go Library](#-go-library)
+[Quick Start](#quick-start) •
+[Why This Tool](#why-this-tool) •
+[Smart Analyzer](#smart-analyzer) •
+[Web UI](#web-ui) •
+[Mirror Sync](#mirror-sync) •
+[Proxy Support](#proxy-support)
 
 </div>
 
 ---
 
+## Why This Tool?
 
-## 📸 Screenshots
+### Parallel Downloads
 
-<details open>
-<summary><b>Web Interface</b></summary>
+Maximize your bandwidth with **multiple connections per file** and **concurrent file downloads**:
 
-![Web UI Dashboard](docs/screenshots/web-dashboard.png)
+- Up to 16 parallel connections per file (chunked download)
+- Up to 8 files downloading simultaneously
+- Automatic resume on interruption
 
-</details>
+![CLI Download Progress](docs/screenshots/cli-tui.png)
 
-<details>
-<summary><b>Terminal UI</b></summary>
+Real-time progress with per-file status, speed, and ETA.
 
-![CLI TUI](docs/screenshots/cli-tui.png)
+### Interactive GGUF Picker
 
-</details>
-
----
-
-
-## ✨ Features
-
-<table>
-<tr>
-<td width="50%">
-
-### 🚀 **Blazing Fast**
-- Multipart parallel downloads
-- Up to 16 connections per file
-- Multiple files simultaneously
-
-### 🔄 **Always Resumable**
-- SHA-256 verification for LFS files
-- Size-based verification for regular files
-- No progress files needed
-
-### 🎨 **Beautiful Interface**
-- Colorful terminal UI with progress bars
-- Web-based dashboard
-- JSON events for CI/CD
-
-</td>
-<td width="50%">
-
-### 📦 **Flexible Output**
-- Models and datasets
-- Filter by quantization (q4_0, q5_k_m, etc.)
-- Organize into subdirectories
-
-### 🔐 **Private Repos**
-- Token authentication
-- Gated model support
-- Environment variable config
-
-### 🛠️ **Developer Ready**
-- Go library with full API
-- WebSocket real-time updates
-- REST API for integrations
-
-</td>
-</tr>
-</table>
-
----
-
-## 🚀 Quick Start
-
-### One-Liner Commands (Linux / macOS / WSL)
+Don't guess which quantization to download. Use `-i` for an **interactive picker** with quality ratings and RAM estimates:
 
 ```bash
-# 🌐 Instant Web UI - opens browser automatically!
-bash <(curl -sSL https://g.bodaay.io/hfd) -w
-
-# 📦 Download a model
-bash <(curl -sSL https://g.bodaay.io/hfd) download TheBloke/Mistral-7B-GGUF
-
-# 💾 Install for regular use
-bash <(curl -sSL https://g.bodaay.io/hfd) -i
+hfdownloader analyze -i TheBloke/Mistral-7B-Instruct-v0.2-GGUF
 ```
 
-### After Installation
+![GGUF Analyzer TUI](docs/screenshots/cli-tui2.png)
+
+**Interactive mode features:**
+- **Keyboard navigation** - Use ↑↓ to browse, space to toggle selection
+- **Quality ratings** - Stars (★★★★☆) show relative quality
+- **RAM estimates** - Know if it'll fit in your VRAM
+- **"Recommended" badge** - We highlight the best balance (Q4_K_M)
+- **Live totals** - See combined size as you select
+- **One-click download** - Press Enter to start, or `c` to copy command
+
+**Without `-i`**, output is text/JSON — perfect for scripts and piping to other tools.
+
+### Python Just Works
+
+Downloads go to the standard HuggingFace cache. Python libraries find them automatically:
+
+```python
+from transformers import AutoModel
+model = AutoModel.from_pretrained("TheBloke/Mistral-7B-Instruct-v0.2-GGUF")  # Just works
+```
+
+Plus, you get **human-readable paths** at `~/.cache/huggingface/models/` for easy browsing.
+
+### Works Behind Corporate Firewalls
+
+Full proxy support including **SOCKS5**, **authentication**, and **CIDR bypass rules**:
 
 ```bash
-# Download a GGUF model
-hfdownloader download TheBloke/Mistral-7B-Instruct-v0.2-GGUF
+hfdownloader download meta-llama/Llama-2-7b --proxy socks5://localhost:1080
+```
 
-# Download specific quantizations
+---
+
+## Quick Start
+
+**Try it first — no installation required:**
+
+```bash
+# Analyze a model with interactive GGUF picker
+bash <(curl -sSL https://g.bodaay.io/hfd) analyze -i TheBloke/Mistral-7B-Instruct-v0.2-GGUF
+
+# Download a model
+bash <(curl -sSL https://g.bodaay.io/hfd) download TheBloke/Mistral-7B-Instruct-v0.2-GGUF
+
+# Start web UI
+bash <(curl -sSL https://g.bodaay.io/hfd) serve
+
+# Start web UI with authentication
+bash <(curl -sSL https://g.bodaay.io/hfd) serve --auth-user admin --auth-pass secret
+```
+
+**Like it? Install permanently:**
+
+```bash
+bash <(curl -sSL https://g.bodaay.io/hfd) install
+```
+
+Now use directly:
+
+```bash
+hfdownloader analyze -i TheBloke/Mistral-7B-Instruct-v0.2-GGUF
+hfdownloader download TheBloke/Mistral-7B-Instruct-v0.2-GGUF:q4_k_m
+hfdownloader serve
+hfdownloader serve --auth-user admin --auth-pass secret   # with authentication
+```
+
+Files go to `~/.cache/huggingface/` — Python libraries find them automatically.
+
+---
+
+## Smart Analyzer
+
+Not sure what's in a repository? Analyze it first:
+
+```bash
+hfdownloader analyze <any-repo>
+```
+
+For **GGUF models**, you get an interactive picker (see screenshot above). For other types, the analyzer **auto-detects** and shows relevant information:
+
+| Type | What It Shows |
+|------|---------------|
+| **GGUF** | Interactive picker with quality ratings, RAM estimates, multi-select |
+| **Transformers** | Architecture, parameters, context length, vocabulary size |
+| **Diffusers** | Pipeline type, components, variants (fp16, bf16) |
+| **LoRA** | Base model, rank, alpha, target modules |
+| **GPTQ/AWQ** | Bits, group size, estimated VRAM |
+| **Dataset** | Formats, configs, splits, sizes |
+
+### Multi-Branch Support
+
+Some repos have multiple branches (fp16, onnx, flax). The analyzer lets you pick:
+
+```bash
+hfdownloader analyze -i CompVis/stable-diffusion-v1-4
+```
+
+![Branch Picker](docs/screenshots/cli-tui3.png)
+
+### Diffusers Component Picker
+
+For Stable Diffusion models, pick exactly which components you need:
+
+![Diffusers Picker](docs/screenshots/cli-tui4.png)
+
+Select `unet`, `vae`, `text_encoder` — skip what you don't need. The command is generated automatically.
+
+---
+
+## Download Features
+
+### Inline Filter Syntax
+
+Download specific files without extra flags:
+
+```bash
+# Download only Q4_K_M quantization
+hfdownloader download TheBloke/Mistral-7B-Instruct-v0.2-GGUF:q4_k_m
+
+# Download multiple quantizations
 hfdownloader download TheBloke/Mistral-7B-Instruct-v0.2-GGUF:q4_k_m,q5_k_m
 
-# Download a dataset
-hfdownloader download facebook/flores --dataset
-
-# Start web interface
-hfdownloader serve
+# Or use flags
+hfdownloader download TheBloke/Mistral-7B-Instruct-v0.2-GGUF -F q4_k_m -E ".md,fp16"
 ```
 
-That's it! Files are saved to `./Storage/<repo-name>/` by default.
+### Resume & Verify
+
+```bash
+# Interrupted? Just run again - automatically resumes
+hfdownloader download owner/repo
+
+# Strict verification
+hfdownloader download owner/repo --verify sha256
+
+# Preview what would download
+hfdownloader download owner/repo --dry-run
+```
+
+### High-Speed Mode
+
+```bash
+# Maximum parallelism
+hfdownloader download owner/repo -c 16 --max-active 8
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-c, --connections` | 8 | Connections per file |
+| `--max-active` | 3 | Concurrent file downloads |
+| `-F, --filters` | | Include patterns |
+| `-E, --exclude` | | Exclude patterns |
+| `-b, --revision` | main | Branch, tag, or commit |
 
 ---
 
-## 📥 Installation
+## Dual-Layer Storage
 
-### Option 1: One-Liner Script (Recommended)
+We maintain **two views** of your downloads:
 
-```bash
-# 🌐 Start web UI immediately (no installation, opens browser)
-bash <(curl -sSL https://g.bodaay.io/hfd) -w
-
-# 💾 Install to /usr/local/bin
-bash <(curl -sSL https://g.bodaay.io/hfd) -i
-
-# 📂 Install to custom location
-bash <(curl -sSL https://g.bodaay.io/hfd) -i -p ~/.local/bin
-
-# 📦 Download without installing
-bash <(curl -sSL https://g.bodaay.io/hfd) download TheBloke/Mistral-7B-GGUF
-
-# 🌐 Web UI on custom port
-bash <(curl -sSL https://g.bodaay.io/hfd) -w 3000
+```
+~/.cache/huggingface/
+├── hub/                              # Layer 1: HF Cache (Python compatible)
+│   └── models--TheBloke--Mistral.../
+│       └── snapshots/a1b2c3d4.../
+│           └── model.gguf
+│
+└── models/                           # Layer 2: Human-Readable
+    └── TheBloke/
+        └── Mistral-7B-GGUF/
+            ├── model.gguf            → symlink to hub/...
+            └── hfd.yaml              # Download manifest
 ```
 
-### Option 2: Download Binary
+**Layer 1 (hub/)**: Standard HuggingFace cache structure. Python libraries work automatically.
 
-Download from [Releases](https://github.com/bodaay/HuggingFaceModelDownloader/releases):
+**Layer 2 (models/)**: Human-readable paths with symlinks. Browse your downloads like normal folders.
 
-| Platform | Architecture | Download |
-|----------|--------------|----------|
+> **Windows Note**: The friendly view (Layer 2) requires symlinks, which need Administrator privileges or Developer Mode on Windows. Downloads still work — files are stored in the HuggingFace cache (Layer 1) — but the human-readable symlinks won't be created.
+
+### Manifest Tracking
+
+Every download creates `hfd.yaml` so you know exactly what you have:
+
+```yaml
+repo: TheBloke/Mistral-7B-Instruct-v0.2-GGUF
+branch: main
+commit: a1b2c3d4...
+downloaded_at: 2024-01-15T10:30:00Z
+command: hfdownloader download TheBloke/Mistral-7B-Instruct-v0.2-GGUF -F q4_k_m
+files:
+  - path: mistral-7b.Q4_K_M.gguf
+    size: 4368438272
+```
+
+```bash
+# List everything you've downloaded
+hfdownloader list
+
+# Get details about a specific download
+hfdownloader info Mistral
+```
+
+---
+
+## Web UI
+
+A modern web interface with real-time progress:
+
+```bash
+hfdownloader serve
+# Open http://localhost:8080
+```
+
+![Web Dashboard](docs/screenshots/web-dashboard.png)
+
+### Cache Browser
+
+Browse everything you've downloaded with stats, search, and filters:
+
+![Cache Browser](docs/screenshots/web-dashboard2.png)
+
+### All Pages
+
+| Page | Features |
+|------|----------|
+| **Analyze** | Enter any repo, auto-detect type, see files/sizes, pick GGUF quantizations |
+| **Jobs** | Real-time WebSocket progress, pause/resume/cancel, download history |
+| **Cache** | Browse downloaded repos, disk usage stats, search & filter |
+| **Mirror** | Configure targets, compare differences, push/pull sync |
+| **Settings** | Token, connections, proxy, verification mode |
+
+### Server Options
+
+```bash
+hfdownloader serve \
+  --port 3000 \
+  --auth-user admin \
+  --auth-pass secret \
+  -t hf_xxxxx
+```
+
+---
+
+## Mirror Sync
+
+Sync your model cache between machines — home, office, NAS, USB drive.
+
+![Mirror Sync](docs/screenshots/web-dashboar3.png)
+
+```bash
+# Add mirror targets
+hfdownloader mirror target add office /mnt/nas/hf-models
+hfdownloader mirror target add usb /media/usb/hf-cache
+
+# Compare local vs target
+hfdownloader mirror diff office
+
+# Push local cache to target
+hfdownloader mirror push office
+
+# Pull from target to local
+hfdownloader mirror pull office
+
+# Sync specific repos only
+hfdownloader mirror push office --filter "Llama,GGUF"
+
+# Verify integrity after sync
+hfdownloader mirror push office --verify
+```
+
+Perfect for:
+- **Air-gapped environments**: Download at home, sync to office
+- **Team sharing**: Central NAS with all models
+- **Backup**: Keep a copy on external drive
+
+---
+
+## Proxy Support
+
+Full proxy support for corporate environments:
+
+```bash
+# HTTP proxy
+hfdownloader download owner/repo --proxy http://proxy:8080
+
+# SOCKS5 (e.g., SSH tunnel)
+hfdownloader download owner/repo --proxy socks5://localhost:1080
+
+# With authentication
+hfdownloader download owner/repo \
+  --proxy http://proxy:8080 \
+  --proxy-user myuser \
+  --proxy-pass mypassword
+
+# Test proxy connectivity before downloading
+hfdownloader proxy test --proxy http://proxy:8080
+```
+
+### Supported Types
+
+| Type | URL Format |
+|------|------------|
+| HTTP | `http://host:port` |
+| HTTPS | `https://host:port` |
+| SOCKS5 | `socks5://host:port` |
+| SOCKS5h | `socks5h://host:port` (remote DNS) |
+
+### Configuration File
+
+Save proxy settings in `~/.config/hfdownloader.yaml`:
+
+```yaml
+proxy:
+  url: http://proxy.corp.com:8080
+  username: myuser
+  password: mypassword
+  no_proxy: localhost,.internal.com,10.0.0.0/8
+```
+
+---
+
+## Installation
+
+### One-Liner (Recommended)
+
+```bash
+bash <(curl -sSL https://g.bodaay.io/hfd) install
+```
+
+That's it. Works on Linux, macOS, and WSL.
+
+**Or run without installing:**
+
+```bash
+bash <(curl -sSL https://g.bodaay.io/hfd) download TheBloke/Mistral-7B-Instruct-v0.2-GGUF
+bash <(curl -sSL https://g.bodaay.io/hfd) serve   # Web UI
+```
+
+### Download Binary
+
+Get from [Releases](https://github.com/bodaay/HuggingFaceModelDownloader/releases):
+
+| Platform | Architecture | File |
+|----------|--------------|------|
 | Linux | x86_64 | `hfdownloader_linux_amd64_*` |
 | Linux | ARM64 | `hfdownloader_linux_arm64_*` |
 | macOS | Apple Silicon | `hfdownloader_darwin_arm64_*` |
 | macOS | Intel | `hfdownloader_darwin_amd64_*` |
 | Windows | x86_64 | `hfdownloader_windows_amd64_*.exe` |
 
-### Option 3: Build from Source
+### Build from Source
 
 ```bash
 git clone https://github.com/bodaay/HuggingFaceModelDownloader
@@ -162,397 +405,116 @@ cd HuggingFaceModelDownloader
 go build -o hfdownloader ./cmd/hfdownloader
 ```
 
-### Option 4: Docker 🐳
+### Docker
 
 ```bash
-# Build the image
+# Pull from GitHub Container Registry
+docker pull ghcr.io/bodaay/huggingfacemodeldownloader:latest
+
+# Or build locally
 docker build -t hfdownloader .
 
-# Run CLI in container
-docker run --rm -v ./models:/data hfdownloader download TheBloke/Mistral-7B-GGUF -o /data
-
-# Run web server
-docker run --rm -p 8080:8080 -v ./models:/data hfdownloader serve \
-  --models-dir /data/Models \
-  --datasets-dir /data/Datasets
-
-# With HuggingFace token
-docker run --rm -e HF_TOKEN=hf_xxx -p 8080:8080 hfdownloader serve
+# Run (mounts your local HF cache)
+docker run --rm -v ~/.cache/huggingface:/home/hfdownloader/.cache/huggingface \
+  ghcr.io/bodaay/huggingfacemodeldownloader download TheBloke/Mistral-7B-Instruct-v0.2-GGUF
 ```
 
 ---
 
-## 🌐 Web UI
+## Private & Gated Models
 
-Start the web server for a browser-based experience:
-
-```bash
-hfdownloader serve
-# Open http://localhost:8080
-```
-
-<!-- ![Web UI](docs/screenshots/web-ui.png) -->
-
-**Features:**
-- 📊 Real-time download progress via WebSocket
-- 📁 Separate pages for Models and Datasets
-- ⚙️ Settings management
-- 📜 Download history
-
-**Server Options:**
+For private repos or gated models (Llama, etc.):
 
 ```bash
-hfdownloader serve \
-  --port 3000 \
-  --models-dir ./Models \
-  --datasets-dir ./Datasets \
-  --token hf_xxx \
-  --endpoint https://hf-mirror.com  # Optional: use mirror
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-p, --port` | `8080` | Port to listen on |
-| `--addr` | `0.0.0.0` | Address to bind to |
-| `--models-dir` | `./Models` | Output directory for models |
-| `--datasets-dir` | `./Datasets` | Output directory for datasets |
-| `-c, --connections` | `8` | Connections per file |
-| `--max-active` | `3` | Max concurrent file downloads |
-| `--multipart-threshold` | `32MiB` | Use multipart for files >= this size |
-| `--verify` | `size` | Verification: `none\|size\|sha256` |
-| `--retries` | `4` | Max retry attempts |
-| `--endpoint` | - | Custom HF endpoint (e.g., mirror) |
-
----
-
-## 💻 CLI Reference
-
-```
-hfdownloader [command] [flags]
-```
-
-### Commands
-
-| Command | Description |
-|---------|-------------|
-| `download` | Download models or datasets (default) |
-| `serve` | Start web server with REST API |
-| `version` | Show version info |
-| `config` | Manage configuration files |
-
-### Download Examples
-
-```bash
-# Basic download
-hfdownloader download TheBloke/Mistral-7B-GGUF -o ./Models
-
-# With authentication (private/gated repos)
-hfdownloader download meta-llama/Llama-2-7b -t hf_xxxxx
-# Or use environment variable
+# Set token via environment
 export HF_TOKEN=hf_xxxxx
+hfdownloader download meta-llama/Llama-2-7b
 
-# Filter specific files (case-insensitive)
-hfdownloader download TheBloke/Mistral-7B-GGUF:q4_k_m,q5_k_m
+# Or via flag
+hfdownloader download meta-llama/Llama-2-7b -t hf_xxxxx
+```
 
-# Exclude files by pattern
-hfdownloader download TheBloke/Mistral-7B-GGUF -E .md,fp16,onnx
+For gated models, you must first accept the license on the model's HuggingFace page.
 
-# Combine filters and excludes
-hfdownloader download owner/repo -F q4_k_m,q5_k_m -E .md
+---
 
-# Organize filtered files into subdirs
-hfdownloader download TheBloke/Mistral-7B-GGUF:q4_0,q8_0 --append-filter-subdir
-# Result: ./Storage/Mistral-7B-GGUF/q4_0/file.gguf
-#         ./Storage/Mistral-7B-GGUF/q8_0/file.gguf
+## China Mirror
 
-# Download a dataset
-hfdownloader download facebook/flores --dataset -o ./Datasets
+Use the HuggingFace mirror for faster downloads in China:
 
-# Specific revision/branch
-hfdownloader download owner/repo -b v1.0
-
-# Dry run (preview files)
-hfdownloader download owner/repo --dry-run --plan-format json
-
-# Use HuggingFace mirror (e.g., for China)
+```bash
 hfdownloader download owner/repo --endpoint https://hf-mirror.com
 ```
 
-### Flags Reference
-
-<details>
-<summary><b>📂 Output Options</b></summary>
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-o, --output` | `Storage` | Base folder for downloads |
-| `--append-filter-subdir` | `false` | Create subdirs per filter |
-
-</details>
-
-<details>
-<summary><b>🎯 Selection Options</b></summary>
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-r, --repo` | - | Repository ID (or positional arg) |
-| `--dataset` | `false` | Treat as dataset |
-| `-b, --revision` | `main` | Branch, tag, or commit |
-| `-F, --filters` | - | Comma-separated LFS filters |
-| `-E, --exclude` | - | Comma-separated patterns to exclude |
-
-</details>
-
-<details>
-<summary><b>⚡ Performance Options</b></summary>
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-c, --connections` | `8` | Parallel connections per file |
-| `--max-active` | CPUs | Max concurrent file downloads |
-| `--multipart-threshold` | `32MiB` | Min size for multipart |
-
-</details>
-
-<details>
-<summary><b>🔒 Reliability Options</b></summary>
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--retries` | `4` | Retry attempts per request |
-| `--backoff-initial` | `400ms` | Initial retry delay |
-| `--backoff-max` | `10s` | Max retry delay |
-| `--verify` | `size` | Verification: `none\|size\|etag\|sha256` |
-
-</details>
-
-<details>
-<summary><b>🔑 Authentication</b></summary>
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-t, --token` | `$HF_TOKEN` | HuggingFace access token |
-| `--config` | `~/.config/hfdownloader.yaml` | Config file path |
-| `--endpoint` | `https://huggingface.co` | Custom HF endpoint (mirrors) |
-
-</details>
-
-<details>
-<summary><b>📊 Output Options</b></summary>
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--json` | `false` | Emit JSON events |
-| `--dry-run` | `false` | Plan only, no download |
-| `--plan-format` | `table` | Plan format: `table\|json` |
-| `-q, --quiet` | `false` | Minimal output |
-| `-v, --verbose` | `false` | Debug output |
-
-</details>
-
----
-
-## ⚙️ Configuration
-
-Create a config file to set defaults:
-
-```bash
-# Generate config file
-hfdownloader config init        # JSON
-hfdownloader config init --yaml # YAML
-
-# Show current config
-hfdownloader config show
-```
-
-### Example Config (YAML)
+Or set in config file:
 
 ```yaml
-# ~/.config/hfdownloader.yaml
-output: ~/Models
-connections: 12
-max-active: 4
-multipart-threshold: 64MiB
-verify: sha256
-retries: 6
-token: hf_xxxxxxxxxx
-```
-
-### Example Config (JSON)
-
-```json
-{
-  "output": "~/Models",
-  "connections": 12,
-  "max-active": 4,
-  "multipart-threshold": "64MiB",
-  "verify": "sha256",
-  "retries": 6,
-  "token": "hf_xxxxxxxxxx"
-}
+endpoint: https://hf-mirror.com
 ```
 
 ---
 
-## 📚 Go Library
+## CLI Reference
 
-Use as a Go library for programmatic downloads:
+| Command | Description |
+|---------|-------------|
+| `download` | Download models or datasets (default command) |
+| `analyze` | Analyze repository before downloading |
+| `serve` | Start web server with REST API |
+| `list` | List all downloaded repos |
+| `info` | Show details about a downloaded repo |
+| `rebuild` | Regenerate friendly view from HF cache |
+| `mirror` | Sync cache between locations |
+| `proxy` | Test and show proxy configuration |
+| `config` | Manage configuration |
+| `version` | Show version info |
 
-```go
-package main
-
-import (
-  "context"
-    "fmt"
-  "log"
-
-    "github.com/bodaay/HuggingFaceModelDownloader/pkg/hfdownloader"
-)
-
-func main() {
-  job := hfdownloader.Job{
-        Repo:     "TheBloke/Mistral-7B-Instruct-v0.2-GGUF",
-        Revision: "main",
-        Filters:  []string{"q4_k_m"},
-  }
-
-    cfg := hfdownloader.DefaultSettings()
-    cfg.OutputDir = "./Models"
-    cfg.Concurrency = 8
-    cfg.Token = os.Getenv("HF_TOKEN")
-
-    err := hfdownloader.Download(context.Background(), job, cfg, 
-        func(e hfdownloader.ProgressEvent) {
-            if e.Event == "file_progress" {
-                fmt.Printf("\r%s: %.1f%%", e.Path, 
-                    float64(e.Bytes)/float64(e.Total)*100)
-    }
-        })
-
-    if err != nil {
-    log.Fatal(err)
-  }
-    fmt.Println("\n✅ Download complete!")
-}
-```
-
-### Progress Events
-
-| Event | Description |
-|-------|-------------|
-| `scan_start` | Started scanning repository |
-| `plan_item` | File found (includes size, LFS status) |
-| `file_start` | Started downloading file |
-| `file_progress` | Progress update (bytes/total) |
-| `file_done` | File completed or skipped |
-| `retry` | Retrying failed request |
-| `error` | Error occurred |
-| `done` | All downloads complete |
+Full documentation: [docs/CLI.md](docs/CLI.md) • [docs/API.md](docs/API.md) • [docs/V3_FEATURES.md](docs/V3_FEATURES.md)
 
 ---
 
-## 🔌 REST API
+## What's New in v3.0
 
-When running `hfdownloader serve`, a REST API is available:
+| Feature | Description |
+|---------|-------------|
+| **HF Cache Compatibility** | Downloads now use standard HuggingFace cache structure |
+| **Dual-Layer Storage** | Python-compatible cache + human-readable symlinks |
+| **Smart Analyzer** | Auto-detect model types, GGUF quality ratings, RAM estimates |
+| **Web UI v3** | Modern interface with real-time WebSocket progress |
+| **Mirror Sync** | Push/pull cache between locations |
+| **Full Proxy Support** | HTTP, SOCKS5, authentication, CIDR bypass |
+| **Manifest Tracking** | `hfd.yaml` records what/when/how for every download |
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/health` | GET | Health check |
-| `/api/settings` | GET/POST | Get/update settings |
-| `/api/plan` | POST | Preview download (dry-run) |
-| `/api/download` | POST | Start download |
-| `/api/jobs` | GET | List all jobs |
-| `/api/jobs/{id}` | GET | Get job status |
-| `/api/jobs/{id}` | DELETE | Cancel job |
-| `/api/ws` | WS | WebSocket for real-time updates |
+### Upgrading from v2.x
 
-### Example: Start Download via API
+v3.0 uses HF cache by default. For v2.x behavior:
 
 ```bash
-curl -X POST http://localhost:8080/api/download \
-  -H "Content-Type: application/json" \
-  -d '{"repo": "TheBloke/Mistral-7B-GGUF", "filters": ["q4_k_m"]}'
+hfdownloader download owner/repo --legacy -o ./my-models
 ```
 
 ---
 
-## 🔄 How Resume Works
+## Environment Variables
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Resume Decision Flow                      │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│   File exists locally?                                      │
-│        │                                                    │
-│        ├── No  → Download                                   │
-│        │                                                    │
-│        └── Yes → Is it LFS with SHA-256?                   │
-│                      │                                      │
-│                      ├── Yes → SHA match? → Skip ✓          │
-│                      │              │                       │
-│                      │              └── No → Re-download    │
-│                      │                                      │
-│                      └── No → Size match? → Skip ✓          │
-│                                    │                        │
-│                                    └── No → Re-download     │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**No metadata files** — resume is purely filesystem-based. If a file exists and matches, it's skipped.
+| Variable | Purpose |
+|----------|---------|
+| `HF_TOKEN` | HuggingFace access token |
+| `HF_HOME` | Override `~/.cache/huggingface` |
+| `HTTP_PROXY` | Proxy for HTTP requests |
+| `HTTPS_PROXY` | Proxy for HTTPS requests |
+| `NO_PROXY` | Comma-separated bypass list |
 
 ---
 
-## 🛠️ Troubleshooting
-
-<details>
-<summary><b>🔑 401 Unauthorized</b></summary>
-
-Provide a token for private or gated models:
-
-```bash
-export HF_TOKEN=hf_xxxxx
-hfdownloader download meta-llama/Llama-2-7b
-```
-
-</details>
-
-<details>
-<summary><b>📜 403 Forbidden (License Terms)</b></summary>
-
-1. Visit the model page on huggingface.co
-2. Accept the license terms
-3. Retry the download
-
-</details>
-
-<details>
-<summary><b>🐌 Slow Downloads</b></summary>
-
-Try increasing parallelism:
-
-```bash
-hfdownloader download repo/name -c 16 --max-active 4
-```
-
-</details>
-
-<details>
-<summary><b>🔄 File Re-downloading</b></summary>
-
-If files keep re-downloading, check:
-- Disk has enough space
-- File permissions allow reading
-- Use `--verify sha256` for strict matching
-
-</details>
-
----
-
-## 📝 License
+## License
 
 [Apache 2.0](LICENSE) — use freely in personal and commercial projects.
 
 ---
 
+<div align="center">
+
+**[Full CLI Docs](docs/CLI.md)** • **[REST API](docs/API.md)** • **[V3 Features](docs/V3_FEATURES.md)** • **[Issues](https://github.com/bodaay/HuggingFaceModelDownloader/issues)**
+
+</div>

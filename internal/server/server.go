@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/bodaay/HuggingFaceModelDownloader/internal/assets"
+	"github.com/bodaay/HuggingFaceModelDownloader/pkg/hfdownloader"
 )
 
 // Config holds server configuration.
@@ -22,6 +23,7 @@ type Config struct {
 	Token              string // HuggingFace token
 	ModelsDir          string // Output directory for models (not configurable via API)
 	DatasetsDir        string // Output directory for datasets (not configurable via API)
+	CacheDir           string // HuggingFace cache directory for v3 mode
 	Concurrency        int
 	MaxActive          int
 	MultipartThreshold string // Minimum size for multipart download
@@ -29,6 +31,13 @@ type Config struct {
 	Retries            int    // Number of retry attempts
 	AllowedOrigins     []string // CORS origins
 	Endpoint           string   // Custom HuggingFace endpoint (e.g., for mirrors)
+
+	// Authentication
+	AuthUser string // Basic auth username (empty = no auth)
+	AuthPass string // Basic auth password
+
+	// Proxy configuration
+	Proxy *hfdownloader.ProxyConfig
 }
 
 // DefaultConfig returns sensible defaults.
@@ -111,9 +120,13 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	})
 
 	addr := fmt.Sprintf("%s:%d", s.config.Addr, s.config.Port)
+
+	// Build middleware chain: CORS -> Auth -> Logging -> Handler
+	handler := s.corsMiddleware(s.basicAuthMiddleware(s.loggingMiddleware(mux)))
+
 	s.httpServer = &http.Server{
 		Addr:         addr,
-		Handler:      s.corsMiddleware(s.loggingMiddleware(mux)),
+		Handler:      handler,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
@@ -130,6 +143,9 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	log.Printf("🚀 Server starting on http://%s", addr)
 	log.Printf("   Dashboard: http://localhost:%d", s.config.Port)
 	log.Printf("   API:       http://localhost:%d/api", s.config.Port)
+	if s.config.AuthUser != "" {
+		log.Printf("   Auth:      enabled (user: %s)", s.config.AuthUser)
+	}
 
 	err := s.httpServer.ListenAndServe()
 	if err == http.ErrServerClosed {
@@ -148,6 +164,8 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/jobs", s.handleListJobs)
 	mux.HandleFunc("GET /api/jobs/{id}", s.handleGetJob)
 	mux.HandleFunc("DELETE /api/jobs/{id}", s.handleCancelJob)
+	mux.HandleFunc("POST /api/jobs/{id}/pause", s.handlePauseJob)
+	mux.HandleFunc("POST /api/jobs/{id}/resume", s.handleResumeJob)
 
 	// Settings
 	mux.HandleFunc("GET /api/settings", s.handleGetSettings)
@@ -155,6 +173,25 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 
 	// Plan (dry-run)
 	mux.HandleFunc("POST /api/plan", s.handlePlan)
+
+	// Smart Analyzer
+	mux.HandleFunc("GET /api/analyze/{repo...}", s.handleAnalyze)
+
+	// Cache browser
+	mux.HandleFunc("GET /api/cache", s.handleCacheList)
+	mux.HandleFunc("GET /api/cache/{repo...}", s.handleCacheInfo)
+	mux.HandleFunc("POST /api/cache/rebuild", s.handleCacheRebuild)
+	mux.HandleFunc("DELETE /api/cache/{repo...}", s.handleCacheDelete)
+
+	// Mirror - Target management
+	mux.HandleFunc("GET /api/mirror/targets", s.handleMirrorTargetsList)
+	mux.HandleFunc("POST /api/mirror/targets", s.handleMirrorTargetAdd)
+	mux.HandleFunc("DELETE /api/mirror/targets/{name}", s.handleMirrorTargetRemove)
+
+	// Mirror - Operations
+	mux.HandleFunc("POST /api/mirror/diff", s.handleMirrorDiff)
+	mux.HandleFunc("POST /api/mirror/push", s.handleMirrorPush)
+	mux.HandleFunc("POST /api/mirror/pull", s.handleMirrorPull)
 
 	// WebSocket
 	mux.HandleFunc("GET /api/ws", s.handleWebSocket)
@@ -173,7 +210,7 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		
+
 		// Allow same-origin and configured origins
 		if origin != "" {
 			allowed := false
@@ -199,6 +236,26 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// basicAuthMiddleware provides HTTP Basic Authentication.
+func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Skip auth if not configured
+		if s.config.AuthUser == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		user, pass, ok := r.BasicAuth()
+		if !ok || user != s.config.AuthUser || pass != s.config.AuthPass {
+			w.Header().Set("WWW-Authenticate", `Basic realm="HF Downloader"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 

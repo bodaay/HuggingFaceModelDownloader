@@ -4,11 +4,12 @@
 # Hosted as GitHub Gist, shortened via Cloudflare Worker: https://g.bodaay.io/hfd
 #
 # Usage:
+#   bash <(curl -sSL https://g.bodaay.io/hfd) analyze MODEL -i      # Analyze model (interactive)
 #   bash <(curl -sSL https://g.bodaay.io/hfd) download MODEL        # Download a model
-#   bash <(curl -sSL https://g.bodaay.io/hfd) -w                    # Start web UI (opens browser)
+#   bash <(curl -sSL https://g.bodaay.io/hfd) serve                 # Start web UI
 #   bash <(curl -sSL https://g.bodaay.io/hfd) serve --port 3000     # Start web UI on custom port
-#   bash <(curl -sSL https://g.bodaay.io/hfd) -i                    # Install to /usr/local/bin
-#   bash <(curl -sSL https://g.bodaay.io/hfd) -i -p ~/.local/bin    # Install to custom path
+#   bash <(curl -sSL https://g.bodaay.io/hfd) install               # Install to /usr/local/bin
+#   bash <(curl -sSL https://g.bodaay.io/hfd) install ~/.local/bin  # Install to custom path
 
 set -e
 
@@ -43,43 +44,22 @@ esac
 repo="bodaay/HuggingFaceModelDownloader"
 binary_name="hfdownloader"
 
-# Parse script-specific flags
+# Check for install command (must be first argument)
 install_mode=false
 install_path="/usr/local/bin"
-web_mode=false
-web_port=8080
-passthrough_args=()
 
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        -i|--install)
-            install_mode=true
-            shift
-            ;;
-        -p|--install-path)
-            if [ -n "$2" ] && [ "${2:0:1}" != "-" ]; then
-                install_path="$2"
-                shift 2
-            else
-                err "Missing path argument for $1"
-                exit 1
-            fi
-            ;;
-        -w|--web)
-            web_mode=true
-            shift
-            # Check for optional port
-            if [ -n "$1" ] && [[ "$1" =~ ^[0-9]+$ ]]; then
-                web_port="$1"
-                shift
-            fi
-            ;;
-        *)
-            passthrough_args+=("$1")
-            shift
-            ;;
-    esac
-done
+if [ "$1" = "install" ]; then
+    install_mode=true
+    shift
+    # Optional: custom install path as second argument
+    if [ -n "$1" ] && [ "${1:0:1}" != "-" ]; then
+        install_path="$1"
+        shift
+    fi
+fi
+
+# All remaining args pass through to hfdownloader
+passthrough_args=("$@")
 
 # Fetch latest release tag
 info "Fetching latest release..."
@@ -143,76 +123,16 @@ else
     exit 0
 fi
 
-# Web mode: start server and open browser
-if [ "$web_mode" = true ]; then
-    info "Starting HuggingFace Downloader Web UI..."
-    
-    # Move to local binary
-    local_binary="./${binary_name}"
-    if [ -d "$local_binary" ]; then
-        local_binary="./${binary_name}_bin"
-    fi
-    mv "$temp_binary" "$local_binary" 2>/dev/null || true
-    
-    # Determine how to open browser
-    open_browser() {
-        local url="$1"
-        if command -v xdg-open &>/dev/null; then
-            xdg-open "$url" &>/dev/null &
-        elif command -v open &>/dev/null; then
-            open "$url" &>/dev/null &
-        elif command -v start &>/dev/null; then
-            start "$url" &>/dev/null &
-        fi
-    }
-    
-    echo ""
-    echo -e "${CYAN}╭────────────────────────────────────────────────────────╮${NC}"
-    echo -e "${CYAN}│${NC}     🤗  ${GREEN}HuggingFace Downloader Web UI${NC}                  ${CYAN}│${NC}"
-    echo -e "${CYAN}├────────────────────────────────────────────────────────┤${NC}"
-    echo -e "${CYAN}│${NC}                                                        ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}  Dashboard:  ${GREEN}http://localhost:${web_port}${NC}                      ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}                                                        ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}  Press ${YELLOW}Ctrl+C${NC} to stop the server                     ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}                                                        ${CYAN}│${NC}"
-    echo -e "${CYAN}╰────────────────────────────────────────────────────────╯${NC}"
-    echo ""
-    
-    # Open browser after a short delay
-    (sleep 1.5 && open_browser "http://localhost:${web_port}") &
-    
-    # Run the server
-    exec "$local_binary" serve --port "$web_port" "${passthrough_args[@]}"
-fi
+# Cleanup function for temp binary
+cleanup() {
+    rm -f "$temp_binary" 2>/dev/null || true
+}
+trap cleanup EXIT
 
-# Run mode: execute with passed arguments
-local_binary="./${binary_name}"
-
-# Handle edge case: if a directory with binary name exists (e.g., Go package)
-if [ -d "$local_binary" ]; then
-    local_binary="./${binary_name}_bin"
-    warn "Directory './${binary_name}' exists, using '${local_binary}' instead"
-fi
-
-# Check if we already have a local copy
-if [ -f "$local_binary" ]; then
-    # Compare versions if possible
-    existing_version=$("$local_binary" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
-    if [ "$existing_version" = "$latest_tag" ]; then
-        info "Using existing ./${binary_name} (v${existing_version})"
-        rm -f "$temp_binary"
-    else
-        warn "Updating ./${binary_name} from v${existing_version:-unknown} to v${latest_tag}"
-        mv "$temp_binary" "$local_binary"
-    fi
-else
-    mv "$temp_binary" "$local_binary"
-    ok "Saved: ${local_binary}"
-fi
-
-# Run with passed arguments, or show help if none
+# Run mode: execute with passed arguments directly from temp binary
+# Use 'install' command to install permanently
 if [ ${#passthrough_args[@]} -eq 0 ]; then
-    exec "$local_binary" --help
+    exec "$temp_binary" --help
 else
-    exec "$local_binary" "${passthrough_args[@]}"
+    exec "$temp_binary" "${passthrough_args[@]}"
 fi

@@ -62,6 +62,12 @@ func Execute(version string) error {
 	root.AddCommand(newVersionCmd(version))
 	root.AddCommand(newServeCmd(ro))
 	root.AddCommand(newConfigCmd())
+	root.AddCommand(newRebuildCmd(ro))
+	root.AddCommand(newListCmd(ro))
+	root.AddCommand(newInfoCmd(ro))
+	root.AddCommand(newMirrorCmd(ro))
+	root.AddCommand(newAnalyzeCmd(ctx, ro))
+	root.AddCommand(newProxyCmd(ro))
 
 	// Make download the default command when no subcommand is given
 	root.RunE = downloadCmd.RunE
@@ -79,6 +85,14 @@ func newDownloadCmd(ctx context.Context, ro *RootOpts) *cobra.Command {
 	cfg := &hfdownloader.Settings{}
 	var dryRun bool
 	var planFmt string
+	var legacy bool
+	var legacyOutput string
+
+	// Proxy settings
+	var proxyURL string
+	var proxyUser string
+	var proxyPass string
+	var noEnvProxy bool
 
 	cmd := &cobra.Command{
 		Use:   "download [REPO]",
@@ -88,7 +102,7 @@ func newDownloadCmd(ctx context.Context, ro *RootOpts) *cobra.Command {
 			return applySettingsDefaults(cmd, ro, cfg)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			finalJob, finalCfg, err := finalize(cmd, ro, args, job, cfg)
+			finalJob, finalCfg, err := finalize(cmd, ro, args, job, cfg, legacy, legacyOutput, proxyURL, proxyUser, proxyPass, noEnvProxy)
 			if err != nil {
 				return err
 			}
@@ -141,7 +155,8 @@ func newDownloadCmd(ctx context.Context, ro *RootOpts) *cobra.Command {
 	cmd.Flags().BoolVar(&job.AppendFilterSubdir, "append-filter-subdir", false, "Append each filter as a subdirectory")
 
 	// Settings flags
-	cmd.Flags().StringVarP(&cfg.OutputDir, "output", "o", "", "Destination base directory (default: Models or Datasets)")
+	cmd.Flags().StringVar(&cfg.CacheDir, "cache-dir", "", "HuggingFace cache directory (default: ~/.cache/huggingface or HF_HOME)")
+	cmd.Flags().StringVar(&cfg.StaleTimeout, "stale-timeout", "5m", "Timeout for stale incomplete downloads")
 	cmd.Flags().IntVarP(&cfg.Concurrency, "connections", "c", 8, "Per-file concurrent connections for LFS range requests")
 	cmd.Flags().IntVar(&cfg.MaxActiveDownloads, "max-active", 3, "Maximum number of files downloading at once")
 	cmd.Flags().StringVar(&cfg.MultipartThreshold, "multipart-threshold", "32MiB", "Use multipart/range downloads only for files >= this size")
@@ -150,6 +165,16 @@ func newDownloadCmd(ctx context.Context, ro *RootOpts) *cobra.Command {
 	cmd.Flags().StringVar(&cfg.BackoffInitial, "backoff-initial", "400ms", "Initial retry backoff duration")
 	cmd.Flags().StringVar(&cfg.BackoffMax, "backoff-max", "10s", "Maximum retry backoff duration")
 	cmd.Flags().StringVar(&cfg.Endpoint, "endpoint", "", "Custom HuggingFace endpoint URL (e.g. https://hf-mirror.com)")
+	cmd.Flags().BoolVar(&cfg.NoManifest, "no-manifest", false, "Do not write hfd.yaml manifest file after download")
+	cmd.Flags().BoolVar(&cfg.NoFriendlyView, "no-friendly", false, "Do not create friendly view symlinks (models/, datasets/)")
+	cmd.Flags().BoolVar(&legacy, "legacy", false, "Use flat directory structure (v2.x behavior, may be removed in future)")
+	cmd.Flags().StringVarP(&legacyOutput, "output", "o", "", "Output directory for --legacy mode only (default: Models/ or Datasets/). DEPRECATED: may be removed in future")
+
+	// Proxy flags
+	cmd.Flags().StringVarP(&proxyURL, "proxy", "x", "", "Proxy URL (http://, https://, or socks5://)")
+	cmd.Flags().StringVar(&proxyUser, "proxy-user", "", "Proxy authentication username")
+	cmd.Flags().StringVar(&proxyPass, "proxy-pass", "", "Proxy authentication password")
+	cmd.Flags().BoolVar(&noEnvProxy, "no-env-proxy", false, "Ignore HTTP_PROXY/HTTPS_PROXY environment variables")
 
 	// CLI-only flags
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Plan only: print the file list and exit")
@@ -172,7 +197,7 @@ func signalContext(parent context.Context) (context.Context, context.CancelFunc)
 	return ctx, cancel
 }
 
-func finalize(cmd *cobra.Command, ro *RootOpts, args []string, job *hfdownloader.Job, cfg *hfdownloader.Settings) (hfdownloader.Job, hfdownloader.Settings, error) {
+func finalize(cmd *cobra.Command, ro *RootOpts, args []string, job *hfdownloader.Job, cfg *hfdownloader.Settings, legacy bool, legacyOutput string, proxyURL, proxyUser, proxyPass string, noEnvProxy bool) (hfdownloader.Job, hfdownloader.Settings, error) {
 	j := *job
 	c := *cfg
 
@@ -182,6 +207,23 @@ func finalize(cmd *cobra.Command, ro *RootOpts, args []string, job *hfdownloader
 		tok = strings.TrimSpace(os.Getenv("HF_TOKEN"))
 	}
 	c.Token = tok
+
+	// Proxy configuration
+	if proxyURL != "" || noEnvProxy {
+		if c.Proxy == nil {
+			c.Proxy = &hfdownloader.ProxyConfig{}
+		}
+		if proxyURL != "" {
+			c.Proxy.URL = proxyURL
+		}
+		if proxyUser != "" {
+			c.Proxy.Username = proxyUser
+		}
+		if proxyPass != "" {
+			c.Proxy.Password = proxyPass
+		}
+		c.Proxy.NoEnvProxy = noEnvProxy
+	}
 
 	// Repo from args
 	if j.Repo == "" && len(args) > 0 {
@@ -204,17 +246,114 @@ func finalize(cmd *cobra.Command, ro *RootOpts, args []string, job *hfdownloader
 		return j, c, fmt.Errorf("invalid repo id %q (expected owner/name)", j.Repo)
 	}
 
-	// Set default output directory based on type (Models or Datasets)
-	// Only if user didn't explicitly set --output
-	if c.OutputDir == "" {
-		if j.IsDataset {
+	// Legacy mode: use flat directory structure (v2.x behavior)
+	// By default (no flags), use HF cache structure
+	if legacy {
+		if legacyOutput != "" {
+			c.OutputDir = legacyOutput
+		} else if j.IsDataset {
 			c.OutputDir = "Datasets"
 		} else {
 			c.OutputDir = "Models"
 		}
+		// Clear CacheDir to ensure legacy mode is used
+		c.CacheDir = ""
+	} else if legacyOutput != "" {
+		return j, c, fmt.Errorf("--output requires --legacy flag (v2.x compatibility mode)")
 	}
 
+	// Build the CLI command string for the manifest (token stripped)
+	c.Command = buildCommandString(cmd, j, c)
+
 	return j, c, nil
+}
+
+// buildCommandString reconstructs the CLI command from flags, excluding sensitive data.
+func buildCommandString(cmd *cobra.Command, job hfdownloader.Job, cfg hfdownloader.Settings) string {
+	var parts []string
+	parts = append(parts, "hfdownloader", "download", job.Repo)
+
+	if job.IsDataset {
+		parts = append(parts, "--dataset")
+	}
+	if job.Revision != "" && job.Revision != "main" {
+		parts = append(parts, "-b", job.Revision)
+	}
+	for _, f := range job.Filters {
+		parts = append(parts, "-F", f)
+	}
+	for _, e := range job.Excludes {
+		parts = append(parts, "-E", e)
+	}
+	if job.AppendFilterSubdir {
+		parts = append(parts, "--append-filter-subdir")
+	}
+	if cfg.CacheDir != "" {
+		parts = append(parts, "--cache-dir", cfg.CacheDir)
+	}
+	// Legacy mode output directory
+	if cfg.OutputDir != "" && cfg.OutputDir != "Models" && cfg.OutputDir != "Datasets" {
+		parts = append(parts, "--legacy", "-o", cfg.OutputDir)
+	} else if cfg.OutputDir == "Models" || cfg.OutputDir == "Datasets" {
+		parts = append(parts, "--legacy")
+	}
+	if cfg.Concurrency != 8 {
+		parts = append(parts, "-c", fmt.Sprintf("%d", cfg.Concurrency))
+	}
+	if cfg.MaxActiveDownloads != 3 {
+		parts = append(parts, "--max-active", fmt.Sprintf("%d", cfg.MaxActiveDownloads))
+	}
+	if cfg.Verify != "size" && cfg.Verify != "" {
+		parts = append(parts, "--verify", cfg.Verify)
+	}
+	// Proxy (URL only, credentials intentionally omitted for security)
+	if cfg.Proxy != nil && cfg.Proxy.URL != "" {
+		parts = append(parts, "--proxy", cfg.Proxy.URL)
+	}
+	// Note: Token and proxy credentials are intentionally omitted for security
+
+	return strings.Join(parts, " ")
+}
+
+// loadConfigMap loads the config file and returns it as a map.
+// Returns nil if no config file exists.
+func loadConfigMap() map[string]any {
+	home, _ := os.UserHomeDir()
+	// Try JSON first, then YAML
+	jsonPath := filepath.Join(home, ".config", "hfdownloader.json")
+	yamlPath := filepath.Join(home, ".config", "hfdownloader.yaml")
+	ymlPath := filepath.Join(home, ".config", "hfdownloader.yml")
+
+	var path string
+	if _, err := os.Stat(jsonPath); err == nil {
+		path = jsonPath
+	} else if _, err := os.Stat(yamlPath); err == nil {
+		path = yamlPath
+	} else if _, err := os.Stat(ymlPath); err == nil {
+		path = ymlPath
+	}
+	if path == "" {
+		return nil
+	}
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	var cfg map[string]any
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".yaml", ".yml":
+		if err := yaml.Unmarshal(b, &cfg); err != nil {
+			return nil
+		}
+	default:
+		if err := json.Unmarshal(b, &cfg); err != nil {
+			return nil
+		}
+	}
+	return cfg
 }
 
 func applySettingsDefaults(cmd *cobra.Command, ro *RootOpts, dst *hfdownloader.Settings) error {
@@ -277,8 +416,8 @@ func applySettingsDefaults(cmd *cobra.Command, ro *RootOpts, dst *hfdownloader.S
 		}
 	}
 
-	// Note: We don't load "output" from config - it's now dynamic based on model/dataset type
-	// setStr("output", func(v string) { dst.OutputDir = v })
+	// Load cache-dir from config (v3 replaces the old "output" setting)
+	setStr("cache-dir", func(v string) { dst.CacheDir = v })
 	setInt("connections", func(v int) { dst.Concurrency = v })
 	setInt("max-active", func(v int) { dst.MaxActiveDownloads = v })
 	setStr("multipart-threshold", func(v string) { dst.MultipartThreshold = v })
@@ -291,6 +430,43 @@ func applySettingsDefaults(cmd *cobra.Command, ro *RootOpts, dst *hfdownloader.S
 	if !cmd.Flags().Changed("token") && os.Getenv("HF_TOKEN") == "" {
 		if v, ok := cfg["token"]; ok && v != nil {
 			ro.Token = fmt.Sprint(v)
+		}
+	}
+
+	// Load proxy configuration from config file
+	if proxyMap, ok := cfg["proxy"].(map[string]any); ok {
+		if dst.Proxy == nil {
+			dst.Proxy = &hfdownloader.ProxyConfig{}
+		}
+		if !cmd.Flags().Changed("proxy") {
+			if v, ok := proxyMap["url"]; ok && v != nil {
+				dst.Proxy.URL = fmt.Sprint(v)
+			}
+		}
+		if !cmd.Flags().Changed("proxy-user") {
+			if v, ok := proxyMap["username"]; ok && v != nil {
+				dst.Proxy.Username = fmt.Sprint(v)
+			}
+		}
+		if !cmd.Flags().Changed("proxy-pass") {
+			if v, ok := proxyMap["password"]; ok && v != nil {
+				dst.Proxy.Password = fmt.Sprint(v)
+			}
+		}
+		if !cmd.Flags().Changed("no-env-proxy") {
+			if v, ok := proxyMap["no_env_proxy"]; ok {
+				if b, ok := v.(bool); ok {
+					dst.Proxy.NoEnvProxy = b
+				}
+			}
+		}
+		if v, ok := proxyMap["no_proxy"]; ok && v != nil {
+			dst.Proxy.NoProxy = fmt.Sprint(v)
+		}
+		if v, ok := proxyMap["insecure_skip_verify"]; ok {
+			if b, ok := v.(bool); ok {
+				dst.Proxy.InsecureSkipVerify = b
+			}
 		}
 	}
 

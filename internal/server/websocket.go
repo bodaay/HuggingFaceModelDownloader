@@ -161,7 +161,7 @@ func (s *Server) sendInitialState(client *WSClient) {
 		Type: "init",
 		Data: map[string]any{
 			"jobs":    jobs,
-			"version": "2.3.0",
+			"version": "2.3.3",
 		},
 	}
 	

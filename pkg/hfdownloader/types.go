@@ -3,18 +3,21 @@
 
 package hfdownloader
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Job defines what to download from the HuggingFace Hub.
 //
 // A Job specifies the repository, revision, and optional filters for selecting
 // which files to download. The Repo field is required and must be in
-// "owner/name" format (e.g., "TheBloke/Mistral-7B-GGUF").
+// "owner/name" format (e.g., "TheBloke/Mistral-7B-Instruct-v0.2-GGUF").
 //
 // Example:
 //
 //	job := hfdownloader.Job{
-//	    Repo:     "TheBloke/Mistral-7B-GGUF",
+//	    Repo:     "TheBloke/Mistral-7B-Instruct-v0.2-GGUF",
 //	    Revision: "main",
 //	    Filters:  []string{"q4_k_m"},
 //	}
@@ -23,7 +26,7 @@ type Job struct {
 	// This field is required.
 	//
 	// Examples:
-	//   - "TheBloke/Mistral-7B-GGUF"
+	//   - "TheBloke/Mistral-7B-Instruct-v0.2-GGUF"
 	//   - "meta-llama/Llama-2-7b"
 	//   - "facebook/flores" (dataset)
 	Repo string
@@ -77,19 +80,19 @@ type Job struct {
 
 // Settings configures download behavior.
 //
-// All fields have sensible defaults. At minimum, you only need to set
-// OutputDir for where files should be saved.
+// All fields have sensible defaults. CacheDir specifies where the
+// HuggingFace cache structure will be created.
 //
 // Example with defaults:
 //
 //	cfg := hfdownloader.Settings{
-//	    OutputDir: "./Models",
+//	    CacheDir: "~/.cache/huggingface",
 //	}
 //
 // Example with full configuration:
 //
 //	cfg := hfdownloader.Settings{
-//	    OutputDir:          "./Models",
+//	    CacheDir:           "~/.cache/huggingface",
 //	    Concurrency:        8,
 //	    MaxActiveDownloads: 4,
 //	    MultipartThreshold: "32MiB",
@@ -98,9 +101,25 @@ type Job struct {
 //	    Token:              os.Getenv("HF_TOKEN"),
 //	}
 type Settings struct {
-	// OutputDir is the base directory for downloads.
-	// Files are saved as: <OutputDir>/<owner>/<repo>/<path>
-	// If empty, defaults to "Storage".
+	// CacheDir is the HuggingFace cache root directory.
+	// Downloads use the official HF Hub cache structure:
+	//   <CacheDir>/hub/models--<owner>--<repo>/blobs/
+	//   <CacheDir>/hub/models--<owner>--<repo>/snapshots/<commit>/
+	// With a friendly view at:
+	//   <CacheDir>/models/<owner>/<repo>/
+	//
+	// If empty, defaults to ~/.cache/huggingface (or HF_HOME env var).
+	CacheDir string
+
+	// StaleTimeout is the duration after which an incomplete download
+	// with no writes is considered stale and can be taken over by
+	// another process. Accepts duration strings: "5m", "10m", "1h".
+	// If empty, defaults to "5m".
+	StaleTimeout string
+
+	// OutputDir is DEPRECATED. Use CacheDir instead.
+	// If set, falls back to legacy flat directory structure for compatibility.
+	// Will be removed in a future version.
 	OutputDir string
 
 	// Concurrency is the number of parallel HTTP connections per file
@@ -161,6 +180,31 @@ type Settings struct {
 	//
 	// Credits: Feature suggested by windtail (#38)
 	Endpoint string
+
+	// NoManifest disables writing the hfd.yaml manifest file after download.
+	// By default, a manifest is always written to the friendly view directory.
+	NoManifest bool
+
+	// NoFriendlyView disables creating the friendly view symlinks (models/, datasets/).
+	// When set, only the HF cache structure (hub/) is created.
+	// This also skips writing the rebuild.sh script since there's nothing to rebuild.
+	NoFriendlyView bool
+
+	// Command is the CLI command string used to initiate this download.
+	// If set, it will be included in the manifest file (hfd.yaml).
+	// The token is automatically stripped from the command for security.
+	// Used internally by the CLI; library users typically don't set this.
+	Command string
+
+	// Proxy configures HTTP/HTTPS/SOCKS5 proxy settings for downloads.
+	// If nil or empty, falls back to environment variables (HTTP_PROXY, etc).
+	//
+	// Example configurations:
+	//   - HTTP proxy: &ProxyConfig{URL: "http://proxy:8080"}
+	//   - SOCKS5 proxy: &ProxyConfig{URL: "socks5://proxy:1080"}
+	//   - With auth: &ProxyConfig{URL: "http://proxy:8080", Username: "user", Password: "pass"}
+	//   - Disable env proxy: &ProxyConfig{NoEnvProxy: true}
+	Proxy *ProxyConfig
 }
 
 // ProgressEvent represents a progress update during download.
@@ -243,11 +287,12 @@ type ProgressFunc func(ProgressEvent)
 // Use this as a starting point and override specific fields:
 //
 //	cfg := hfdownloader.DefaultSettings()
-//	cfg.OutputDir = "./MyModels"
+//	cfg.CacheDir = "/custom/path"
 //	cfg.Token = os.Getenv("HF_TOKEN")
 func DefaultSettings() Settings {
 	return Settings{
-		OutputDir:          "Storage",
+		CacheDir:           "", // Empty = use DefaultCacheDir()
+		StaleTimeout:       "5m",
 		Concurrency:        8,
 		MaxActiveDownloads: 4,
 		MultipartThreshold: "256MiB",
@@ -256,4 +301,18 @@ func DefaultSettings() Settings {
 		BackoffInitial:     "400ms",
 		BackoffMax:         "10s",
 	}
+}
+
+// BuildHFCache creates an HFCache from Settings.
+// This is the recommended way to get a cache instance.
+func (s Settings) BuildHFCache() (*HFCache, error) {
+	staleTimeout := DefaultStaleTimeout
+	if s.StaleTimeout != "" {
+		var err error
+		staleTimeout, err = time.ParseDuration(s.StaleTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("invalid stale-timeout %q: %w", s.StaleTimeout, err)
+		}
+	}
+	return NewHFCache(s.CacheDir, staleTimeout), nil
 }

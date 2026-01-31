@@ -11,7 +11,7 @@ import (
 
 // staticFiles contains the embedded static files for the web interface.
 //
-//go:embed static/*
+//go:embed all:static
 var staticFiles embed.FS
 
 // StaticFS returns the filesystem for serving static files.

@@ -104,7 +104,7 @@ func ExamplePlanRepo() {
 
 func ExampleIsValidModelName() {
 	// Valid names
-	fmt.Println(hfdownloader.IsValidModelName("TheBloke/Mistral-7B-GGUF"))     // true
+	fmt.Println(hfdownloader.IsValidModelName("TheBloke/Mistral-7B-Instruct-v0.2-GGUF"))     // true
 	fmt.Println(hfdownloader.IsValidModelName("facebook/opt-1.3b"))            // true
 	fmt.Println(hfdownloader.IsValidModelName("hf-internal-testing/tiny-gpt")) // true
 
