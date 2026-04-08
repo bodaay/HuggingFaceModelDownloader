@@ -2232,7 +2232,7 @@ a {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   width: 100%;
-  max-width: 600px;
+  max-width: 780px;
   max-height: 80vh;
   display: flex;
   flex-direction: column;

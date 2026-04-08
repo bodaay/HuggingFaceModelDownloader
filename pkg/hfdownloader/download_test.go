@@ -5,11 +5,15 @@ package hfdownloader
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -352,4 +356,154 @@ func TestFilterMatching(t *testing.T) {
 			}
 		})
 	}
+}
+
+// sha256Hex returns the hex-encoded SHA-256 of b.
+func sha256Hex(b []byte) string {
+h := sha256.Sum256(b)
+return hex.EncodeToString(h[:])
+}
+
+func TestDownloadSingleStreamingHash(t *testing.T) {
+content := []byte("streaming sha256 test content — single path")
+wantHash := sha256Hex(content)
+
+srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+w.WriteHeader(http.StatusOK)
+w.Write(content)
+}))
+defer srv.Close()
+
+tmpDir := t.TempDir()
+dst := filepath.Join(tmpDir, "out.bin")
+it := PlanItem{RelativePath: "out.bin", URL: srv.URL + "/file", Size: int64(len(content))}
+
+gotHash, err := downloadSingle(context.Background(), srv.Client(), "", Job{Repo: "a/b"}, Settings{}, it, dst, func(ProgressEvent) {})
+if err != nil {
+t.Fatalf("downloadSingle: %v", err)
+}
+if !strings.EqualFold(gotHash, wantHash) {
+t.Errorf("streaming hash = %s, want %s", gotHash, wantHash)
+}
+diskHash, err := computeSHA256(dst)
+if err != nil {
+t.Fatalf("computeSHA256: %v", err)
+}
+if !strings.EqualFold(diskHash, wantHash) {
+t.Errorf("on-disk hash = %s, want %s", diskHash, wantHash)
+}
+}
+
+func TestDownloadMultipartStreamingHash(t *testing.T) {
+// ~20 MiB — spans multiple 8 MiB parts even at the smallest part size.
+content := []byte(strings.Repeat("multipart-hash-check-", 1024*1024))
+wantHash := sha256Hex(content)
+
+srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+if r.Method == http.MethodHead {
+w.Header().Set("Content-Length", fmt.Sprintf("%d", len(content)))
+w.Header().Set("Accept-Ranges", "bytes")
+return
+}
+var start, end int
+fmt.Sscanf(r.Header.Get("Range"), "bytes=%d-%d", &start, &end)
+w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(content)))
+w.WriteHeader(http.StatusPartialContent)
+w.Write(content[start : end+1])
+}))
+defer srv.Close()
+
+tmpDir := t.TempDir()
+dst := filepath.Join(tmpDir, "multi.bin")
+it := PlanItem{
+RelativePath: "multi.bin",
+URL:          srv.URL + "/file",
+Size:         int64(len(content)),
+AcceptRanges: true,
+}
+cfg := Settings{Concurrency: 4, Retries: 0, PartSize: "8MiB"}
+
+gotHash, err := downloadMultipart(context.Background(), srv.Client(), "", Job{Repo: "a/b"}, cfg, it, dst, func(ProgressEvent) {}, 8*1024*1024)
+if err != nil {
+t.Fatalf("downloadMultipart: %v", err)
+}
+if !strings.EqualFold(gotHash, wantHash) {
+t.Errorf("streaming hash = %s, want %s", gotHash, wantHash)
+}
+diskHash, err := computeSHA256(dst)
+if err != nil {
+t.Fatalf("computeSHA256: %v", err)
+}
+if !strings.EqualFold(diskHash, wantHash) {
+t.Errorf("on-disk hash = %s, want %s", diskHash, wantHash)
+}
+}
+
+func TestDownloadMultipartProgress(t *testing.T) {
+content := []byte(strings.Repeat("progress-check-", 1024*1024)) // ~15 MiB
+srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+if r.Method == http.MethodHead {
+w.Header().Set("Content-Length", fmt.Sprintf("%d", len(content)))
+w.Header().Set("Accept-Ranges", "bytes")
+return
+}
+var start, end int
+fmt.Sscanf(r.Header.Get("Range"), "bytes=%d-%d", &start, &end)
+w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(content)))
+w.WriteHeader(http.StatusPartialContent)
+w.Write(content[start : end+1])
+}))
+defer srv.Close()
+
+tmpDir := t.TempDir()
+dst := filepath.Join(tmpDir, "progress.bin")
+it := PlanItem{
+RelativePath: "progress.bin",
+URL:          srv.URL + "/file",
+Size:         int64(len(content)),
+AcceptRanges: true,
+}
+cfg := Settings{Concurrency: 2, Retries: 0}
+
+var progressEvents int
+_, err := downloadMultipart(context.Background(), srv.Client(), "", Job{Repo: "a/b"}, cfg, it, dst, func(e ProgressEvent) {
+if e.Event == "file_progress" {
+progressEvents++
+}
+}, 8*1024*1024)
+if err != nil {
+t.Fatalf("downloadMultipart: %v", err)
+}
+if progressEvents == 0 {
+t.Error("expected file_progress events during multipart download, got none")
+}
+}
+
+func TestDownloadSingleLFSVerify(t *testing.T) {
+content := []byte("lfs blob content for verify path")
+wantHash := sha256Hex(content)
+
+srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+w.WriteHeader(http.StatusOK)
+w.Write(content)
+}))
+defer srv.Close()
+
+tmpDir := t.TempDir()
+dst := filepath.Join(tmpDir, "lfs.bin")
+it := PlanItem{
+RelativePath: "lfs.bin",
+URL:          srv.URL + "/lfs",
+Size:         int64(len(content)),
+LFS:          true,
+SHA256:       wantHash,
+}
+
+gotHash, err := downloadSingle(context.Background(), srv.Client(), "", Job{Repo: "a/b"}, Settings{}, it, dst, func(ProgressEvent) {})
+if err != nil {
+t.Fatalf("downloadSingle: %v", err)
+}
+if !strings.EqualFold(gotHash, it.SHA256) {
+t.Errorf("LFS verify would fail: got %s, expected %s", gotHash, it.SHA256)
+}
 }

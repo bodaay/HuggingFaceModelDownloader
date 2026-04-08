@@ -330,6 +330,7 @@ func (m *JobManager) runJob(job *Job) {
 		MaxActiveDownloads: m.config.MaxActive,
 		Token:              m.config.Token,
 		MultipartThreshold: m.config.MultipartThreshold,
+		PartSize:           m.config.PartSize,
 		Verify:             m.config.Verify,
 		Retries:            m.config.Retries,
 		BackoffInitial:     "400ms",

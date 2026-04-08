@@ -53,6 +53,7 @@ type SettingsResponse struct {
 	Concurrency        int    `json:"connections"`
 	MaxActive          int    `json:"maxActive"`
 	MultipartThreshold string `json:"multipartThreshold"`
+	PartSize           string `json:"partSize"`
 	Verify             string `json:"verify"`
 	Retries            int    `json:"retries"`
 	Endpoint           string `json:"endpoint,omitempty"`
@@ -351,6 +352,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		Concurrency:        s.config.Concurrency,
 		MaxActive:          s.config.MaxActive,
 		MultipartThreshold: s.config.MultipartThreshold,
+		PartSize:           s.config.PartSize,
 		Verify:             s.config.Verify,
 		Retries:            s.config.Retries,
 		Endpoint:           s.config.Endpoint,
@@ -380,6 +382,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		Concurrency        *int    `json:"connections,omitempty"`
 		MaxActive          *int    `json:"maxActive,omitempty"`
 		MultipartThreshold *string `json:"multipartThreshold,omitempty"`
+		PartSize           *string `json:"partSize,omitempty"`
 		Verify             *string `json:"verify,omitempty"`
 		Retries            *int    `json:"retries,omitempty"`
 		Endpoint           *string `json:"endpoint,omitempty"`
@@ -412,6 +415,9 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.MultipartThreshold != nil && *req.MultipartThreshold != "" {
 		s.config.MultipartThreshold = *req.MultipartThreshold
+	}
+	if req.PartSize != nil && *req.PartSize != "" {
+		s.config.PartSize = *req.PartSize
 	}
 	if req.Verify != nil && *req.Verify != "" {
 		s.config.Verify = *req.Verify
@@ -461,6 +467,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		Connections:        s.config.Concurrency,
 		MaxActive:          s.config.MaxActive,
 		MultipartThreshold: s.config.MultipartThreshold,
+		PartSize:           s.config.PartSize,
 		Verify:             s.config.Verify,
 		Retries:            s.config.Retries,
 		Endpoint:           s.config.Endpoint,

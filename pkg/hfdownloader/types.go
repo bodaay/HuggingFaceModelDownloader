@@ -139,6 +139,14 @@ type Settings struct {
 	// If empty, defaults to "256MiB".
 	MultipartThreshold string
 
+	// PartSize is the size of each part (chunk) used in multipart downloads.
+	// Larger parts reduce the number of HTTP requests and improve throughput
+	// on fast connections (e.g. 500 Mbps+), at the cost of higher memory use.
+	// Accepts human-readable sizes: "8MiB", "32MiB", "128MiB", etc.
+	// Peak memory per file is bounded to ~512 MiB regardless of this value.
+	// If empty, defaults to "32MiB".
+	PartSize string
+
 	// Verify specifies how to verify non-LFS files after download.
 	// LFS files are always verified by SHA-256 when the hash is available.
 	//
@@ -296,6 +304,7 @@ func DefaultSettings() Settings {
 		Concurrency:        8,
 		MaxActiveDownloads: 4,
 		MultipartThreshold: "256MiB",
+		PartSize:           "32MiB",
 		Verify:             "size",
 		Retries:            4,
 		BackoffInitial:     "400ms",

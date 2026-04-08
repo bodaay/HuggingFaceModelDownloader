@@ -27,6 +27,7 @@ type Config struct {
 	Concurrency        int
 	MaxActive          int
 	MultipartThreshold string // Minimum size for multipart download
+	PartSize           string // Size of each part in multipart downloads
 	Verify             string // Verification mode: none, size, sha256
 	Retries            int    // Number of retry attempts
 	AllowedOrigins     []string // CORS origins
@@ -50,6 +51,7 @@ func DefaultConfig() Config {
 		Concurrency:        8,
 		MaxActive:          3,
 		MultipartThreshold: "32MiB",
+		PartSize:           "32MiB",
 		Verify:             "size",
 		Retries:            4,
 	}
