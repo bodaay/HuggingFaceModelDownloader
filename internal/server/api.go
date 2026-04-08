@@ -1242,6 +1242,201 @@ func splitCommand(command string) []string {
 	return parts
 }
 
+// handleCacheDeleteFiles deletes individual files from a cached repository.
+// It removes snapshot symlinks, friendly-view symlinks, and blobs with no remaining references.
+// SECURITY: applies the same validation as handleCacheDelete.
+func (s *Server) handleCacheDeleteFiles(w http.ResponseWriter, r *http.Request) {
+	repo := r.PathValue("repo")
+	if repo == "" {
+		writeError(w, http.StatusBadRequest, "Missing repo path", "")
+		return
+	}
+
+	if !hfdownloader.IsValidModelName(repo) {
+		writeError(w, http.StatusBadRequest, "Invalid repository ID format", "Expected format: owner/name")
+		return
+	}
+	if strings.Contains(repo, "..") || strings.Contains(repo, "//") || strings.Contains(repo, "\\") {
+		writeError(w, http.StatusBadRequest, "Invalid repository ID", "Path traversal not allowed")
+		return
+	}
+	parts := strings.SplitN(repo, "/", 2)
+	if !isValidRepoComponent(parts[0]) || !isValidRepoComponent(parts[1]) {
+		writeError(w, http.StatusBadRequest, "Invalid repository ID", "Invalid characters in repository name")
+		return
+	}
+
+	var req struct {
+		Files []string `json:"files"`
+		Type  string   `json:"type"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request body", err.Error())
+		return
+	}
+	if len(req.Files) == 0 {
+		writeError(w, http.StatusBadRequest, "No files specified", "")
+		return
+	}
+
+	// Validate each requested file path (no traversal)
+	for _, f := range req.Files {
+		if strings.Contains(f, "..") || strings.Contains(f, "\\") || filepath.IsAbs(f) {
+			writeError(w, http.StatusBadRequest, "Invalid file path", f)
+			return
+		}
+	}
+
+	repoTypeStr := req.Type
+	repoType := hfdownloader.RepoTypeModel
+	if repoTypeStr == "dataset" {
+		repoType = hfdownloader.RepoTypeDataset
+	}
+
+	cacheDir := s.config.CacheDir
+	if cacheDir == "" {
+		cacheDir = hfdownloader.DefaultCacheDir()
+	}
+
+	absCacheDir, err := filepath.Abs(cacheDir)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to resolve cache path", err.Error())
+		return
+	}
+	absCacheDirWithSep := absCacheDir + string(filepath.Separator)
+
+	cache := hfdownloader.NewHFCache(cacheDir, 0)
+	repoDir, err := cache.Repo(repo, repoType)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid repository ID", err.Error())
+		return
+	}
+
+	if _, err := os.Stat(repoDir.Path()); os.IsNotExist(err) {
+		writeError(w, http.StatusNotFound, "Repository not found in cache", "")
+		return
+	}
+
+	snapshots, err := repoDir.ListSnapshots()
+	if err != nil || len(snapshots) == 0 {
+		writeError(w, http.StatusNotFound, "No snapshots found for repository", "")
+		return
+	}
+
+	// Build set of files to delete
+	toDelete := make(map[string]struct{}, len(req.Files))
+	for _, f := range req.Files {
+		toDelete[filepath.Clean(f)] = struct{}{}
+	}
+
+	friendlyBase := repoDir.FriendlyPath()
+
+	// Track blobs that had symlinks removed so we can check for orphans
+	blobsToCheck := make(map[string]struct{})
+
+	for _, commit := range snapshots {
+		snapshotDir := repoDir.SnapshotDir(commit)
+		for relPath := range toDelete {
+			symlinkPath := filepath.Join(snapshotDir, relPath)
+
+			// Security: ensure symlink path is within cache
+			absLink, err := filepath.Abs(symlinkPath)
+			if err != nil {
+				continue
+			}
+			if !strings.HasPrefix(absLink+string(filepath.Separator), absCacheDirWithSep) {
+				continue
+			}
+
+			// Read symlink target to find blob before removing
+			target, err := os.Readlink(symlinkPath)
+			if err == nil {
+				// Resolve to absolute blob path
+				blobAbs := target
+				if !filepath.IsAbs(blobAbs) {
+					blobAbs = filepath.Join(filepath.Dir(symlinkPath), target)
+				}
+				blobAbs = filepath.Clean(blobAbs)
+				if strings.HasPrefix(blobAbs+string(filepath.Separator), absCacheDirWithSep) {
+					blobsToCheck[blobAbs] = struct{}{}
+				}
+			}
+
+			// Remove the snapshot symlink
+			_ = os.Remove(symlinkPath)
+
+			// Remove friendly-view symlink for this file
+			friendlyLink := filepath.Join(friendlyBase, relPath)
+			absFriendlyLink, err := filepath.Abs(friendlyLink)
+			if err == nil && strings.HasPrefix(absFriendlyLink+string(filepath.Separator), absCacheDirWithSep) {
+				if fi, err := os.Lstat(absFriendlyLink); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+					_ = os.Remove(absFriendlyLink)
+				}
+			}
+		}
+	}
+
+	// For each blob that had symlinks removed, check if any other snapshot
+	// still references it; if not, remove the blob.
+	for blobPath := range blobsToCheck {
+		if !isReferenced(blobPath, repoDir.Path()) {
+			_ = os.Remove(blobPath)
+		}
+	}
+
+	// Update manifest if it exists
+	manifestPath := filepath.Join(friendlyBase, hfdownloader.ManifestFilename)
+	if m, err := hfdownloader.ReadManifest(manifestPath); err == nil {
+		var remaining []hfdownloader.ManifestFile
+		var removedSize int64
+		for _, mf := range m.Files {
+			if _, del := toDelete[filepath.Clean(mf.Name)]; del {
+				removedSize += mf.Size
+			} else {
+				remaining = append(remaining, mf)
+			}
+		}
+		m.Files = remaining
+		m.TotalFiles = len(remaining)
+		m.TotalSize -= removedSize
+		if m.TotalSize < 0 {
+			m.TotalSize = 0
+		}
+		_, _ = m.Write(friendlyBase)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": fmt.Sprintf("Deleted %d file(s) from %s", len(req.Files), repo),
+		"deleted": len(req.Files),
+	})
+}
+
+// isReferenced checks whether any symlink inside repoPath points to blobPath.
+func isReferenced(blobPath, repoPath string) bool {
+	found := false
+	_ = filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil || found {
+			return nil
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			if err != nil {
+				return nil
+			}
+			abs := target
+			if !filepath.IsAbs(abs) {
+				abs = filepath.Join(filepath.Dir(path), target)
+			}
+			if filepath.Clean(abs) == blobPath {
+				found = true
+			}
+		}
+		return nil
+	})
+	return found
+}
+
 // humanSizeBytes converts bytes to human-readable format.
 func humanSizeBytes(b int64) string {
 	const unit = 1024

@@ -92,7 +92,8 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 		if isLFS && len(job.Filters) > 0 {
 			for _, f := range job.Filters {
 				fLower := strings.ToLower(f)
-				if strings.Contains(nameLower, fLower) {
+				// Match on filename (basename) OR full relative path (enables folder-level filtering)
+				if strings.Contains(nameLower, fLower) || strings.Contains(relLower, fLower) {
 					if len(f) > len(matchedFilter) {
 						matchedFilter = f
 					}

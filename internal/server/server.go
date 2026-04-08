@@ -181,6 +181,7 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/cache", s.handleCacheList)
 	mux.HandleFunc("GET /api/cache/{repo...}", s.handleCacheInfo)
 	mux.HandleFunc("POST /api/cache/rebuild", s.handleCacheRebuild)
+	mux.HandleFunc("DELETE /api/cache/{repo...}/files", s.handleCacheDeleteFiles)
 	mux.HandleFunc("DELETE /api/cache/{repo...}", s.handleCacheDelete)
 
 	// Mirror - Target management

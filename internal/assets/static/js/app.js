@@ -374,19 +374,6 @@
     const resultDiv = $('#analyzeResult');
     if (!resultDiv) return;
 
-    const filesHtml = data.files?.slice(0, 20).map(f => `
-      <div class="analysis-file">
-        <span class="analysis-file-name">${escapeHtml(f.path || f.name)}</span>
-        <span class="analysis-file-size">${f.size_human || formatBytes(f.size)}</span>
-      </div>
-    `).join('') || '';
-
-    const moreFiles = (data.files?.length || 0) > 20
-      ? `<div class="analysis-file" style="justify-content: center; color: var(--color-text-muted);">
-           ... and ${data.files.length - 20} more files
-         </div>`
-      : '';
-
     // Build type-specific info
     let typeInfoHtml = '';
 
@@ -477,20 +464,6 @@
       `;
     }
 
-    // Build unified selectable items section (works for all types)
-    let selectableItemsHtml = '';
-    const hasSelectableItems = data.selectable_items && data.selectable_items.length > 0;
-
-    if (hasSelectableItems) {
-      selectableItemsHtml = `
-        <div class="analysis-section">
-          <h4>Select Files to Download</h4>
-          <p style="font-size: 13px; color: var(--color-text-muted); margin-bottom: 12px;">Choose which files you want to download:</p>
-          ${renderSelectableItems(data.selectable_items, 'selectableItems')}
-        </div>
-      `;
-    }
-
     // Build related downloads section (for LoRA base models, etc.)
     const relatedDownloadsHtml = renderRelatedDownloads(data.related_downloads);
 
@@ -532,13 +505,11 @@
         </div>
         <div class="analysis-body">
           ${typeInfoHtml}
-          ${selectableItemsHtml}
           ${relatedDownloadsHtml}
           <div class="analysis-section">
-            <h4>Files <span id="selectedFilesCount" style="font-weight: normal; color: var(--color-text-muted);"></span></h4>
+            <h4>Files</h4>
             <div class="analysis-files" id="analysisFilesList">
-              ${filesHtml}
-              ${moreFiles}
+              ${renderFileBrowser(data.files)}
             </div>
           </div>
         </div>
@@ -559,11 +530,7 @@
       </div>
     `;
 
-    // Initialize selectable items event handlers
-    if (hasSelectableItems) {
-      initSelectableItems();
-      updateCLICommandFromSelections();
-    }
+    updateCLICommand();
   }
 
   // Clear analysis and reset to initial state
@@ -697,34 +664,21 @@
     advancedOptions.exclude = $('#advExclude')?.value || '';
 
     hideModal();
-    updateDownloadCommand();
+    updateCLICommand();
     showToast('Options applied', 'success');
   };
 
   // Start download from wizard with selected options
   window.startWizardDownload = async function(repo, isDataset) {
-    // Get selected items from unified selector (new) or legacy quantOptions
-    let selectedItems = Array.from(document.querySelectorAll('.selectable-items input[type="checkbox"]:checked'))
-      .map(cb => cb.value);
-
-    // Fallback to legacy GGUF selector if no new selectable items
-    if (selectedItems.length === 0) {
-      selectedItems = Array.from(document.querySelectorAll('#quantOptions input[type="checkbox"]:checked'))
-        .map(cb => cb.dataset.filter);
-    }
-
-    // Build filters - prefer selections, fallback to advanced options
+    // Prefer file-browser checkbox selections; fall back to advanced options filter text
+    const selectedItems = getFileBrowserFilters();
     let filters = [];
-    const totalItems = document.querySelectorAll('.selectable-items input[type="checkbox"], #quantOptions input[type="checkbox"]').length;
-
-    // Only add filter if user selected a subset (not all)
-    if (selectedItems.length > 0 && selectedItems.length < totalItems) {
+    if (selectedItems.length > 0) {
       filters = selectedItems;
     } else if (advancedOptions.filter) {
       filters = advancedOptions.filter.split(',').map(s => s.trim()).filter(Boolean);
     }
 
-    // Build excludes from advanced options
     const excludes = advancedOptions.exclude
       ? advancedOptions.exclude.split(',').map(s => s.trim()).filter(Boolean)
       : [];
@@ -1249,13 +1203,21 @@
              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
            </svg>`;
 
-      // Build files table
+      // Build files table with per-file deletion checkboxes
       const filesHtml = data.files?.length > 0
         ? `<div class="cache-detail-files">
+             <div class="cache-files-select-bar">
+               <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                 <input type="checkbox" id="cacheFileSelectAll" onchange="toggleAllCacheFiles(this)">
+                 <span>Select all</span>
+               </label>
+               <span id="cacheFileSelectedCount" style="color:var(--color-text-muted);font-size:12px;"></span>
+             </div>
              <h4>Files (${data.files.length})</h4>
              <div class="cache-files-list">
-               ${data.files.slice(0, 20).map(f => `
+               ${data.files.map(f => `
                  <div class="cache-file-row">
+                   <input type="checkbox" class="cache-file-check" value="${escapeHtml(f.name)}" onchange="updateCacheFileSelection()">
                    <span class="cache-file-name" title="${escapeHtml(f.name)}">
                      ${f.isLfs ? '<span class="lfs-badge">LFS</span>' : ''}
                      ${escapeHtml(f.name)}
@@ -1263,7 +1225,6 @@
                    <span class="cache-file-size">${escapeHtml(f.sizeHuman)}</span>
                  </div>
                `).join('')}
-               ${data.files.length > 20 ? `<div class="cache-files-more">... and ${data.files.length - 20} more files</div>` : ''}
              </div>
            </div>`
         : '';
@@ -1368,6 +1329,12 @@
           ${filesHtml}
 
           <div class="cache-detail-actions">
+            <button id="deleteSelectedFilesBtn" class="btn btn-danger" style="display:none" onclick="deleteSelectedCacheFiles('${escapeHtml(data.repo)}', '${escapeHtml(data.type)}')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+              </svg>
+              Delete Selected
+            </button>
             <button class="btn btn-danger" onclick="confirmDeleteCache('${escapeHtml(data.repo)}', '${escapeHtml(data.type)}')">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                 <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -2533,6 +2500,218 @@
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   }
+
+  // =========================================
+  // File Browser (Analyze Page)
+  // =========================================
+
+  let _fileBrowserTree = null;
+
+  function buildFileTree(files) {
+    const rootFiles = [];
+    const dirs = {};
+    let dirIdx = 0;
+    for (const f of (files || [])) {
+      const slash = f.path.indexOf('/');
+      if (slash === -1) {
+        rootFiles.push(f);
+      } else {
+        const dir = f.path.slice(0, slash);
+        if (!dirs[dir]) dirs[dir] = { files: [], totalSize: 0, id: 'fbdir' + dirIdx++ };
+        dirs[dir].files.push(f);
+        dirs[dir].totalSize += f.size || 0;
+      }
+    }
+    return { rootFiles, dirs };
+  }
+
+  function renderFileBrowser(files) {
+    if (!files || files.length === 0) {
+      return '<div class="analysis-file" style="justify-content:center;color:var(--color-text-muted);">No files</div>';
+    }
+    _fileBrowserTree = buildFileTree(files);
+
+    const fileIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13" style="flex-shrink:0;color:var(--color-text-muted)"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>`;
+    const folderIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13" style="flex-shrink:0;color:var(--color-accent)"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
+    const chevron = (id) => `<svg id="fb-chevron-${id}" class="fb-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="12" height="12"><polyline points="9 18 15 12 9 6"/></svg>`;
+
+    let html = '<div class="file-browser">';
+
+    for (const f of _fileBrowserTree.rootFiles) {
+      html += `
+        <div class="fb-row">
+          <input type="checkbox" class="fb-checkbox fb-file-root-checkbox" value="${escapeHtml(f.path)}" onchange="updateCLICommand()">
+          <span style="width:12px;flex-shrink:0;"></span>
+          ${fileIcon}
+          <span class="fb-name" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</span>
+          <span class="fb-size">${f.size_human || formatBytes(f.size)}</span>
+        </div>`;
+    }
+
+    for (const [dir, info] of Object.entries(_fileBrowserTree.dirs)) {
+      const id = info.id;
+      html += `
+        <div class="fb-row fb-dir-row" onclick="toggleFileBrowserDir(event,'${escapeHtml(dir)}','${id}')">
+          <input type="checkbox" class="fb-checkbox fb-dir-checkbox" id="fb-check-${id}"
+                 value="${escapeHtml(dir)}"
+                 onclick="event.stopPropagation()"
+                 onchange="onFileBrowserDirCheck(this,'${escapeHtml(dir)}','${id}')">
+          ${chevron(id)}
+          ${folderIcon}
+          <span class="fb-name fb-dir-name" title="${escapeHtml(dir)}">${escapeHtml(dir)}/</span>
+          <span class="fb-meta">${info.files.length} file${info.files.length !== 1 ? 's' : ''} &middot; ${formatBytes(info.totalSize)}</span>
+        </div>
+        <div class="fb-dir-contents" id="fb-contents-${id}" style="display:none;"></div>`;
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  window.toggleFileBrowserDir = function(event, dir, id) {
+    const contents = document.getElementById('fb-contents-' + id);
+    const chev = document.getElementById('fb-chevron-' + id);
+    if (!contents) return;
+
+    const isOpen = contents.style.display !== 'none';
+    if (!isOpen) {
+      if (!contents.dataset.rendered) {
+        const dirData = _fileBrowserTree.dirs[dir];
+        const dirCheck = document.getElementById('fb-check-' + id);
+        const allChecked = dirCheck && dirCheck.checked;
+        const fileIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13" style="flex-shrink:0;color:var(--color-text-muted)"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>`;
+        contents.innerHTML = dirData.files.map(f => `
+          <div class="fb-row">
+            <input type="checkbox" class="fb-checkbox fb-file-checkbox" value="${escapeHtml(f.path)}"
+                   ${allChecked ? 'checked' : ''}
+                   onchange="onFileBrowserFileCheck(this,'${escapeHtml(dir)}','${id}')">
+            <span style="width:12px;flex-shrink:0;"></span>
+            ${fileIcon}
+            <span class="fb-name" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</span>
+            <span class="fb-size">${f.size_human || formatBytes(f.size)}</span>
+          </div>`).join('');
+        contents.dataset.rendered = '1';
+      }
+      contents.style.display = 'block';
+      if (chev) chev.classList.add('open');
+    } else {
+      contents.style.display = 'none';
+      if (chev) chev.classList.remove('open');
+    }
+  };
+
+  window.onFileBrowserDirCheck = function(checkbox, dir, id) {
+    const contents = document.getElementById('fb-contents-' + id);
+    if (contents && contents.dataset.rendered) {
+      contents.querySelectorAll('.fb-file-checkbox').forEach(cb => {
+        cb.checked = checkbox.checked;
+        cb.indeterminate = false;
+      });
+    }
+    updateCLICommand();
+  };
+
+  window.onFileBrowserFileCheck = function(checkbox, dir, id) {
+    const contents = document.getElementById('fb-contents-' + id);
+    const dirCheckbox = document.getElementById('fb-check-' + id);
+    if (!contents || !dirCheckbox) return;
+
+    const all = Array.from(contents.querySelectorAll('.fb-file-checkbox'));
+    const checked = all.filter(cb => cb.checked).length;
+    if (checked === 0) {
+      dirCheckbox.checked = false;
+      dirCheckbox.indeterminate = false;
+    } else if (checked === all.length) {
+      dirCheckbox.checked = true;
+      dirCheckbox.indeterminate = false;
+    } else {
+      dirCheckbox.checked = false;
+      dirCheckbox.indeterminate = true;
+    }
+    updateCLICommand();
+  };
+
+  // Collect filter values from the file browser checkboxes
+  function getFileBrowserFilters() {
+    if (!_fileBrowserTree) return [];
+    const filters = [];
+
+    document.querySelectorAll('.fb-file-root-checkbox:checked').forEach(cb => filters.push(cb.value));
+
+    for (const [dir, info] of Object.entries(_fileBrowserTree.dirs)) {
+      const id = info.id;
+      const dirCheckbox = document.getElementById('fb-check-' + id);
+      const contents = document.getElementById('fb-contents-' + id);
+      const isExpanded = contents && contents.style.display !== 'none';
+
+      if (isExpanded && contents.dataset.rendered) {
+        contents.querySelectorAll('.fb-file-checkbox:checked').forEach(cb => filters.push(cb.value));
+      } else if (dirCheckbox && dirCheckbox.checked) {
+        filters.push(dir);
+      }
+    }
+    return filters;
+  }
+
+  // Update the CLI command preview based on current selections
+  function updateCLICommand() {
+    if (!currentAnalysis) return;
+    let cmd = `hfdownloader download ${currentAnalysis.repo}`;
+    if (currentAnalysis.is_dataset) cmd += ' --dataset';
+    if (currentAnalysis.branch && currentAnalysis.branch !== 'main') cmd += ` -b ${currentAnalysis.branch}`;
+
+    const filters = getFileBrowserFilters();
+    if (filters.length > 0) {
+      cmd += ` -F "${filters.join(',')}"`;
+    } else if (advancedOptions.filter) {
+      cmd += ` -F "${advancedOptions.filter}"`;
+    }
+    if (advancedOptions.exclude) cmd += ` -e "${advancedOptions.exclude}"`;
+
+    const cmdEl = $('#cliCommandText');
+    if (cmdEl) cmdEl.textContent = cmd;
+    const legacyCmd = $('#downloadCommand');
+    if (legacyCmd) legacyCmd.textContent = cmd;
+  }
+
+  // =========================================
+  // Cache File Deletion
+  // =========================================
+
+  window.toggleAllCacheFiles = function(selectAllCb) {
+    document.querySelectorAll('.cache-file-check').forEach(cb => { cb.checked = selectAllCb.checked; });
+    updateCacheFileSelection();
+  };
+
+  window.updateCacheFileSelection = function() {
+    const all = document.querySelectorAll('.cache-file-check');
+    const checked = document.querySelectorAll('.cache-file-check:checked');
+    const countEl = $('#cacheFileSelectedCount');
+    const deleteBtn = $('#deleteSelectedFilesBtn');
+    const selectAllCb = $('#cacheFileSelectAll');
+
+    if (countEl) countEl.textContent = checked.length > 0 ? `${checked.length} selected` : '';
+    if (deleteBtn) deleteBtn.style.display = checked.length > 0 ? '' : 'none';
+    if (selectAllCb) {
+      selectAllCb.checked = all.length > 0 && checked.length === all.length;
+      selectAllCb.indeterminate = checked.length > 0 && checked.length < all.length;
+    }
+  };
+
+  window.deleteSelectedCacheFiles = async function(repo, type) {
+    const selected = Array.from(document.querySelectorAll('.cache-file-check:checked')).map(cb => cb.value);
+    if (selected.length === 0) return;
+    if (!confirm(`Delete ${selected.length} file(s) from ${repo}?\nThis cannot be undone.`)) return;
+
+    try {
+      await api('DELETE', `/cache/${repo}/files`, { files: selected, type });
+      hideModal();
+      showToast(`Deleted ${selected.length} file(s) from ${repo}`, 'success');
+      loadCache();
+    } catch (e) {
+      showToast(`Failed: ${e.message}`, 'error');
+    }
+  };
 
   // =========================================
   // Initialize
