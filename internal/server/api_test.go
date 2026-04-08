@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -368,7 +369,11 @@ func TestAPI_CacheDelete_PathTraversal(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("DELETE", "/api/cache/"+tt.repo, nil)
-			req.SetPathValue("repo", tt.repo)
+			parts := strings.SplitN(tt.repo, "/", 2)
+			req.SetPathValue("owner", parts[0])
+			if len(parts) == 2 {
+				req.SetPathValue("name", parts[1])
+			}
 			w := httptest.NewRecorder()
 
 			srv.handleCacheDelete(w, req)
@@ -447,7 +452,11 @@ func TestAPI_CacheDelete_InvalidCharacters(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("DELETE", "/api/cache/test/repo", nil)
-			req.SetPathValue("repo", tt.repo) // Set path value directly to bypass URL parsing
+			parts := strings.SplitN(tt.repo, "/", 2)
+			req.SetPathValue("owner", parts[0])
+			if len(parts) == 2 {
+				req.SetPathValue("name", parts[1])
+			}
 			w := httptest.NewRecorder()
 
 			srv.handleCacheDelete(w, req)
@@ -513,7 +522,11 @@ func TestAPI_CacheDelete_ValidRepoFormat(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("DELETE", "/api/cache/"+tt.repo, nil)
-			req.SetPathValue("repo", tt.repo)
+			parts := strings.SplitN(tt.repo, "/", 2)
+			req.SetPathValue("owner", parts[0])
+			if len(parts) == 2 {
+				req.SetPathValue("name", parts[1])
+			}
 			w := httptest.NewRecorder()
 
 			srv.handleCacheDelete(w, req)

@@ -979,11 +979,13 @@ func (s *Server) handleCacheRebuild(w http.ResponseWriter, r *http.Request) {
 // - TOCTOU race conditions
 // - Directory escape via prefix manipulation
 func (s *Server) handleCacheDelete(w http.ResponseWriter, r *http.Request) {
-	repo := r.PathValue("repo")
-	if repo == "" {
+	owner := r.PathValue("owner")
+	name := r.PathValue("name")
+	if owner == "" || name == "" {
 		writeError(w, http.StatusBadRequest, "Missing repo path", "")
 		return
 	}
+	repo := owner + "/" + name
 
 	// Security Layer 1: Validate repo format strictly (owner/name)
 	if !hfdownloader.IsValidModelName(repo) {
@@ -1246,11 +1248,13 @@ func splitCommand(command string) []string {
 // It removes snapshot symlinks, friendly-view symlinks, and blobs with no remaining references.
 // SECURITY: applies the same validation as handleCacheDelete.
 func (s *Server) handleCacheDeleteFiles(w http.ResponseWriter, r *http.Request) {
-	repo := r.PathValue("repo")
-	if repo == "" {
+	owner := r.PathValue("owner")
+	name := r.PathValue("name")
+	if owner == "" || name == "" {
 		writeError(w, http.StatusBadRequest, "Missing repo path", "")
 		return
 	}
+	repo := owner + "/" + name
 
 	if !hfdownloader.IsValidModelName(repo) {
 		writeError(w, http.StatusBadRequest, "Invalid repository ID format", "Expected format: owner/name")
