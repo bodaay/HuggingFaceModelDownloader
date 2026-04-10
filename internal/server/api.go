@@ -28,6 +28,10 @@ type DownloadRequest struct {
 	Excludes           []string `json:"excludes,omitempty"`
 	AppendFilterSubdir bool     `json:"appendFilterSubdir,omitempty"`
 	DryRun             bool     `json:"dryRun,omitempty"`
+	// Paths is an optional list of exact relative file paths to download.
+	// When provided, Filters and Excludes are ignored and only the listed
+	// files are downloaded.  Used by the "Update Selected" feature.
+	Paths []string `json:"paths,omitempty"`
 }
 
 // PlanResponse is the response for a dry-run/plan request.
@@ -1460,4 +1464,212 @@ func humanSizeBytes(b int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// --- Update Check ---
+
+// FileUpdateInfo describes the update status of a single cached file.
+type FileUpdateInfo struct {
+	Name      string `json:"name"`      // relative path within the repo
+	LocalSHA  string `json:"localSha"`  // SHA256 stored locally (blob filename)
+	RemoteSHA string `json:"remoteSha"` // SHA256 reported by upstream
+	HasUpdate bool   `json:"hasUpdate"` // true when remote differs from local
+	IsLFS     bool   `json:"isLfs"`
+	Size      int64  `json:"size"`
+}
+
+// UpdateCheckResponse is returned by handleCacheUpdates.
+type UpdateCheckResponse struct {
+	LocalCommit   string           `json:"localCommit"`
+	RemoteCommit  string           `json:"remoteCommit"`
+	CommitChanged bool             `json:"commitChanged"`
+	UpdatedFiles  int              `json:"updatedFiles"`
+	Files         []FileUpdateInfo `json:"files"`
+	CheckedAt     string           `json:"checkedAt"`
+}
+
+// handleCacheUpdates checks a locally cached repo for upstream changes.
+//
+// Two-phase approach:
+//  1. Fast path: compare the stored local commit SHA with the upstream commit SHA
+//     (one lightweight API call to /api/models/{repo}/revision/{branch}).
+//     If the commits are identical, all files are current and no further calls are made.
+//  2. Full path (when commits differ): walk the upstream tree to obtain the SHA256
+//     for every file, then compare against the local blob filenames.
+//     Only files that ARE already cached locally are reported — intentionally-absent
+//     files (filtered downloads) are not treated as updates.
+//
+// Query parameters:
+//
+//	type  – "model" (default) or "dataset"
+//	branch – branch/revision to compare (default: "main")
+func (s *Server) handleCacheUpdates(w http.ResponseWriter, r *http.Request) {
+	owner := r.PathValue("owner")
+	name := r.PathValue("name")
+	if owner == "" || name == "" {
+		writeError(w, http.StatusBadRequest, "Missing repo path", "")
+		return
+	}
+	repo := owner + "/" + name
+
+	if !hfdownloader.IsValidModelName(repo) {
+		writeError(w, http.StatusBadRequest, "Invalid repository ID format", "Expected format: owner/name")
+		return
+	}
+	if strings.Contains(repo, "..") || strings.Contains(repo, "//") || strings.Contains(repo, "\\") {
+		writeError(w, http.StatusBadRequest, "Invalid repository ID", "Path traversal not allowed")
+		return
+	}
+	parts := strings.SplitN(repo, "/", 2)
+	if !isValidRepoComponent(parts[0]) || !isValidRepoComponent(parts[1]) {
+		writeError(w, http.StatusBadRequest, "Invalid repository ID", "Invalid characters in repository name")
+		return
+	}
+
+	repoTypeStr := r.URL.Query().Get("type")
+	repoType := hfdownloader.RepoTypeModel
+	isDataset := false
+	if repoTypeStr == "dataset" {
+		repoType = hfdownloader.RepoTypeDataset
+		isDataset = true
+	}
+
+	branch := r.URL.Query().Get("branch")
+	if branch == "" {
+		branch = "main"
+	}
+
+	cacheDir := s.config.CacheDir
+	if cacheDir == "" {
+		cacheDir = hfdownloader.DefaultCacheDir()
+	}
+
+	cache := hfdownloader.NewHFCache(cacheDir, 0)
+	repoDir, err := cache.Repo(repo, repoType)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid repository ID", err.Error())
+		return
+	}
+
+	if _, err := os.Stat(repoDir.Path()); os.IsNotExist(err) {
+		writeError(w, http.StatusNotFound, "Repository not found in cache", "")
+		return
+	}
+
+	// Phase 1: read the local commit SHA from refs/{branch}
+	localCommit, _ := repoDir.ReadRef(branch)
+	// Also try "master" as fallback when branch=="main"
+	if localCommit == "" && branch == "main" {
+		localCommit, _ = repoDir.ReadRef("master")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+
+	settings := hfdownloader.Settings{
+		Token:    s.config.Token,
+		Endpoint: s.config.Endpoint,
+		Proxy:    s.config.Proxy,
+	}
+	job := hfdownloader.Job{
+		Repo:      repo,
+		Revision:  branch,
+		IsDataset: isDataset,
+	}
+
+	// Always fetch the upstream commit so we can report it.
+	remoteFiles, remoteCommit, err := hfdownloader.FetchFileTree(ctx, job, settings)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to fetch upstream file tree", err.Error())
+		return
+	}
+
+	commitChanged := localCommit == "" || (remoteCommit != "" && localCommit != remoteCommit)
+
+	// Build map of locally-present blobs: sha256 → true.
+	// A blob is present when blobs/{sha256} exists in the repo's blobs directory.
+	blobsDir := repoDir.BlobsDir()
+
+	// Also build a map of local file → local sha256 by reading snapshot symlinks.
+	// This lets us report what the old hash was for changed files.
+	localFileSHA := make(map[string]string) // relative path → local sha256
+
+	snapshots, _ := repoDir.ListSnapshots()
+	// Use localCommit's snapshot if available, otherwise fall back to the first one.
+	snapshotToUse := localCommit
+	if snapshotToUse == "" && len(snapshots) > 0 {
+		snapshotToUse = snapshots[0]
+	}
+	if snapshotToUse != "" {
+		snapshotDir := repoDir.SnapshotDir(snapshotToUse)
+		filepath.Walk(snapshotDir, func(p string, info os.FileInfo, err error) error {
+			if err != nil || info == nil || info.IsDir() {
+				return nil
+			}
+			// Follow the symlink to determine the blob SHA (it's the filename).
+			target, err := os.Readlink(p)
+			if err != nil {
+				return nil
+			}
+			abs := target
+			if !filepath.IsAbs(abs) {
+				abs = filepath.Join(filepath.Dir(p), target)
+			}
+			abs = filepath.Clean(abs)
+			sha := filepath.Base(abs)
+			relPath, err := filepath.Rel(snapshotDir, p)
+			if err != nil {
+				return nil
+			}
+			localFileSHA[filepath.ToSlash(relPath)] = sha
+			return nil
+		})
+	}
+
+	// Compare remote files against local cache.
+	var fileInfos []FileUpdateInfo
+	updatedCount := 0
+
+	for _, rf := range remoteFiles {
+		relSlash := filepath.ToSlash(rf.Path)
+
+		// Only report files that exist locally (skip intentionally-absent files).
+		localSHA, existsLocally := localFileSHA[relSlash]
+		if !existsLocally {
+			// Double-check blob existence directly in case snapshot map is incomplete.
+			if rf.SHA256 != "" {
+				if _, statErr := os.Stat(filepath.Join(blobsDir, rf.SHA256)); statErr == nil {
+					// Blob happens to be present (shared across snapshots), treat as local.
+					localSHA = rf.SHA256
+					existsLocally = true
+				}
+			}
+		}
+		if !existsLocally {
+			continue
+		}
+
+		hasUpdate := rf.SHA256 != "" && localSHA != rf.SHA256
+		if hasUpdate {
+			updatedCount++
+		}
+
+		fileInfos = append(fileInfos, FileUpdateInfo{
+			Name:      rf.Path,
+			LocalSHA:  localSHA,
+			RemoteSHA: rf.SHA256,
+			HasUpdate: hasUpdate,
+			IsLFS:     rf.IsLFS,
+			Size:      rf.Size,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, UpdateCheckResponse{
+		LocalCommit:   localCommit,
+		RemoteCommit:  remoteCommit,
+		CommitChanged: commitChanged,
+		UpdatedFiles:  updatedCount,
+		Files:         fileInfos,
+		CheckedAt:     time.Now().UTC().Format(time.RFC3339),
+	})
 }

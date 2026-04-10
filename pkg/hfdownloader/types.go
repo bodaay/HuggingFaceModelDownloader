@@ -76,6 +76,14 @@ type Job struct {
 	// Instead of:
 	//   <output>/<repo>/<filename>
 	AppendFilterSubdir bool
+
+	// Paths is an optional list of exact relative file paths to download.
+	// When non-empty, only files whose relative path exactly matches one of
+	// the entries are included; the Filters and Excludes fields are ignored.
+	//
+	// Example:
+	//   Paths: []string{"config.json", "model.Q4_K_M.gguf"}
+	Paths []string
 }
 
 // Settings configures download behavior.

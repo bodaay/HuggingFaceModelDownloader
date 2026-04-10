@@ -539,6 +539,140 @@ func TestAPI_CacheDelete_ValidRepoFormat(t *testing.T) {
 	}
 }
 
+// --- Update Check Tests ---
+
+func TestAPI_CacheUpdates_PathTraversal(t *testing.T) {
+	srv := newTestServer()
+
+	tests := []struct {
+		name     string
+		owner    string
+		repoName string
+		wantCode int
+	}{
+		{"dot dot owner", "..", "model", http.StatusBadRequest},
+		{"dot dot name", "owner", "..", http.StatusBadRequest},
+		{"valid but missing", "notexist", "notexist", http.StatusNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/api/cache/"+tt.owner+"/"+tt.repoName+"/updates", nil)
+			req.SetPathValue("owner", tt.owner)
+			req.SetPathValue("name", tt.repoName)
+			w := httptest.NewRecorder()
+
+			srv.handleCacheUpdates(w, req)
+
+			if w.Code != tt.wantCode {
+				t.Errorf("Expected %d, got %d. Body: %s", tt.wantCode, w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestAPI_CacheUpdates_InvalidRepoID(t *testing.T) {
+	srv := newTestServer()
+
+	tests := []struct {
+		name     string
+		owner    string
+		repoName string
+	}{
+		{"shell metachar in owner", "own;er", "model"},
+		{"dollar sign in name", "owner", "model$evil"},
+		{"asterisk in name", "owner", "name*"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/api/cache/test/test/updates", nil)
+			req.SetPathValue("owner", tt.owner)
+			req.SetPathValue("name", tt.repoName)
+			w := httptest.NewRecorder()
+
+			srv.handleCacheUpdates(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("Expected 400, got %d. Body: %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestAPI_DownloadRequest_PathsField(t *testing.T) {
+	srv := newTestServer()
+
+	body := `{"repo": "owner/model", "paths": ["config.json", "model.Q4_K_M.gguf"]}`
+	req := httptest.NewRequest("POST", "/api/download", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	srv.handleStartDownload(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("Expected 202, got %d. Body: %s", w.Code, w.Body.String())
+	}
+
+	var resp Job
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Paths) != 2 {
+		t.Errorf("Expected 2 paths, got %d: %v", len(resp.Paths), resp.Paths)
+	}
+	if resp.Paths[0] != "config.json" {
+		t.Errorf("Expected paths[0]='config.json', got %q", resp.Paths[0])
+	}
+	if resp.Paths[1] != "model.Q4_K_M.gguf" {
+		t.Errorf("Expected paths[1]='model.Q4_K_M.gguf', got %q", resp.Paths[1])
+	}
+}
+
+func TestJobManager_PathsDeduplication(t *testing.T) {
+	tempDir := t.TempDir()
+	cfg := Config{CacheDir: tempDir, Concurrency: 1, MaxActive: 1}
+	mgr := NewJobManager(cfg, nil)
+
+	// Full-repo job should deduplicate against another full-repo job
+	req1 := DownloadRequest{Repo: "owner/model", Revision: "main"}
+	job1, wasExisting1, err := mgr.CreateJob(req1)
+	if err != nil || wasExisting1 {
+		t.Fatalf("unexpected: err=%v wasExisting=%v", err, wasExisting1)
+	}
+
+	job1b, wasExisting1b, _ := mgr.CreateJob(req1)
+	if !wasExisting1b || job1b.ID != job1.ID {
+		t.Error("identical full-repo jobs should be deduplicated")
+	}
+
+	// Paths-based job should NOT deduplicate against the full-repo job
+	req2 := DownloadRequest{Repo: "owner/model", Revision: "main", Paths: []string{"config.json"}}
+	job2, wasExisting2, err := mgr.CreateJob(req2)
+	if err != nil {
+		t.Fatalf("CreateJob with paths: %v", err)
+	}
+	if wasExisting2 {
+		t.Error("paths-based job should not be deduplicated against full-repo job")
+	}
+	if job2.ID == job1.ID {
+		t.Error("paths-based job should have a distinct ID from full-repo job")
+	}
+
+	// Same paths-based job submitted twice should deduplicate
+	job2b, wasExisting2b, _ := mgr.CreateJob(req2)
+	if !wasExisting2b || job2b.ID != job2.ID {
+		t.Error("identical paths-based jobs should be deduplicated")
+	}
+
+	// Different paths should produce a distinct job
+	req3 := DownloadRequest{Repo: "owner/model", Revision: "main", Paths: []string{"model.gguf"}}
+	job3, wasExisting3, _ := mgr.CreateJob(req3)
+	if wasExisting3 || job3.ID == job2.ID {
+		t.Error("different paths should produce a distinct job")
+	}
+}
+
 func TestIsValidRepoComponent(t *testing.T) {
 	tests := []struct {
 		input string

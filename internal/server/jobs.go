@@ -33,6 +33,7 @@ type Job struct {
 	IsDataset bool              `json:"isDataset,omitempty"`
 	Filters   []string          `json:"filters,omitempty"`
 	Excludes  []string          `json:"excludes,omitempty"`
+	Paths     []string          `json:"paths,omitempty"`
 	OutputDir string            `json:"outputDir"`
 	Status    JobStatus         `json:"status"`
 	Progress  JobProgress       `json:"progress"`
@@ -90,7 +91,9 @@ func generateID() string {
 }
 
 // CreateJob creates a new download job.
-// Returns existing job if same repo+revision+dataset is already in progress.
+// Returns existing job if same repo+revision+dataset+paths is already in progress.
+// Jobs that specify explicit Paths are never de-duplicated against full-repo jobs
+// (and vice versa), so that a targeted update always gets its own job entry.
 func (m *JobManager) CreateJob(req DownloadRequest) (*Job, bool, error) {
 	revision := req.Revision
 	if revision == "" {
@@ -103,13 +106,16 @@ func (m *JobManager) CreateJob(req DownloadRequest) (*Job, bool, error) {
 		cacheDir = hfdownloader.DefaultCacheDir()
 	}
 
-	// Check for existing active job with same repo+revision+type
+	// De-duplicate: only match when both jobs are full-repo downloads (no Paths)
+	// OR when both have identical Paths slices.  A paths-based update is always
+	// treated as distinct from a full-repo job so it gets its own visible entry.
 	m.mu.Lock()
 	for _, existing := range m.jobs {
 		if existing.Repo == req.Repo &&
 			existing.Revision == revision &&
 			existing.IsDataset == req.Dataset &&
-			(existing.Status == JobStatusQueued || existing.Status == JobStatusRunning) {
+			(existing.Status == JobStatusQueued || existing.Status == JobStatusRunning) &&
+			pathsEqual(existing.Paths, req.Paths) {
 			m.mu.Unlock()
 			return existing, true, nil // Return existing, wasExisting=true
 		}
@@ -122,6 +128,7 @@ func (m *JobManager) CreateJob(req DownloadRequest) (*Job, bool, error) {
 		IsDataset: req.Dataset,
 		Filters:   req.Filters,
 		Excludes:  req.Excludes,
+		Paths:     req.Paths,
 		OutputDir: cacheDir, // HuggingFace cache directory
 		Status:    JobStatusQueued,
 		CreatedAt: time.Now(),
@@ -135,6 +142,28 @@ func (m *JobManager) CreateJob(req DownloadRequest) (*Job, bool, error) {
 	go m.runJob(job)
 
 	return job, false, nil // New job, wasExisting=false
+}
+
+// pathsEqual returns true when two Paths slices represent the same set of
+// files.  Two nil/empty slices are considered equal (both mean "full repo").
+func pathsEqual(a, b []string) bool {
+	if len(a) == 0 && len(b) == 0 {
+		return true
+	}
+	if len(a) != len(b) {
+		return false
+	}
+	seen := make(map[string]int, len(a))
+	for _, p := range a {
+		seen[p]++
+	}
+	for _, p := range b {
+		seen[p]--
+		if seen[p] < 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // GetJob retrieves a job by ID.
@@ -315,6 +344,7 @@ func (m *JobManager) runJob(job *Job) {
 		IsDataset:          job.IsDataset,
 		Filters:            job.Filters,
 		Excludes:           job.Excludes,
+		Paths:              job.Paths,
 		AppendFilterSubdir: false,
 	}
 

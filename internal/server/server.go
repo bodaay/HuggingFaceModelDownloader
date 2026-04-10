@@ -181,6 +181,7 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 
 	// Cache browser
 	mux.HandleFunc("GET /api/cache", s.handleCacheList)
+	mux.HandleFunc("GET /api/cache/{owner}/{name}/updates", s.handleCacheUpdates)
 	mux.HandleFunc("GET /api/cache/{repo...}", s.handleCacheInfo)
 	mux.HandleFunc("POST /api/cache/rebuild", s.handleCacheRebuild)
 	mux.HandleFunc("DELETE /api/cache/{owner}/{name}/files", s.handleCacheDeleteFiles)

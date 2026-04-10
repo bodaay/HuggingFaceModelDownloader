@@ -1645,6 +1645,16 @@ a {
   color: var(--color-text-muted);
 }
 
+.cache-badge-update {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--color-warning);
+}
+
+.cache-badge-current {
+  background: rgba(34, 197, 94, 0.1);
+  color: var(--color-success);
+}
+
 .cache-card-body {
   flex: 1;
   margin-bottom: 12px;
@@ -1979,6 +1989,24 @@ a {
   color: var(--color-warning);
   padding: 2px 6px;
   border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+
+.cache-file-update-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-warning);
+  flex-shrink: 0;
+  margin-left: auto;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.cache-check-update-btn {
+  padding: 2px 6px;
+  font-size: 11px;
+  line-height: 1;
   flex-shrink: 0;
 }
 

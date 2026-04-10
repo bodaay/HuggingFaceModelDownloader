@@ -5,6 +5,7 @@ package hfdownloader
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -60,6 +61,13 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 		commitSHA = job.Revision // fallback
 	}
 
+	// Build exact-paths set when Job.Paths is provided (used for targeted re-downloads).
+	// When non-empty, Filters and Excludes are ignored.
+	exactPaths := make(map[string]struct{}, len(job.Paths))
+	for _, p := range job.Paths {
+		exactPaths[filepath.ToSlash(filepath.Clean(p))] = struct{}{}
+	}
+
 	err = walkTree(ctx, httpc, token, cfg.Endpoint, job, "", func(n hfNode) error {
 		if n.Type != "file" && n.Type != "blob" {
 			return nil
@@ -72,39 +80,48 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 		}
 		seen[rel] = struct{}{}
 
-		name := filepath.Base(rel)
-		nameLower := strings.ToLower(name)
-		relLower := strings.ToLower(rel)
 		isLFS := n.LFS != nil
 
-		// Check excludes first - if file matches any exclude pattern, skip it
-		// Credits: Exclude feature suggested by jeroenkroese (#41)
-		for _, ex := range job.Excludes {
-			exLower := strings.ToLower(ex)
-			if strings.Contains(nameLower, exLower) || strings.Contains(relLower, exLower) {
-				return nil // excluded
+		// When Paths are specified, only include files whose relative path is in the set.
+		// Filters/Excludes are not applied in this mode.
+		if len(exactPaths) > 0 {
+			if _, ok := exactPaths[filepath.ToSlash(filepath.Clean(rel))]; !ok {
+				return nil
 			}
-		}
+		} else {
+			name := filepath.Base(rel)
+			nameLower := strings.ToLower(name)
+			relLower := strings.ToLower(rel)
 
-		// Determine which filter (if any) matches this file name, prefer the longest match
-		// Filter matching is case-insensitive (e.g., q4_0 matches Q4_0)
-		matchedFilter := ""
-		if isLFS && len(job.Filters) > 0 {
-			for _, f := range job.Filters {
-				fLower := strings.ToLower(f)
-				// Match on filename (basename) OR full relative path (enables folder-level filtering)
-				if strings.Contains(nameLower, fLower) || strings.Contains(relLower, fLower) {
-					if len(f) > len(matchedFilter) {
-						matchedFilter = f
-					}
+			// Check excludes first - if file matches any exclude pattern, skip it
+			// Credits: Exclude feature suggested by jeroenkroese (#41)
+			for _, ex := range job.Excludes {
+				exLower := strings.ToLower(ex)
+				if strings.Contains(nameLower, exLower) || strings.Contains(relLower, exLower) {
+					return nil // excluded
 				}
 			}
-			// If filters provided and none matched, skip typical large LFS blobs
-			if matchedFilter == "" {
-				ln := strings.ToLower(name)
-				ext := strings.ToLower(filepath.Ext(name))
-				if ext == ".bin" || ext == ".act" || ext == ".safetensors" || ext == ".zip" || strings.HasSuffix(ln, ".gguf") || strings.HasSuffix(ln, ".ggml") {
-					return nil
+
+			// Determine which filter (if any) matches this file name, prefer the longest match
+			// Filter matching is case-insensitive (e.g., q4_0 matches Q4_0)
+			matchedFilter := ""
+			if isLFS && len(job.Filters) > 0 {
+				for _, f := range job.Filters {
+					fLower := strings.ToLower(f)
+					// Match on filename (basename) OR full relative path (enables folder-level filtering)
+					if strings.Contains(nameLower, fLower) || strings.Contains(relLower, fLower) {
+						if len(f) > len(matchedFilter) {
+							matchedFilter = f
+						}
+					}
+				}
+				// If filters provided and none matched, skip typical large LFS blobs
+				if matchedFilter == "" {
+					ln := strings.ToLower(name)
+					ext := strings.ToLower(filepath.Ext(name))
+					if ext == ".bin" || ext == ".act" || ext == ".safetensors" || ext == ".zip" || strings.HasSuffix(ln, ".gguf") || strings.HasSuffix(ln, ".ggml") {
+						return nil
+					}
 				}
 			}
 		}
@@ -144,7 +161,6 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 			SHA256:       sha,
 			Size:         size,
 			AcceptRanges: acceptRanges,
-			Subdir:       matchedFilter, // empty when no filter matched
 		})
 		return nil
 	})
@@ -152,6 +168,68 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 		return nil, err
 	}
 	return &Plan{Items: items, Commit: commitSHA}, nil
+}
+
+// RemoteFileInfo contains upstream metadata for a single file.
+type RemoteFileInfo struct {
+	Path   string // relative path within the repo
+	SHA256 string // upstream SHA-256 (blob hash)
+	Size   int64  // file size in bytes
+	IsLFS  bool   // true if stored in Git LFS
+}
+
+// FetchFileTree fetches the full upstream file list for a repo revision.
+// It returns a slice of RemoteFileInfo for every file found in the tree.
+// This is used by the update-check endpoint to compare remote SHAs against
+// locally cached blobs without triggering a full download.
+func FetchFileTree(ctx context.Context, job Job, cfg Settings) ([]RemoteFileInfo, string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if job.Revision == "" {
+		job.Revision = "main"
+	}
+	httpc := buildHTTPClientWithProxy(cfg.Proxy)
+
+	// Resolve the current upstream commit SHA.
+	repoInfo, err := fetchRepoInfo(ctx, httpc, cfg.Token, cfg.Endpoint, job)
+	if err != nil {
+		return nil, "", fmt.Errorf("fetch repo info: %w", err)
+	}
+	commitSHA := repoInfo.SHA
+	if commitSHA == "" {
+		commitSHA = job.Revision
+	}
+
+	var files []RemoteFileInfo
+	err = walkTree(ctx, httpc, cfg.Token, cfg.Endpoint, job, "", func(n hfNode) error {
+		if n.Type != "file" && n.Type != "blob" {
+			return nil
+		}
+		isLFS := n.LFS != nil
+		sha := n.Sha256
+		if sha == "" && n.LFS != nil {
+			sha = n.LFS.Sha256
+			if sha == "" {
+				sha = n.LFS.Oid
+			}
+		}
+		size := n.Size
+		if n.LFS != nil && n.LFS.Size > 0 {
+			size = n.LFS.Size
+		}
+		files = append(files, RemoteFileInfo{
+			Path:   n.Path,
+			SHA256: sha,
+			Size:   size,
+			IsLFS:  isLFS,
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, commitSHA, fmt.Errorf("walk tree: %w", err)
+	}
+	return files, commitSHA, nil
 }
 
 // destinationBase returns the base output directory for a job.
