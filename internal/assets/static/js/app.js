@@ -1261,11 +1261,6 @@
     `;
   }
 
-  window.showCacheDetails = async function(repo, type) {
-    try {
-      showModal('Repository Details', '<div class="loading-state"><div class="spinner"></div></div>');
-      const data = await api('GET', `/cache/${repo}`);
-
   // Renders the file list section inside the detail modal.
   // When updateCheck is provided, per-file update icons are shown.
   function renderModalFiles(data, updateCheck) {
