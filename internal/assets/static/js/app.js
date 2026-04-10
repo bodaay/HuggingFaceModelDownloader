@@ -3066,7 +3066,7 @@
     if (selectionRow) {
       const anyVisible = (deleteBtn && deleteBtn.style.display !== 'none') ||
                          (updateBtn && updateBtn.style.display !== 'none');
-      selectionRow.style.display = anyVisible ? '' : 'none';
+      selectionRow.style.display = anyVisible ? 'flex' : 'none';
     }
   };
 
