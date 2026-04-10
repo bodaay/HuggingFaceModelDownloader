@@ -983,6 +983,64 @@ func (s *Server) handleCacheRebuild(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// PruneResponse represents the result of a cache prune operation.
+type PruneResponse struct {
+	Success           bool     `json:"success"`
+	ReposScanned      int      `json:"reposScanned"`
+	IncompleteRemoved int      `json:"incompleteRemoved"`
+	TempRemoved       int      `json:"tempRemoved"`
+	OrphanedRemoved   int      `json:"orphanedRemoved"`
+	SpaceFreed        int64    `json:"spaceFreed"`
+	SpaceFreedHuman   string   `json:"spaceFreedHuman"`
+	Errors            []string `json:"errors,omitempty"`
+	Message           string   `json:"message"`
+}
+
+// handleCachePrune removes stale incomplete downloads, leftover tmp-* files,
+// and orphaned blobs from the cache.  It refuses to run while any download
+// jobs are active to prevent data corruption.
+func (s *Server) handleCachePrune(w http.ResponseWriter, r *http.Request) {
+	if s.jobs.HasActiveJobs() {
+		writeError(w, http.StatusConflict, "Downloads are active",
+			"Please wait for all downloads to finish or cancel them before pruning.")
+		return
+	}
+
+	cacheDir := s.config.CacheDir
+	if cacheDir == "" {
+		cacheDir = hfdownloader.DefaultCacheDir()
+	}
+
+	cache := hfdownloader.NewHFCache(cacheDir, hfdownloader.DefaultStaleTimeout)
+	result, err := cache.Prune()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Prune failed", err.Error())
+		return
+	}
+
+	resp := PruneResponse{
+		Success:           true,
+		ReposScanned:      result.ReposScanned,
+		IncompleteRemoved: result.IncompleteRemoved,
+		TempRemoved:       result.TempRemoved,
+		OrphanedRemoved:   result.OrphanedRemoved,
+		SpaceFreed:        result.SpaceFreed,
+		SpaceFreedHuman:   humanSizeBytes(result.SpaceFreed),
+	}
+	for _, e := range result.Errors {
+		resp.Errors = append(resp.Errors, e.Error())
+	}
+
+	total := result.IncompleteRemoved + result.TempRemoved + result.OrphanedRemoved
+	if total == 0 {
+		resp.Message = "Cache is already clean, nothing to prune"
+	} else {
+		resp.Message = fmt.Sprintf("Removed %d item(s), freed %s", total, resp.SpaceFreedHuman)
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // handleCacheDelete deletes a repository from the cache.
 // SECURITY: This endpoint requires extensive validation to prevent:
 // - Path traversal attacks (../, encoded variants)

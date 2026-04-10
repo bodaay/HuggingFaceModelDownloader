@@ -186,6 +186,20 @@ func (m *JobManager) ListJobs() []*Job {
 	return jobs
 }
 
+// HasActiveJobs returns true if any jobs are currently running, queued, or paused.
+func (m *JobManager) HasActiveJobs() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, job := range m.jobs {
+		switch job.Status {
+		case JobStatusRunning, JobStatusQueued, JobStatusPaused:
+			return true
+		}
+	}
+	return false
+}
+
 // CancelJob cancels a running or queued job.
 func (m *JobManager) CancelJob(id string) bool {
 	m.mu.Lock()

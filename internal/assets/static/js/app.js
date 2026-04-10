@@ -165,7 +165,9 @@
     const data = await res.json();
 
     if (!res.ok) {
-      throw new Error(data.error || 'API error');
+      const err = new Error(data.error || 'API error');
+      err.status = res.status;
+      throw err;
     }
     return data;
   }
@@ -989,7 +991,7 @@
   let cacheData = { repos: [], stats: {}, cacheDir: '' };
   let cacheFilter = 'all';
   let cacheSort = 'name';
-  let cacheView = 'grid';
+  let cacheView = 'list';
   let cacheSearch = '';
   // Update-check results keyed by "repo:type" (e.g. "TheBloke/Mistral:model")
   let cacheUpdateResults = {};
@@ -1439,44 +1441,49 @@
           </div>
 
           <div class="cache-detail-actions">
-            <button id="updateSelectedFilesBtn" class="btn btn-primary" style="display:none"
-              onclick="updateSelectedCacheFiles('${escapeHtml(data.repo)}', '${escapeHtml(data.type)}')">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                <polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/>
-                <polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
-              </svg>
-              <span class="btn-label">Update Selected</span>
-            </button>
-            <button id="deleteSelectedFilesBtn" class="btn btn-danger" style="display:none"
-              onclick="deleteSelectedCacheFiles('${escapeHtml(data.repo)}', '${escapeHtml(data.type)}')">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-              </svg>
-              Delete Selected
-            </button>
-            <button id="checkModalUpdatesBtn" class="btn btn-secondary"
-              onclick="checkModalUpdates()">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                <path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
-                <path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
-              </svg>
-              Check for Updates
-            </button>
-            <button class="btn btn-danger" onclick="confirmDeleteCache('${escapeHtml(data.repo)}', '${escapeHtml(data.type)}')">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                <line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
-              </svg>
-              Delete
-            </button>
-            <a href="https://huggingface.co/${data.type === 'dataset' ? 'datasets/' : ''}${data.repo}" target="_blank" class="btn btn-secondary">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-                <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
-              </svg>
-              View on HuggingFace
-            </a>
-            <button class="btn btn-ghost" onclick="hideModal()">Close</button>
+            <div class="cache-detail-actions-row cache-detail-actions-selection">
+              <button id="updateSelectedFilesBtn" class="btn btn-primary" style="display:none"
+                onclick="updateSelectedCacheFiles('${escapeHtml(data.repo)}', '${escapeHtml(data.type)}')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+                  <polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+                </svg>
+                <span class="btn-label">Update Selected</span>
+              </button>
+              <button id="deleteSelectedFilesBtn" class="btn btn-danger" style="display:none"
+                onclick="deleteSelectedCacheFiles('${escapeHtml(data.repo)}', '${escapeHtml(data.type)}')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                </svg>
+                Delete Selected
+              </button>
+            </div>
+            <div class="cache-detail-actions-row cache-detail-actions-primary">
+              <button id="checkModalUpdatesBtn" class="btn btn-secondary"
+                onclick="checkModalUpdates()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
+                  <path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
+                </svg>
+                Check for Updates
+              </button>
+              <a href="https://huggingface.co/${data.type === 'dataset' ? 'datasets/' : ''}${data.repo}" target="_blank" class="btn btn-secondary">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                  <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                </svg>
+                View on HuggingFace
+              </a>
+              <div class="cache-detail-actions-spacer"></div>
+              <button class="btn btn-danger" onclick="confirmDeleteCache('${escapeHtml(data.repo)}', '${escapeHtml(data.type)}')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                  <line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
+                </svg>
+                Delete Repo
+              </button>
+              <button class="btn btn-ghost" onclick="hideModal()">Close</button>
+            </div>
           </div>
         </div>
       `);
@@ -1685,6 +1692,84 @@
     }
   }
 
+  // Prune stale/orphaned files from the cache
+  async function pruneCache() {
+    const btn = $('#pruneCacheBtn');
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = `
+        <div class="spinner" style="width: 18px; height: 18px;"></div>
+        Pruning...
+      `;
+    }
+
+    try {
+      const result = await api('POST', '/cache/prune');
+
+      showModal('Prune Complete', `
+        <div class="rebuild-result">
+          <div class="rebuild-success">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="48" height="48">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+              <polyline points="22 4 12 14.01 9 11.01"/>
+            </svg>
+          </div>
+          <p class="rebuild-message">${escapeHtml(result.message)}</p>
+          <div class="rebuild-stats">
+            <div class="rebuild-stat">
+              <span class="rebuild-stat-value">${result.reposScanned}</span>
+              <span class="rebuild-stat-label">Repos Scanned</span>
+            </div>
+            <div class="rebuild-stat">
+              <span class="rebuild-stat-value">${result.incompleteRemoved}</span>
+              <span class="rebuild-stat-label">Incomplete</span>
+            </div>
+            <div class="rebuild-stat">
+              <span class="rebuild-stat-value">${result.tempRemoved}</span>
+              <span class="rebuild-stat-label">Temp Files</span>
+            </div>
+            <div class="rebuild-stat">
+              <span class="rebuild-stat-value">${result.orphanedRemoved}</span>
+              <span class="rebuild-stat-label">Orphaned Blobs</span>
+            </div>
+            <div class="rebuild-stat">
+              <span class="rebuild-stat-value">${escapeHtml(result.spaceFreedHuman)}</span>
+              <span class="rebuild-stat-label">Space Freed</span>
+            </div>
+          </div>
+          ${result.errors?.length > 0 ? `
+            <div class="rebuild-errors">
+              <h5>Errors:</h5>
+              <ul>${result.errors.map(e => `<li>${escapeHtml(e)}</li>`).join('')}</ul>
+            </div>
+          ` : ''}
+          <div class="form-actions" style="margin-top: 20px;">
+            <button class="btn btn-primary" onclick="hideModal()">Done</button>
+          </div>
+        </div>
+      `);
+
+      loadCache();
+    } catch (e) {
+      if (e.status === 409) {
+        showToast('Cannot prune while downloads are active. Please wait or cancel them first.', 'warning');
+      } else {
+        showToast(`Prune failed: ${e.message}`, 'error');
+      }
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+            <path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+            <line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
+          </svg>
+          Prune
+        `;
+      }
+    }
+  }
+
   // Delete a cached repo with confirmation
   window.confirmDeleteCache = function(repo, type) {
     showModal('Delete from Cache', `
@@ -1728,6 +1813,9 @@
 
     // Rebuild button
     $('#rebuildCacheBtn')?.addEventListener('click', rebuildCache);
+
+    // Prune button
+    $('#pruneCacheBtn')?.addEventListener('click', pruneCache);
 
     // Check all updates button
     $('#checkAllUpdatesBtn')?.addEventListener('click', checkAllUpdates);
@@ -2948,6 +3036,7 @@
     const deleteBtn = $('#deleteSelectedFilesBtn');
     const updateBtn = $('#updateSelectedFilesBtn');
     const selectAllCb = $('#cacheFileSelectAll');
+    const selectionRow = document.querySelector('.cache-detail-actions-selection');
 
     if (countEl) countEl.textContent = checked.length > 0 ? `${checked.length} selected` : '';
     if (deleteBtn) deleteBtn.style.display = checked.length > 0 ? '' : 'none';
@@ -2971,6 +3060,13 @@
       if (updatableCount > 0) {
         updateBtn.querySelector('svg').nextSibling.textContent = ` Update Selected (${updatableCount})`;
       }
+    }
+
+    // Show/hide the selection row based on whether any selection button is visible
+    if (selectionRow) {
+      const anyVisible = (deleteBtn && deleteBtn.style.display !== 'none') ||
+                         (updateBtn && updateBtn.style.display !== 'none');
+      selectionRow.style.display = anyVisible ? '' : 'none';
     }
   };
 

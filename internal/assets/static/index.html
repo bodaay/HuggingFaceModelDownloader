@@ -265,6 +265,13 @@
               </svg>
               Rebuild
             </button>
+            <button class="btn btn-outline" id="pruneCacheBtn" title="Remove unfinished downloads and orphaned blobs (requires no active downloads)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                <path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                <line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
+              </svg>
+              Prune
+            </button>
             <button class="btn btn-secondary" id="refreshCacheBtn">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
                 <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
@@ -360,13 +367,13 @@
             </select>
           </div>
           <div class="cache-view-toggle">
-            <button class="view-btn active" data-view="grid" title="Grid view">
+            <button class="view-btn" data-view="grid" title="Grid view">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
                 <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
                 <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
               </svg>
             </button>
-            <button class="view-btn" data-view="list" title="List view">
+            <button class="view-btn active" data-view="list" title="List view">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
                 <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/>
                 <line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/>
@@ -377,7 +384,7 @@
         </div>
 
         <!-- Repository List -->
-        <div id="cacheList" class="cache-list cache-grid-view">
+        <div id="cacheList" class="cache-list cache-list-view">
           <div class="loading-state">
             <div class="spinner"></div>
             <p>Loading cache...</p>

@@ -2028,11 +2028,26 @@ a {
 
 .cache-detail-actions {
   display: flex;
-  gap: 12px;
-  justify-content: flex-end;
+  flex-direction: column;
+  gap: 10px;
   padding-top: 20px;
   border-top: 1px solid var(--color-border);
   margin-top: 24px;
+}
+
+.cache-detail-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.cache-detail-actions-selection {
+  display: none;
+}
+
+.cache-detail-actions-spacer {
+  flex: 1;
 }
 
 /* ============================================
@@ -2260,7 +2275,7 @@ a {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   width: 100%;
-  max-width: 780px;
+  max-width: 860px;
   max-height: 80vh;
   display: flex;
   flex-direction: column;
