@@ -80,6 +80,12 @@ func NewHFCache(root string, staleTimeout time.Duration) *HFCache {
 	if staleTimeout == 0 {
 		staleTimeout = DefaultStaleTimeout
 	}
+	// Resolve symlinks in the cache root to avoid issues with file operations
+	// on symlinked directories (e.g., os.Rename failures). If resolution fails,
+	// we proceed with the original path.
+	if realRoot, err := filepath.EvalSymlinks(root); err == nil {
+		root = realRoot
+	}
 	return &HFCache{
 		Root:         root,
 		StaleTimeout: staleTimeout,

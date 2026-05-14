@@ -282,6 +282,25 @@ hfdownloader download TheBloke/Mistral-7B-Instruct-v0.2-GGUF \
 Both spellings are interchangeable; pick whichever reads better in your
 scripts. They are mutually exclusive on a single command line.
 
+### Web UI Storage Modes (serve)
+
+When using the Web UI, the default storage mode is controlled by `serve`
+flags and can be changed from Settings:
+
+```bash
+# Default: HuggingFace cache layout (hub/ + friendly view)
+hfdownloader serve
+
+# Flat: write files directly to cache root (no hub/, no symlinks)
+hfdownloader serve --flat
+
+# Flat-structured: write files to <cacheRoot>/<owner>/<repo>/
+hfdownloader serve --flat-structured
+```
+
+The Web UI Settings page stores both the cache directory and default storage
+mode, and Analyze/Download actions follow that mode.
+
 ### Manifest Tracking
 
 Every download creates `hfd.yaml` so you know exactly what you have:
@@ -332,7 +351,7 @@ Browse everything you've downloaded with stats, search, and filters:
 | **Jobs** | Real-time WebSocket progress, pause/resume/cancel, download history |
 | **Cache** | Browse downloaded repos, disk usage stats, search & filter |
 | **Mirror** | Configure targets, compare differences, push/pull sync |
-| **Settings** | Token, connections, proxy, verification mode |
+| **Settings** | Token, cache directory, default storage mode, connections, proxy, verification mode |
 
 ### Server Options
 

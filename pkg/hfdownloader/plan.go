@@ -155,7 +155,10 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 
 // destinationBase returns the base output directory for a job.
 func destinationBase(job Job, cfg Settings) string {
-	// Always OutputDir/<repo>; per-file filter subdirs are applied in Download().
+	// Legacy layout defaults to OutputDir/<repo>. Flat mode can opt out.
+	if cfg.NoRepoSubdir {
+		return cfg.OutputDir
+	}
 	return filepath.Join(cfg.OutputDir, job.Repo)
 }
 

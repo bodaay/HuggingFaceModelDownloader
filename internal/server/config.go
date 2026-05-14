@@ -18,6 +18,8 @@ import (
 // This matches the CLI config file format for consistency.
 type ConfigFile struct {
 	CacheDir           string       `json:"cache-dir,omitempty" yaml:"cache-dir,omitempty"`
+	PreviousCacheDirs  []string     `json:"previous-cache-dirs,omitempty" yaml:"previous-cache-dirs,omitempty"`
+	StorageMode        string       `json:"storage-mode,omitempty" yaml:"storage-mode,omitempty"`
 	Token              string       `json:"token,omitempty" yaml:"token,omitempty"`
 	Connections        int          `json:"connections,omitempty" yaml:"connections,omitempty"`
 	MaxActive          int          `json:"max-active,omitempty" yaml:"max-active,omitempty"`
@@ -149,6 +151,15 @@ func ApplyConfigToServer(serverCfg *Config) error {
 	// Only apply values that are not already set via CLI
 	if serverCfg.CacheDir == "" && fileCfg.CacheDir != "" {
 		serverCfg.CacheDir = fileCfg.CacheDir
+	}
+	if len(serverCfg.PreviousCacheDirs) == 0 && len(fileCfg.PreviousCacheDirs) > 0 {
+		serverCfg.PreviousCacheDirs = append([]string(nil), fileCfg.PreviousCacheDirs...)
+	}
+	if serverCfg.StorageMode == "" && fileCfg.StorageMode != "" {
+		switch fileCfg.StorageMode {
+		case string(StorageModeCache), string(StorageModeFlat), string(StorageModeFlatStructured):
+			serverCfg.StorageMode = StorageMode(fileCfg.StorageMode)
+		}
 	}
 	if serverCfg.Token == "" && fileCfg.Token != "" {
 		serverCfg.Token = fileCfg.Token

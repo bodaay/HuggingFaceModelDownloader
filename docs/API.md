@@ -119,6 +119,7 @@ Start a new download job.
 | `excludes` | string[] | No | `[]` | Exclude patterns |
 | `appendFilterSubdir` | boolean | No | `false` | Create filter subdirs |
 | `dryRun` | boolean | No | `false` | Plan only |
+| `storageMode` | string | No | `cache` | Storage mode: `cache`, `flat`, `flat-structured` |
 
 **Filter Syntax**
 
@@ -147,7 +148,7 @@ Or as separate field:
   "isDataset": false,
   "filters": ["q4_k_m"],
   "excludes": [],
-  "outputDir": "/home/user/.cache/huggingface/hub",
+  "outputDir": "/home/user/.cache/huggingface",
   "status": "queued",
   "progress": {
     "totalFiles": 0,
@@ -208,7 +209,7 @@ Get download plan without starting download.
 
 **Request Body**
 
-Same as `/api/download`.
+Same as `/api/download`, including optional `storageMode`.
 
 **Response** `200 OK`
 
@@ -261,7 +262,7 @@ List all download jobs.
       "isDataset": false,
       "filters": ["q4_k_m"],
       "excludes": [],
-      "outputDir": "/home/user/.cache/huggingface/hub",
+      "outputDir": "/home/user/.cache/huggingface",
       "status": "running",
       "progress": {
         "totalFiles": 3,
@@ -462,7 +463,8 @@ Get current server settings.
 ```json
 {
   "token": "********mnop",
-  "cacheDir": "/home/user/.cache/huggingface/hub",
+  "cacheDir": "/home/user/.cache/huggingface",
+  "storageMode": "cache",
   "connections": 8,
   "maxActive": 3,
   "multipartThreshold": "32MiB",
@@ -491,6 +493,8 @@ Update server settings.
 | Field | Type | Description |
 |-------|------|-------------|
 | `token` | string | HuggingFace token |
+| `cacheDir` | string | Cache root directory used by server |
+| `storageMode` | string | Default mode: `cache`, `flat`, `flat-structured` |
 | `connections` | integer | Connections per file |
 | `maxActive` | integer | Max concurrent downloads |
 | `multipartThreshold` | string | Min size for multipart |
@@ -498,7 +502,6 @@ Update server settings.
 | `retries` | integer | Retry attempts |
 
 **Security Restrictions**
-- `cacheDir` cannot be changed via API
 - `modelsDir` cannot be changed via API
 - `datasetsDir` cannot be changed via API
 
@@ -518,6 +521,8 @@ curl -X POST http://localhost:8080/api/settings \
   -H "Content-Type: application/json" \
   -d '{
     "token": "hf_xxxxx",
+    "cacheDir": "/home/user/ai_models",
+    "storageMode": "flat-structured",
     "connections": 16,
     "maxActive": 8
   }'
@@ -644,6 +649,12 @@ curl "http://localhost:8080/api/analyze/owner/repo?revision=v1.0"
 
 List cached repositories.
 
+This endpoint scans all supported storage layouts:
+
+- HuggingFace cache layout (`hub/models--*`, `hub/datasets--*`)
+- Flat-structured layout (`<cacheRoot>/<owner>/<repo>/`)
+- Flat-mode indexed downloads (`<cacheRoot>/.hfd-flat-index/*.yaml`)
+
 **Query Parameters**
 
 | Parameter | Type | Description |
@@ -666,8 +677,17 @@ List cached repositories.
       "path": "/home/user/.cache/huggingface/hub/datasets--facebook--flores"
     }
   ],
-  "count": 2,
-  "cacheDir": "/home/user/.cache/huggingface/hub"
+  "stats": {
+    "totalModels": 1,
+    "totalDatasets": 1,
+    "totalSize": 123456789,
+    "totalSizeHuman": "117.7 MiB",
+    "totalFiles": 42
+  },
+  "cacheDir": "/home/user/.cache/huggingface",
+  "scannedCacheDirs": [
+    "/home/user/.cache/huggingface"
+  ]
 }
 ```
 

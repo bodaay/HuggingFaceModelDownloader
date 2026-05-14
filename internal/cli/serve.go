@@ -31,6 +31,8 @@ func newServeCmd(ro *RootOpts) *cobra.Command {
 		endpoint           string
 		authUser           string
 		authPass           string
+		flat               bool
+		flatStructured     bool
 	)
 
 	cmd := &cobra.Command{
@@ -51,6 +53,10 @@ Examples:
   hfdownloader serve --auth-user admin --auth-pass secret  # With authentication
   hfdownloader serve --endpoint https://hf-mirror.com      # Use mirror`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if flat && flatStructured {
+				return fmt.Errorf("--flat and --flat-structured cannot be used together")
+			}
+
 			// Build server config from CLI flags
 			cfg := server.Config{
 				Addr:        addr,
@@ -65,6 +71,15 @@ Examples:
 			// Apply config file settings first (for values not set by CLI)
 			if err := server.ApplyConfigToServer(&cfg); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: could not load config file: %v\n", err)
+			}
+
+			// Determine storage mode. CLI flags override config file.
+			if flatStructured {
+				cfg.StorageMode = server.StorageModeFlatStructured
+			} else if flat {
+				cfg.StorageMode = server.StorageModeFlat
+			} else if cfg.StorageMode == "" {
+				cfg.StorageMode = server.StorageModeCache
 			}
 
 			// Then override with CLI flags if explicitly set
@@ -135,6 +150,10 @@ Examples:
 	cmd.Flags().StringVar(&verify, "verify", "size", "Verification mode: none|size|sha256")
 	cmd.Flags().IntVar(&retries, "retries", 4, "Max retry attempts per HTTP request")
 	cmd.Flags().StringVar(&endpoint, "endpoint", "", "Custom HuggingFace endpoint URL (e.g., https://hf-mirror.com)")
+
+	// Storage modes
+	cmd.Flags().BoolVar(&flat, "flat", false, "Download files directly to output directory (flat file mode)")
+	cmd.Flags().BoolVar(&flatStructured, "flat-structured", false, "Download files in owner/model directory structure (flat mode)")
 
 	// Authentication
 	cmd.Flags().StringVar(&authUser, "auth-user", "", "Username for basic auth (enables auth when set)")

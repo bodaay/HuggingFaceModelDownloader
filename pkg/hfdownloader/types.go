@@ -122,6 +122,11 @@ type Settings struct {
 	// Will be removed in a future version.
 	OutputDir string
 
+	// NoRepoSubdir controls legacy OutputDir layout.
+	// When false (default), files are written under OutputDir/<owner>/<repo>/.
+	// When true, files are written directly under OutputDir/.
+	NoRepoSubdir bool
+
 	// Concurrency is the number of parallel HTTP connections per file
 	// when using multipart downloads. Higher values can improve speed
 	// on fast networks but increase memory usage.

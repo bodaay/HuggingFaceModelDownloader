@@ -246,6 +246,8 @@ hfdownloader serve [flags]
 | `--verify` | | string | `size` | Verification mode |
 | `--retries` | | int | `4` | Retry attempts |
 | `--endpoint` | | string | | Custom HF endpoint |
+| `--flat` | | bool | `false` | Default Web UI storage mode: flat files at cache root |
+| `--flat-structured` | | bool | `false` | Default Web UI storage mode: files under `<cacheRoot>/<owner>/<repo>/` |
 | `--auth-user` | | string | | Basic auth username |
 | `--auth-pass` | | string | | Basic auth password |
 | `--models-dir` | | string | `./Models` | Legacy models directory |
@@ -271,7 +273,23 @@ hfdownloader serve --endpoint https://hf-mirror.com
 
 # High-performance settings
 hfdownloader serve -c 16 --max-active 8
+
+# Default Web UI downloads to flat files at cache root
+hfdownloader serve --flat
+
+# Default Web UI downloads to owner/repo directories
+hfdownloader serve --flat-structured
 ```
+
+#### Storage Mode Defaults
+
+`serve` controls the default storage mode used by the Web UI:
+
+- Cache mode (default): HF-compatible `hub/` layout plus friendly symlinks
+- Flat mode (`--flat`): plain files directly under cache root
+- Flat-structured mode (`--flat-structured`): plain files under `<cacheRoot>/<owner>/<repo>/`
+
+Users can change this default later in the Web UI Settings page.
 
 #### Server Features
 

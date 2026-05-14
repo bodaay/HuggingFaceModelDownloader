@@ -16,6 +16,18 @@ import (
 	"github.com/bodaay/HuggingFaceModelDownloader/pkg/hfdownloader"
 )
 
+// StorageMode defines how files are stored during downloads.
+type StorageMode string
+
+const (
+	// StorageModeCache stores files in HuggingFace cache structure (default)
+	StorageModeCache StorageMode = "cache"
+	// StorageModeFlat stores files directly in output directory
+	StorageModeFlat StorageMode = "flat"
+	// StorageModeFlatStructured stores files in owner/model structure
+	StorageModeFlatStructured StorageMode = "flat-structured"
+)
+
 // Config holds server configuration.
 type Config struct {
 	Addr               string
@@ -24,6 +36,8 @@ type Config struct {
 	ModelsDir          string // Output directory for models (not configurable via API)
 	DatasetsDir        string // Output directory for datasets (not configurable via API)
 	CacheDir           string // HuggingFace cache directory for v3 mode
+	PreviousCacheDirs  []string // Recently used cache directories (for cache operations fallback)
+	StorageMode        StorageMode // Default storage mode for downloads
 	Concurrency        int
 	MaxActive          int
 	MultipartThreshold string // Minimum size for multipart download

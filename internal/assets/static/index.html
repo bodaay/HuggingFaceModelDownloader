@@ -177,6 +177,14 @@
                 <label for="modelExclude">Exclude</label>
                 <input type="text" id="modelExclude" placeholder=".md, fp16">
               </div>
+              <div class="form-group">
+                <label for="modelStorageMode">Storage Mode</label>
+                <select id="modelStorageMode">
+                  <option value="cache">HF Cache (Default)</option>
+                  <option value="flat">Flat Files</option>
+                  <option value="flat-structured">Flat with Structure (owner/model)</option>
+                </select>
+              </div>
               <div class="form-actions">
                 <button type="button" class="btn btn-secondary" id="previewModelBtn">Preview</button>
                 <button type="submit" class="btn btn-primary">Download</button>
@@ -211,6 +219,14 @@
               <div class="form-group">
                 <label for="datasetExclude">Exclude</label>
                 <input type="text" id="datasetExclude" placeholder=".md, raw">
+              </div>
+              <div class="form-group">
+                <label for="datasetStorageMode">Storage Mode</label>
+                <select id="datasetStorageMode">
+                  <option value="cache">HF Cache (Default)</option>
+                  <option value="flat">Flat Files</option>
+                  <option value="flat-structured">Flat with Structure (owner/model)</option>
+                </select>
               </div>
               <div class="form-actions">
                 <button type="button" class="btn btn-secondary" id="previewDatasetBtn">Preview</button>
@@ -597,16 +613,27 @@
             <div class="card-header">
               <h3>Storage</h3>
             </div>
-            <div class="card-body">
+            <div class="card-body scrollable">
               <div class="form-group">
-                <label>HuggingFace Cache Directory</label>
-                <div id="cacheDir" class="cache-dir-display"></div>
+                <label for="cacheDir">HuggingFace Cache Directory (HF_HOME)</label>
+                <input type="text" id="cacheDir" placeholder="~/.cache/huggingface">
                 <p class="form-hint">
-                  Downloads use the standard HuggingFace cache structure for Python compatibility.
+                  Directory where HuggingFace cache structure will be created (equivalent to HF_HOME environment variable).
+                  Changes are saved to config file.
                 </p>
-                <p class="form-hint" style="margin-top: 8px;">
-                  <strong>To change:</strong> Set the <code>HF_HOME</code> environment variable before starting the server,
-                  or use <code>--cache-dir</code> when launching <code>hfdownloader serve</code>.
+              </div>
+              <div class="form-group" style="margin-top: 16px;">
+              <label for="storageMode">Default Storage Mode</label>
+              <select id="storageMode">
+                <option value="cache">HF Cache (Default)</option>
+                <option value="flat">Flat Files</option>
+                <option value="flat-structured">Flat with Structure (owner/model)</option>
+              </select>
+                <p class="form-hint">
+                  Default: <strong>HF Cache</strong> (HuggingFace cache structure)<br>
+                  <strong>Flat:</strong> Files saved directly to output directory<br>
+                  <strong>Flat Structured:</strong> Files in owner/model subdirectories<br>
+                <em>Server CLI flags <code>--flat</code> or <code>--flat-structured</code> override this setting while the server is running.</em>
                 </p>
               </div>
             </div>
@@ -691,7 +718,7 @@
             <div class="card-header">
               <h3>Proxy Settings</h3>
             </div>
-            <div class="card-body">
+            <div class="card-body scrollable">
               <div class="form-group">
                 <label for="proxyUrl">Proxy URL</label>
                 <input type="text" id="proxyUrl" placeholder="http://proxy:8080 or socks5://proxy:1080">

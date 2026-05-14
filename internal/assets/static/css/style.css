@@ -376,6 +376,21 @@ a {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.card:has(.card-body.scrollable) {
+  overflow: visible;
+}
+
+.card {
+  background: var(--gradient-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .card-header {
@@ -384,6 +399,7 @@ a {
   gap: 12px;
   padding: 20px 24px;
   border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
 }
 
 .card-header h2, .card-header h3 {
@@ -399,6 +415,39 @@ a {
 
 .card-body {
   padding: 24px;
+  flex: 1;
+}
+
+.card-body.scrollable {
+  max-height: 500px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  flex: 1;
+  min-height: 0;
+}
+
+.card-body.scrollable::-webkit-scrollbar {
+  width: 8px;
+}
+
+.card-body.scrollable::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+}
+
+.card-body.scrollable::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+.card-body.scrollable::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* Firefox scrollbar */
+.card-body.scrollable {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) rgba(255, 255, 255, 0.05);
 }
 
 /* ============================================

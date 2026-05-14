@@ -21,13 +21,14 @@ import (
 // Note: Output path is NOT configurable via API for security reasons.
 // The server uses its configured OutputDir (Models/ for models, Datasets/ for datasets).
 type DownloadRequest struct {
-	Repo               string   `json:"repo"`
-	Revision           string   `json:"revision,omitempty"`
-	Dataset            bool     `json:"dataset,omitempty"`
+	Repo               string `json:"repo"`
+	Revision           string `json:"revision,omitempty"`
+	Dataset            bool   `json:"dataset,omitempty"`
 	Filters            []string `json:"filters,omitempty"`
 	Excludes           []string `json:"excludes,omitempty"`
-	AppendFilterSubdir bool     `json:"appendFilterSubdir,omitempty"`
-	DryRun             bool     `json:"dryRun,omitempty"`
+	AppendFilterSubdir bool   `json:"appendFilterSubdir,omitempty"`
+	DryRun             bool   `json:"dryRun,omitempty"`
+	StorageMode        string `json:"storageMode,omitempty"` // "cache" (default), "flat", or "flat-structured"
 }
 
 // PlanResponse is the response for a dry-run/plan request.
@@ -50,6 +51,7 @@ type PlanFile struct {
 type SettingsResponse struct {
 	Token              string `json:"token,omitempty"`
 	CacheDir           string `json:"cacheDir"`
+	StorageMode        string `json:"storageMode"`
 	Concurrency        int    `json:"connections"`
 	MaxActive          int    `json:"maxActive"`
 	MultipartThreshold string `json:"multipartThreshold"`
@@ -202,16 +204,48 @@ func (s *Server) handlePlanInternal(w http.ResponseWriter, req DownloadRequest) 
 		AppendFilterSubdir: req.AppendFilterSubdir,
 	}
 
-	// Use server-configured output directory (not from request for security)
-	outputDir := s.config.ModelsDir
-	if req.Dataset {
-		outputDir = s.config.DatasetsDir
+	// Determine output directory based on storage mode
+	storageMode := req.StorageMode
+	if storageMode == "" {
+		storageMode = string(s.config.StorageMode)
+	}
+	if storageMode == "" {
+		storageMode = string(StorageModeCache)
+	}
+
+	// Get base cache directory
+	baseDir := s.config.CacheDir
+	if baseDir == "" {
+		baseDir = hfdownloader.DefaultCacheDir()
+	}
+
+	var outputDir string
+	switch storageMode {
+	case string(StorageModeFlat):
+		// Flat file mode: files go directly to base directory
+		outputDir = baseDir
+	case string(StorageModeFlatStructured):
+		// Flat structured mode: base path is baseDir; downloader appends owner/model once
+		outputDir = baseDir
+	default:
+		// Cache mode (default): use the cache directory itself (hfdownloader will create hub/models--)
+		outputDir = baseDir
 	}
 
 	settings := hfdownloader.Settings{
-		OutputDir: outputDir,
-		Token:     s.config.Token,
-		Endpoint:  s.config.Endpoint,
+		Token:    s.config.Token,
+		Endpoint: s.config.Endpoint,
+	}
+
+	// Set output based on storage mode
+	if storageMode == string(StorageModeFlat) || storageMode == string(StorageModeFlatStructured) {
+		// Flat modes: use OutputDir directly, no HF cache structure
+		settings.OutputDir = outputDir
+		settings.CacheDir = ""
+		settings.NoRepoSubdir = storageMode == string(StorageModeFlat)
+	} else {
+		// Cache mode: use CacheDir (HuggingFace cache structure)
+		settings.CacheDir = outputDir
 	}
 
 	// Collect plan items
@@ -369,9 +403,15 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		cacheDir = hfdownloader.DefaultCacheDir()
 	}
 
+	storageMode := string(s.config.StorageMode)
+	if storageMode == "" {
+		storageMode = string(StorageModeCache)
+	}
+
 	resp := SettingsResponse{
 		Token:              tokenStatus,
 		CacheDir:           cacheDir,
+		StorageMode:        storageMode,
 		Concurrency:        s.config.Concurrency,
 		MaxActive:          s.config.MaxActive,
 		MultipartThreshold: s.config.MultipartThreshold,
@@ -401,6 +441,8 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Token              *string `json:"token,omitempty"`
+		CacheDir           *string `json:"cacheDir,omitempty"`
+		StorageMode        *string `json:"storageMode,omitempty"`
 		Concurrency        *int    `json:"connections,omitempty"`
 		MaxActive          *int    `json:"maxActive,omitempty"`
 		MultipartThreshold *string `json:"multipartThreshold,omitempty"`
@@ -427,6 +469,23 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	// Update config (only safe fields)
 	if req.Token != nil {
 		s.config.Token = *req.Token
+	}
+	if req.CacheDir != nil && *req.CacheDir != "" {
+		newCacheDir := strings.TrimSpace(*req.CacheDir)
+		if newCacheDir != "" && newCacheDir != s.config.CacheDir {
+			oldCacheDir := s.config.CacheDir
+			if oldCacheDir == "" {
+				oldCacheDir = hfdownloader.DefaultCacheDir()
+			}
+			s.config.PreviousCacheDirs = addRecentPath(s.config.PreviousCacheDirs, oldCacheDir, 5)
+			s.config.CacheDir = newCacheDir
+		}
+	}
+	if req.StorageMode != nil {
+		switch *req.StorageMode {
+		case string(StorageModeCache), string(StorageModeFlat), string(StorageModeFlatStructured):
+			s.config.StorageMode = StorageMode(*req.StorageMode)
+		}
 	}
 	if req.Concurrency != nil && *req.Concurrency > 0 {
 		s.config.Concurrency = *req.Concurrency
@@ -481,6 +540,9 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	// Persist settings to config file
 	fileCfg := &ConfigFile{
+		CacheDir:           s.config.CacheDir,
+		PreviousCacheDirs:  append([]string(nil), s.config.PreviousCacheDirs...),
+		StorageMode:        string(s.config.StorageMode),
 		Token:              s.config.Token,
 		Connections:        s.config.Concurrency,
 		MaxActive:          s.config.MaxActive,
@@ -633,88 +695,93 @@ type CacheStats struct {
 
 // handleCacheList lists all cached repositories with rich metadata.
 func (s *Server) handleCacheList(w http.ResponseWriter, r *http.Request) {
-	cacheDir := s.config.CacheDir
-	if cacheDir == "" {
-		cacheDir = hfdownloader.DefaultCacheDir()
+	cacheRoots := cacheScanRoots(s.config)
+	if len(cacheRoots) == 0 {
+		cacheRoots = []string{hfdownloader.DefaultCacheDir()}
 	}
 
 	// Get query params
 	repoType := r.URL.Query().Get("type") // "model" or "dataset"
 	search := strings.ToLower(r.URL.Query().Get("search"))
 
-	cache := hfdownloader.NewHFCache(cacheDir, 0)
-	repoDirs, err := cache.ListRepos()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to list cache", err.Error())
-		return
-	}
-
 	var repos []CachedRepoInfo
 	var stats CacheStats
+	seen := map[string]struct{}{}
 
-	for _, rd := range repoDirs {
-		rdType := string(rd.Type())
-		repoID := rd.RepoID()
-
-		// Filter by type if specified
-		if repoType != "" {
-			if repoType == "dataset" && rdType != "dataset" {
-				continue
-			}
-			if repoType == "model" && rdType != "model" {
-				continue
-			}
+	for _, root := range cacheRoots {
+		cache := hfdownloader.NewHFCache(root, 0)
+		repoDirs, err := cache.ListRepos()
+		if err != nil {
+			repoDirs = nil
 		}
 
-		// Filter by search term
-		if search != "" && !strings.Contains(strings.ToLower(repoID), search) {
+		for _, rd := range repoDirs {
+		rdType := string(rd.Type())
+		repoID := rd.RepoID()
+		key := rdType + "|" + repoID
+		if _, ok := seen[key]; ok {
 			continue
 		}
 
-		// Get size by walking blobs directory
-		blobsDir := rd.BlobsDir()
-		var totalSize int64
-		var fileCount int
-		filepath.Walk(blobsDir, func(path string, info os.FileInfo, err error) error {
-			if err == nil && !info.IsDir() && !strings.HasSuffix(path, ".incomplete") && !strings.HasSuffix(path, ".meta") {
-				totalSize += info.Size()
-				fileCount++
+			// Filter by type if specified
+			if repoType != "" {
+				if repoType == "dataset" && rdType != "dataset" {
+					continue
+				}
+				if repoType == "model" && rdType != "model" {
+					continue
+				}
 			}
-			return nil
-		})
 
-		// Update stats
-		if rdType == "model" {
-			stats.TotalModels++
-		} else {
-			stats.TotalDatasets++
-		}
-		stats.TotalSize += totalSize
-		stats.TotalFiles += fileCount
-
-		// Try to read commit from refs/main
-		branch := "main"
-		commit, _ := rd.ReadRef("main")
-		if commit == "" {
-			// Try other common refs
-			commit, _ = rd.ReadRef("master")
-			if commit != "" {
-				branch = "master"
+			// Filter by search term
+			if search != "" && !strings.Contains(strings.ToLower(repoID), search) {
+				continue
 			}
-		}
 
-		// Get modification time from blobs dir
-		var downloaded string
-		if info, err := os.Stat(blobsDir); err == nil {
-			downloaded = info.ModTime().Format("2006-01-02")
-		}
+			// Get size by walking blobs directory
+			blobsDir := rd.BlobsDir()
+			var totalSize int64
+			var fileCount int
+			filepath.Walk(blobsDir, func(path string, info os.FileInfo, err error) error {
+				if err == nil && !info.IsDir() && !strings.HasSuffix(path, ".incomplete") && !strings.HasSuffix(path, ".meta") {
+					totalSize += info.Size()
+					fileCount++
+				}
+				return nil
+			})
 
-		// Try to read manifest from friendly path
-		var manifest *ManifestInfo
-		var downloadStatus string
-		friendlyPath := rd.FriendlyPath()
-		manifestPath := filepath.Join(friendlyPath, hfdownloader.ManifestFilename)
-		if m, err := hfdownloader.ReadManifest(manifestPath); err == nil {
+			// Update stats
+			if rdType == "model" {
+				stats.TotalModels++
+			} else {
+				stats.TotalDatasets++
+			}
+			stats.TotalSize += totalSize
+			stats.TotalFiles += fileCount
+
+			// Try to read commit from refs/main
+			branch := "main"
+			commit, _ := rd.ReadRef("main")
+			if commit == "" {
+				// Try other common refs
+				commit, _ = rd.ReadRef("master")
+				if commit != "" {
+					branch = "master"
+				}
+			}
+
+			// Get modification time from blobs dir
+			var downloaded string
+			if info, err := os.Stat(blobsDir); err == nil {
+				downloaded = info.ModTime().Format("2006-01-02")
+			}
+
+			// Try to read manifest from friendly path
+			var manifest *ManifestInfo
+			var downloadStatus string
+			friendlyPath := rd.FriendlyPath()
+			manifestPath := filepath.Join(friendlyPath, hfdownloader.ManifestFilename)
+			if m, err := hfdownloader.ReadManifest(manifestPath); err == nil {
 			// Parse command for filter flags
 			isFiltered, filters := parseCommandFilters(m.Command)
 
@@ -743,42 +810,61 @@ func (s *Server) handleCacheList(w http.ResponseWriter, r *http.Request) {
 			} else {
 				downloadStatus = "complete"
 			}
-		} else {
-			// No manifest - either downloaded by Python or external tool
-			downloadStatus = "unknown"
+			} else {
+				// No manifest - either downloaded by Python or external tool
+				downloadStatus = "unknown"
+			}
+
+			// Shorten commit hash
+			shortCommit := commit
+			if len(shortCommit) > 7 {
+				shortCommit = shortCommit[:7]
+			}
+
+			repo := CachedRepoInfo{
+				Repo:           repoID,
+				Owner:          rd.Owner(),
+				Name:           rd.Name(),
+				Type:           rdType,
+				Path:           rd.Path(),
+				FriendlyPath:   friendlyPath,
+				Size:           totalSize,
+				SizeHuman:      humanSizeBytes(totalSize),
+				FileCount:      fileCount,
+				Branch:         branch,
+				Commit:         shortCommit,
+				Downloaded:     downloaded,
+				DownloadStatus: downloadStatus,
+				Manifest:       manifest,
+			}
+			repos = append(repos, repo)
+			seen[key] = struct{}{}
 		}
 
-		// Shorten commit hash
-		shortCommit := commit
-		if len(shortCommit) > 7 {
-			shortCommit = shortCommit[:7]
-		}
+		// Also scan flat-structured repositories stored at <root>/<owner>/<repo>
+		flatRepos, flatStats := scanFlatStructuredRepos(root, repoType, search, seen)
+		repos = append(repos, flatRepos...)
+		stats.TotalModels += flatStats.TotalModels
+		stats.TotalDatasets += flatStats.TotalDatasets
+		stats.TotalSize += flatStats.TotalSize
+		stats.TotalFiles += flatStats.TotalFiles
 
-		repo := CachedRepoInfo{
-			Repo:           repoID,
-			Owner:          rd.Owner(),
-			Name:           rd.Name(),
-			Type:           rdType,
-			Path:           rd.Path(),
-			FriendlyPath:   friendlyPath,
-			Size:           totalSize,
-			SizeHuman:      humanSizeBytes(totalSize),
-			FileCount:      fileCount,
-			Branch:         branch,
-			Commit:         shortCommit,
-			Downloaded:     downloaded,
-			DownloadStatus: downloadStatus,
-			Manifest:       manifest,
-		}
-		repos = append(repos, repo)
+		// Also scan flat-mode index manifests at <root>/.hfd-flat-index/*.yaml
+		flatIndexedRepos, flatIndexedStats := scanFlatIndexedRepos(root, repoType, search, seen)
+		repos = append(repos, flatIndexedRepos...)
+		stats.TotalModels += flatIndexedStats.TotalModels
+		stats.TotalDatasets += flatIndexedStats.TotalDatasets
+		stats.TotalSize += flatIndexedStats.TotalSize
+		stats.TotalFiles += flatIndexedStats.TotalFiles
 	}
 
 	stats.TotalSizeHuman = humanSizeBytes(stats.TotalSize)
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"repos":    repos,
-		"stats":    stats,
-		"cacheDir": cacheDir,
+		"repos":            repos,
+		"stats":            stats,
+		"cacheDir":         cacheRoots[0],
+		"scannedCacheDirs": cacheRoots,
 	})
 }
 
@@ -790,28 +876,71 @@ func (s *Server) handleCacheInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cacheDir := s.config.CacheDir
-	if cacheDir == "" {
-		cacheDir = hfdownloader.DefaultCacheDir()
+	cacheRoots := cacheScanRoots(s.config)
+	if len(cacheRoots) == 0 {
+		cacheRoots = []string{hfdownloader.DefaultCacheDir()}
 	}
 
-	cache := hfdownloader.NewHFCache(cacheDir, 0)
+	var repoDir *hfdownloader.RepoDir
+	found := false
 
-	// Try as model first
-	repoDir, err := cache.Repo(repo, hfdownloader.RepoTypeModel)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "Invalid repository format", err.Error())
-		return
-	}
+	for _, root := range cacheRoots {
+		cache := hfdownloader.NewHFCache(root, 0)
 
-	// Check if the path exists
-	if _, err := os.Stat(repoDir.Path()); os.IsNotExist(err) {
-		// Try as dataset
-		repoDir, _ = cache.Repo(repo, hfdownloader.RepoTypeDataset)
-		if _, err := os.Stat(repoDir.Path()); os.IsNotExist(err) {
-			writeError(w, http.StatusNotFound, "Repository not found in cache", "")
+		// Try as model first
+		candidate, err := cache.Repo(repo, hfdownloader.RepoTypeModel)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "Invalid repository format", err.Error())
 			return
 		}
+		if _, err := os.Stat(candidate.Path()); err == nil {
+			repoDir = candidate
+			found = true
+			break
+		}
+
+		// Try as dataset
+		candidate, _ = cache.Repo(repo, hfdownloader.RepoTypeDataset)
+		if _, err := os.Stat(candidate.Path()); err == nil {
+			repoDir = candidate
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		for _, root := range cacheRoots {
+			flatPath, ok := findFlatStructuredRepoPath(root, repo)
+			if !ok {
+				continue
+			}
+
+			flatInfo, err := buildFlatRepoInfo(flatPath, repo, true)
+			if err != nil {
+				continue
+			}
+
+			writeJSON(w, http.StatusOK, flatInfo)
+			return
+		}
+
+		for _, root := range cacheRoots {
+			indexPath, ok := findFlatIndexManifestPath(root, repo)
+			if !ok {
+				continue
+			}
+
+			flatInfo, err := buildFlatIndexedRepoInfo(root, indexPath, true)
+			if err != nil {
+				continue
+			}
+
+			writeJSON(w, http.StatusOK, flatInfo)
+			return
+		}
+
+		writeError(w, http.StatusNotFound, "Repository not found in cache", "")
+		return
 	}
 
 	// Get snapshots
@@ -1036,11 +1165,17 @@ func (s *Server) handleCacheDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Determine type from query param
+	// Determine preferred type from query param, but try both types for robustness.
 	repoTypeStr := r.URL.Query().Get("type")
-	repoType := hfdownloader.RepoTypeModel
+	preferredType := hfdownloader.RepoTypeModel
 	if repoTypeStr == "dataset" {
-		repoType = hfdownloader.RepoTypeDataset
+		preferredType = hfdownloader.RepoTypeDataset
+	}
+	repoTypes := []hfdownloader.RepoType{preferredType}
+	if preferredType == hfdownloader.RepoTypeModel {
+		repoTypes = append(repoTypes, hfdownloader.RepoTypeDataset)
+	} else {
+		repoTypes = append(repoTypes, hfdownloader.RepoTypeModel)
 	}
 
 	cacheDir := s.config.CacheDir
@@ -1048,96 +1183,155 @@ func (s *Server) handleCacheDelete(w http.ResponseWriter, r *http.Request) {
 		cacheDir = hfdownloader.DefaultCacheDir()
 	}
 
-	cache := hfdownloader.NewHFCache(cacheDir, hfdownloader.DefaultStaleTimeout)
+	cacheDirs := cacheDeleteCandidates(cacheDir, s.config.PreviousCacheDirs)
+	deletedFrom := ""
+	deleted := false
 
-	// Find the repo directory
-	repoDir, err := cache.Repo(repo, repoType)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "Invalid repository ID", err.Error())
-		return
+	for _, candidateCacheDir := range cacheDirs {
+		cache := hfdownloader.NewHFCache(candidateCacheDir, hfdownloader.DefaultStaleTimeout)
+
+		for _, repoType := range repoTypes {
+			// Find the repo directory
+			repoDir, err := cache.Repo(repo, repoType)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "Invalid repository ID", err.Error())
+				return
+			}
+
+			hubPath := repoDir.Path()
+			friendlyPath := repoDir.FriendlyPath()
+
+			// Security Layer 5: Resolve absolute paths
+			absCacheDir, err := filepath.Abs(candidateCacheDir)
+			if err != nil {
+				continue
+			}
+			absCacheDirWithSep := absCacheDir + string(filepath.Separator)
+
+			absHubPath, err := filepath.Abs(hubPath)
+			if err != nil {
+				continue
+			}
+
+			// Security Layer 6: Check if path exists and is not a symlink (TOCTOU mitigation)
+			hubInfo, err := os.Lstat(absHubPath)
+			if os.IsNotExist(err) {
+				continue
+			}
+			if err != nil {
+				continue
+			}
+
+			// Security Layer 7: Reject if the hub path itself is a symlink (symlink attack prevention)
+			if hubInfo.Mode()&os.ModeSymlink != 0 {
+				continue
+			}
+
+			// Security Layer 8: Verify path is within cache (using cleaned absolute path)
+			if !strings.HasPrefix(absHubPath+string(filepath.Separator), absCacheDirWithSep) {
+				continue
+			}
+
+			// Security Layer 9: Verify path follows expected HF cache structure
+			expectedPrefix := "models--"
+			if repoType == hfdownloader.RepoTypeDataset {
+				expectedPrefix = "datasets--"
+			}
+			hubSubpath, err := filepath.Rel(absCacheDir, absHubPath)
+			if err != nil || !strings.HasPrefix(hubSubpath, filepath.Join("hub", expectedPrefix)) {
+				continue
+			}
+
+			// All security checks passed - proceed with deletion
+			if err := os.RemoveAll(absHubPath); err != nil {
+				writeError(w, http.StatusInternalServerError, "Failed to delete cache", err.Error())
+				return
+			}
+
+			// Delete the friendly view directory (symlinks) with same security checks
+			if friendlyPath != "" {
+				absFriendlyPath := friendlyPath
+				if !filepath.IsAbs(absFriendlyPath) {
+					absFriendlyPath = filepath.Join(absCacheDir, absFriendlyPath)
+				}
+				_ = safeDeleteFriendlyPath(absFriendlyPath, absCacheDirWithSep)
+			}
+
+			deleted = true
+			deletedFrom = candidateCacheDir
+			break
+		}
+
+		if deleted {
+			break
+		}
 	}
 
-	hubPath := repoDir.Path()
-	friendlyPath := repoDir.FriendlyPath()
+	if !deleted {
+		// Fallback: delete flat-structured repo path at <cacheRoot>/<owner>/<repo>
+		for _, candidateCacheDir := range cacheDirs {
+			absCacheDir, err := filepath.Abs(candidateCacheDir)
+			if err != nil {
+				continue
+			}
+			absCacheDirWithSep := absCacheDir + string(filepath.Separator)
 
-	// Security Layer 5: Resolve absolute paths
-	absCacheDir, err := filepath.Abs(cacheDir)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to resolve cache path", err.Error())
-		return
+			flatPath, ok := findFlatStructuredRepoPath(absCacheDir, repo)
+			if !ok {
+				continue
+			}
+
+			absFlatPath, err := filepath.Abs(flatPath)
+			if err != nil {
+				continue
+			}
+			if !strings.HasPrefix(absFlatPath+string(filepath.Separator), absCacheDirWithSep) {
+				continue
+			}
+
+			info, err := os.Lstat(absFlatPath)
+			if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				continue
+			}
+
+			if err := os.RemoveAll(absFlatPath); err != nil {
+				writeError(w, http.StatusInternalServerError, "Failed to delete cache", err.Error())
+				return
+			}
+
+			// Clean up empty owner directory under cache root
+			ownerDir := filepath.Dir(absFlatPath)
+			if strings.HasPrefix(ownerDir+string(filepath.Separator), absCacheDirWithSep) {
+				_ = os.Remove(ownerDir)
+			}
+
+			deleted = true
+			deletedFrom = candidateCacheDir
+			break
+		}
 	}
-	// Ensure cache dir ends with separator to prevent /cache/huggingface-evil matching /cache/huggingface
-	absCacheDirWithSep := absCacheDir + string(filepath.Separator)
 
-	absHubPath, err := filepath.Abs(hubPath)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to resolve path", err.Error())
-		return
+	if !deleted {
+		// Fallback: delete flat-mode indexed files from <cacheRoot>/.hfd-flat-index
+		for _, candidateCacheDir := range cacheDirs {
+			if err := deleteFlatIndexedRepo(candidateCacheDir, repo); err != nil {
+				continue
+			}
+			deleted = true
+			deletedFrom = candidateCacheDir
+			break
+		}
 	}
 
-	// Security Layer 6: Check if path exists and is not a symlink (TOCTOU mitigation)
-	hubInfo, err := os.Lstat(absHubPath)
-	if os.IsNotExist(err) {
+	if !deleted {
 		writeError(w, http.StatusNotFound, "Repository not found in cache", repo)
 		return
 	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to check path", err.Error())
-		return
-	}
-
-	// Security Layer 7: Reject if the hub path itself is a symlink (symlink attack prevention)
-	if hubInfo.Mode()&os.ModeSymlink != 0 {
-		writeError(w, http.StatusBadRequest, "Invalid path", "Cannot delete symlinked directories")
-		return
-	}
-
-	// Security Layer 8: Verify path is within cache (using cleaned absolute path)
-	if !strings.HasPrefix(absHubPath+string(filepath.Separator), absCacheDirWithSep) {
-		writeError(w, http.StatusBadRequest, "Invalid path", "Path outside cache directory")
-		return
-	}
-
-	// Security Layer 9: Verify path follows expected HF cache structure
-	// Must be: {cacheDir}/hub/{models|datasets}--{owner}--{name}
-	expectedPrefix := "models--"
-	if repoType == hfdownloader.RepoTypeDataset {
-		expectedPrefix = "datasets--"
-	}
-	hubSubpath, err := filepath.Rel(absCacheDir, absHubPath)
-	if err != nil || !strings.HasPrefix(hubSubpath, filepath.Join("hub", expectedPrefix)) {
-		writeError(w, http.StatusBadRequest, "Invalid path", "Path does not match expected cache structure")
-		return
-	}
-
-	// Security Layer 10: Resolve symlinks to verify final destination is also within cache
-	// This catches symlinks inside the directory structure
-	realHubPath, err := filepath.EvalSymlinks(absHubPath)
-	if err == nil && realHubPath != absHubPath {
-		// Path contained symlinks - verify resolved path is still within cache
-		if !strings.HasPrefix(realHubPath+string(filepath.Separator), absCacheDirWithSep) {
-			writeError(w, http.StatusBadRequest, "Invalid path", "Resolved path outside cache directory")
-			return
-		}
-	}
-
-	// All security checks passed - proceed with deletion
-	if err := os.RemoveAll(absHubPath); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to delete cache", err.Error())
-		return
-	}
-
-	// Delete the friendly view directory (symlinks) with same security checks
-	if friendlyPath != "" {
-		if err := safeDeleteFriendlyPath(friendlyPath, absCacheDirWithSep); err != nil {
-			// Log but don't fail - hub directory was successfully deleted
-			// The friendly path might not exist or might be invalid
-		}
-	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"success": true,
-		"message": fmt.Sprintf("Deleted %s from cache", repo),
+		"success":   true,
+		"message":   fmt.Sprintf("Deleted %s from cache", repo),
+		"deletedFrom": deletedFrom,
 	})
 }
 
@@ -1163,7 +1357,8 @@ func isValidRepoComponent(s string) bool {
 	return true
 }
 
-// safeDeleteFriendlyPath safely deletes the friendly view path with security checks.
+// safeDeleteFriendlyPath safely deletes the friendly view path with security checks,
+// and cleans up empty parent directories.
 func safeDeleteFriendlyPath(friendlyPath, absCacheDirWithSep string) error {
 	absFriendlyPath, err := filepath.Abs(friendlyPath)
 	if err != nil {
@@ -1184,15 +1379,582 @@ func safeDeleteFriendlyPath(friendlyPath, absCacheDirWithSep string) error {
 		return fmt.Errorf("friendly path is a symlink")
 	}
 
-	// Resolve symlinks and verify again
-	realPath, err := filepath.EvalSymlinks(absFriendlyPath)
-	if err == nil && realPath != absFriendlyPath {
-		if !strings.HasPrefix(realPath+string(filepath.Separator), absCacheDirWithSep) {
-			return fmt.Errorf("resolved friendly path outside cache")
+	// If it's a directory, recursively delete all contents
+	// Use this approach to ensure broken symlinks are also deleted
+	if info.IsDir() {
+		// List all entries in the directory
+		entries, err := os.ReadDir(absFriendlyPath)
+		if err == nil {
+			for _, entry := range entries {
+				entryPath := filepath.Join(absFriendlyPath, entry.Name())
+				// Remove each entry (works for files, symlinks, and directories)
+				os.RemoveAll(entryPath)
+			}
 		}
 	}
 
-	return os.RemoveAll(absFriendlyPath)
+	// Delete the directory itself
+	if err := os.RemoveAll(absFriendlyPath); err != nil {
+		return err
+	}
+
+	// Clean up empty parent directories up to the cache root
+	cacheRootWithoutSep := strings.TrimSuffix(absCacheDirWithSep, string(filepath.Separator))
+	for parent := filepath.Dir(absFriendlyPath); parent != cacheRootWithoutSep && parent != "." && parent != ""; parent = filepath.Dir(parent) {
+		// Stop if we've gone outside the cache directory
+		if !strings.HasPrefix(parent+string(filepath.Separator), absCacheDirWithSep) {
+			break
+		}
+
+		// Try to remove the empty directory; stop if it fails (directory not empty)
+		if err := os.Remove(parent); err != nil {
+			break
+		}
+	}
+
+	return nil
+}
+
+// scanFlatStructuredRepos discovers repos stored as <root>/<owner>/<repo>.
+func scanFlatStructuredRepos(root, repoTypeFilter, search string, seen map[string]struct{}) ([]CachedRepoInfo, CacheStats) {
+	var repos []CachedRepoInfo
+	var stats CacheStats
+
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return repos, stats
+	}
+
+	for _, ownerEntry := range entries {
+		if !ownerEntry.IsDir() {
+			continue
+		}
+		owner := ownerEntry.Name()
+		if !isValidRepoComponent(owner) {
+			continue
+		}
+		if owner == "hub" || owner == "models" || owner == "datasets" || strings.HasPrefix(owner, ".") {
+			continue
+		}
+
+		ownerPath := filepath.Join(root, owner)
+		repoEntries, err := os.ReadDir(ownerPath)
+		if err != nil {
+			continue
+		}
+
+		for _, repoEntry := range repoEntries {
+			if !repoEntry.IsDir() {
+				continue
+			}
+			name := repoEntry.Name()
+			if !isValidRepoComponent(name) {
+				continue
+			}
+
+			repoID := owner + "/" + name
+			if search != "" && !strings.Contains(strings.ToLower(repoID), search) {
+				continue
+			}
+
+			repoPath := filepath.Join(ownerPath, name)
+			flatInfo, err := buildFlatRepoInfo(repoPath, repoID, false)
+			if err != nil {
+				continue
+			}
+
+			if repoTypeFilter != "" && flatInfo.Type != repoTypeFilter {
+				continue
+			}
+
+			key := flatInfo.Type + "|" + repoID
+			if _, ok := seen[key]; ok {
+				continue
+			}
+
+			repos = append(repos, flatInfo)
+			seen[key] = struct{}{}
+
+			if flatInfo.Type == "dataset" {
+				stats.TotalDatasets++
+			} else {
+				stats.TotalModels++
+			}
+			stats.TotalSize += flatInfo.Size
+			stats.TotalFiles += flatInfo.FileCount
+		}
+	}
+
+	return repos, stats
+}
+
+// findFlatStructuredRepoPath resolves <root>/<owner>/<repo> for a repo id.
+func findFlatStructuredRepoPath(root, repo string) (string, bool) {
+	parts := strings.SplitN(repo, "/", 2)
+	if len(parts) != 2 {
+		return "", false
+	}
+	if !isValidRepoComponent(parts[0]) || !isValidRepoComponent(parts[1]) {
+		return "", false
+	}
+
+	candidate := filepath.Join(root, parts[0], parts[1])
+	info, err := os.Stat(candidate)
+	if err != nil || !info.IsDir() {
+		return "", false
+	}
+
+	return candidate, true
+}
+
+// buildFlatRepoInfo builds cache metadata for a flat-structured repo directory.
+func buildFlatRepoInfo(repoPath, repoID string, includeFiles bool) (CachedRepoInfo, error) {
+	parts := strings.SplitN(repoID, "/", 2)
+	if len(parts) != 2 {
+		return CachedRepoInfo{}, fmt.Errorf("invalid repo id")
+	}
+
+	var totalSize int64
+	var fileCount int
+	files := make([]CachedFileInfo, 0)
+
+	err := filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+
+		relPath, relErr := filepath.Rel(repoPath, path)
+		if relErr != nil {
+			relPath = filepath.Base(path)
+		}
+
+		if relPath == hfdownloader.ManifestFilename {
+			return nil
+		}
+
+		totalSize += info.Size()
+		fileCount++
+
+		if includeFiles {
+			files = append(files, CachedFileInfo{
+				Name:      filepath.ToSlash(relPath),
+				Size:      info.Size(),
+				SizeHuman: humanSizeBytes(info.Size()),
+				IsLFS:     info.Size() > 10*1024*1024,
+			})
+		}
+
+		return nil
+	})
+	if err != nil {
+		return CachedRepoInfo{}, err
+	}
+
+	branch := "main"
+	commit := ""
+	var manifest *ManifestInfo
+	downloadStatus := "unknown"
+
+	manifestPath := filepath.Join(repoPath, hfdownloader.ManifestFilename)
+	if m, err := hfdownloader.ReadManifest(manifestPath); err == nil {
+		isFiltered, filters := parseCommandFilters(m.Command)
+		manifest = &ManifestInfo{
+			Branch:     m.Branch,
+			Commit:     m.Commit,
+			Downloaded: m.CompletedAt.Format("2006-01-02 15:04"),
+			Command:    m.Command,
+			TotalSize:  m.TotalSize,
+			TotalFiles: m.TotalFiles,
+			IsFiltered: isFiltered,
+			Filters:    filters,
+		}
+
+		if m.Branch != "" {
+			branch = m.Branch
+		}
+		if m.Commit != "" {
+			commit = m.Commit
+		}
+		if isFiltered {
+			downloadStatus = "filtered"
+		} else {
+			downloadStatus = "complete"
+		}
+	}
+
+	shortCommit := commit
+	if len(shortCommit) > 7 {
+		shortCommit = shortCommit[:7]
+	}
+
+	downloaded := ""
+	if info, err := os.Stat(repoPath); err == nil {
+		downloaded = info.ModTime().Format("2006-01-02")
+	}
+	if manifest != nil {
+		downloaded = strings.SplitN(manifest.Downloaded, " ", 2)[0]
+	}
+
+	typ := "model"
+	if manifest != nil && manifest.Command != "" {
+		if strings.Contains(manifest.Command, " --dataset") || strings.Contains(manifest.Command, " -d") {
+			typ = "dataset"
+		}
+	}
+
+	return CachedRepoInfo{
+		Repo:           repoID,
+		Owner:          parts[0],
+		Name:           parts[1],
+		Type:           typ,
+		Path:           repoPath,
+		FriendlyPath:   repoPath,
+		Size:           totalSize,
+		SizeHuman:      humanSizeBytes(totalSize),
+		FileCount:      fileCount,
+		Branch:         branch,
+		Commit:         shortCommit,
+		Downloaded:     downloaded,
+		DownloadStatus: downloadStatus,
+		Files:          files,
+		Manifest:       manifest,
+	}, nil
+}
+
+// scanFlatIndexedRepos discovers flat-mode repos from index manifests.
+func scanFlatIndexedRepos(root, repoTypeFilter, search string, seen map[string]struct{}) ([]CachedRepoInfo, CacheStats) {
+	var repos []CachedRepoInfo
+	var stats CacheStats
+
+	indexDir := filepath.Join(root, hfdownloader.FlatIndexDirname)
+	entries, err := os.ReadDir(indexDir)
+	if err != nil {
+		return repos, stats
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".yaml") {
+			continue
+		}
+
+		indexPath := filepath.Join(indexDir, entry.Name())
+		info, err := buildFlatIndexedRepoInfo(root, indexPath, false)
+		if err != nil {
+			continue
+		}
+
+		if repoTypeFilter != "" && info.Type != repoTypeFilter {
+			continue
+		}
+		if search != "" && !strings.Contains(strings.ToLower(info.Repo), search) {
+			continue
+		}
+
+		key := info.Type + "|" + info.Repo
+		if _, ok := seen[key]; ok {
+			continue
+		}
+
+		repos = append(repos, info)
+		seen[key] = struct{}{}
+
+		if info.Type == "dataset" {
+			stats.TotalDatasets++
+		} else {
+			stats.TotalModels++
+		}
+		stats.TotalSize += info.Size
+		stats.TotalFiles += info.FileCount
+	}
+
+	return repos, stats
+}
+
+// findFlatIndexManifestPath resolves the index manifest path for repo.
+func findFlatIndexManifestPath(root, repo string) (string, bool) {
+	if !hfdownloader.IsValidModelName(repo) {
+		return "", false
+	}
+	path := hfdownloader.FlatIndexPath(root, repo)
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return "", false
+	}
+	return path, true
+}
+
+// buildFlatIndexedRepoInfo builds cache metadata for a flat-mode indexed repo.
+func buildFlatIndexedRepoInfo(root, indexPath string, includeFiles bool) (CachedRepoInfo, error) {
+	m, err := hfdownloader.ReadManifest(indexPath)
+	if err != nil {
+		return CachedRepoInfo{}, err
+	}
+
+	parts := strings.SplitN(m.Repo, "/", 2)
+	if len(parts) != 2 {
+		return CachedRepoInfo{}, fmt.Errorf("invalid repo in flat index")
+	}
+
+	fileCount := len(m.Files)
+	totalSize := m.TotalSize
+	if totalSize == 0 {
+		for _, f := range m.Files {
+			totalSize += f.Size
+		}
+	}
+
+	files := make([]CachedFileInfo, 0, len(m.Files))
+	presentCount := 0
+	if includeFiles {
+		for _, f := range m.Files {
+			if path := filepath.Join(root, filepath.Clean(f.Name)); path != "" {
+				if _, err := os.Stat(path); err == nil {
+					presentCount++
+				}
+			}
+			files = append(files, CachedFileInfo{
+				Name:      f.Name,
+				Size:      f.Size,
+				SizeHuman: humanSizeBytes(f.Size),
+				IsLFS:     f.LFS,
+			})
+		}
+	} else {
+		for _, f := range m.Files {
+			if path := filepath.Join(root, filepath.Clean(f.Name)); path != "" {
+				if _, err := os.Stat(path); err == nil {
+					presentCount++
+				}
+			}
+		}
+	}
+
+	isFiltered, filters := parseCommandFilters(m.Command)
+	manifest := &ManifestInfo{
+		Branch:     m.Branch,
+		Commit:     m.Commit,
+		Downloaded: m.CompletedAt.Format("2006-01-02 15:04"),
+		Command:    m.Command,
+		TotalSize:  totalSize,
+		TotalFiles: fileCount,
+		IsFiltered: isFiltered,
+		Filters:    filters,
+	}
+
+	downloadStatus := "complete"
+	if isFiltered {
+		downloadStatus = "filtered"
+	}
+	if fileCount > 0 && presentCount < fileCount {
+		downloadStatus = "partial"
+	}
+
+	shortCommit := m.Commit
+	if len(shortCommit) > 7 {
+		shortCommit = shortCommit[:7]
+	}
+
+	repoType := m.Type
+	if repoType == "" {
+		repoType = "model"
+	}
+
+	return CachedRepoInfo{
+		Repo:           m.Repo,
+		Owner:          parts[0],
+		Name:           parts[1],
+		Type:           repoType,
+		Path:           root,
+		FriendlyPath:   root,
+		Size:           totalSize,
+		SizeHuman:      humanSizeBytes(totalSize),
+		FileCount:      fileCount,
+		Branch:         m.Branch,
+		Commit:         shortCommit,
+		Downloaded:     m.CompletedAt.Format("2006-01-02"),
+		DownloadStatus: downloadStatus,
+		Files:          files,
+		Manifest:       manifest,
+	}, nil
+}
+
+// deleteFlatIndexedRepo deletes files recorded in a flat-mode index manifest.
+func deleteFlatIndexedRepo(root, repo string) error {
+	indexPath, ok := findFlatIndexManifestPath(root, repo)
+	if !ok {
+		return fmt.Errorf("flat index not found")
+	}
+
+	m, err := hfdownloader.ReadManifest(indexPath)
+	if err != nil {
+		return err
+	}
+
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	absRootWithSep := absRoot + string(filepath.Separator)
+
+	parts := strings.SplitN(repo, "/", 2)
+	repoName := repo
+	if len(parts) == 2 && parts[1] != "" {
+		repoName = parts[1]
+	}
+
+	removedAny := false
+	var removalErrors []string
+
+	for _, f := range m.Files {
+		candidates := []string{f.Name}
+
+		// Handle README naming migration in flat mode.
+		base := filepath.Base(f.Name)
+		if base == "README.md" && !strings.Contains(filepath.ToSlash(f.Name), "/") {
+			candidates = append(candidates, repoName+".README.md")
+		}
+		if base == repoName+".README.md" {
+			candidates = append(candidates, "README.md")
+		}
+
+		seenCandidates := map[string]struct{}{}
+		for _, rawRel := range candidates {
+			rel := filepath.Clean(rawRel)
+			if rel == "." || rel == "" || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+				continue
+			}
+			if _, ok := seenCandidates[rel]; ok {
+				continue
+			}
+			seenCandidates[rel] = struct{}{}
+
+			candidate := filepath.Join(absRoot, rel)
+			absCandidate, err := filepath.Abs(candidate)
+			if err != nil {
+				continue
+			}
+			if !strings.HasPrefix(absCandidate+string(filepath.Separator), absRootWithSep) {
+				continue
+			}
+
+			// Clean up resumable/multipart temporary artifacts even when the
+			// assembled destination file does not exist (common for canceled downloads).
+			if p, err := filepath.Glob(absCandidate + ".part-*"); err == nil {
+				for _, partPath := range p {
+					if err := os.RemoveAll(partPath); err == nil {
+						removedAny = true
+					}
+				}
+			}
+			if err := os.RemoveAll(absCandidate + ".part"); err == nil {
+				removedAny = true
+			}
+
+			if _, err := os.Lstat(absCandidate); err != nil {
+				continue
+			}
+
+			if err := os.RemoveAll(absCandidate); err != nil {
+				removalErrors = append(removalErrors, rel+": "+err.Error())
+				continue
+			}
+			removedAny = true
+
+			for parent := filepath.Dir(absCandidate); parent != absRoot && parent != "." && parent != ""; parent = filepath.Dir(parent) {
+				if !strings.HasPrefix(parent+string(filepath.Separator), absRootWithSep) {
+					break
+				}
+				if err := os.Remove(parent); err != nil {
+					break
+				}
+			}
+		}
+	}
+
+	if len(removalErrors) > 0 {
+		return fmt.Errorf("failed to delete flat files: %s", strings.Join(removalErrors, "; "))
+	}
+	if !removedAny {
+		return fmt.Errorf("flat index found but no files were removed")
+	}
+
+	if err := os.Remove(indexPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	_ = os.Remove(filepath.Dir(indexPath))
+
+	return nil
+}
+
+// addRecentPath appends path to recent list (deduped), keeping at most max entries.
+func addRecentPath(existing []string, path string, max int) []string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return existing
+	}
+	out := make([]string, 0, len(existing)+1)
+	out = append(out, path)
+	for _, p := range existing {
+		if strings.TrimSpace(p) == "" || p == path {
+			continue
+		}
+		out = append(out, p)
+		if max > 0 && len(out) >= max {
+			break
+		}
+	}
+	return out
+}
+
+// orderedUniquePaths returns non-empty unique paths, preserving order.
+func orderedUniquePaths(primary string, extras []string, fallback string) []string {
+	seen := map[string]struct{}{}
+	paths := make([]string, 0, len(extras)+2)
+	appendIfNew := func(p string) {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			return
+		}
+		if _, ok := seen[p]; ok {
+			return
+		}
+		seen[p] = struct{}{}
+		paths = append(paths, p)
+	}
+
+	appendIfNew(primary)
+	for _, p := range extras {
+		appendIfNew(p)
+	}
+	appendIfNew(fallback)
+	return paths
+}
+
+// scriptDefaultCacheDir returns the script-default cache path ~/.cache/huggingface,
+// independent of HF_HOME overrides.
+func scriptDefaultCacheDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return ""
+	}
+	return filepath.Join(home, ".cache", "huggingface")
+}
+
+// cacheScanRoots returns cache roots to scan for list/info/delete operations.
+// Order matters and is preserved: configured -> script default -> HF_HOME -> previous -> resolved default.
+func cacheScanRoots(cfg Config) []string {
+	hfHome := strings.TrimSpace(os.Getenv("HF_HOME"))
+	extras := make([]string, 0, len(cfg.PreviousCacheDirs)+3)
+	extras = append(extras, scriptDefaultCacheDir())
+	extras = append(extras, hfHome)
+	extras = append(extras, cfg.PreviousCacheDirs...)
+	return orderedUniquePaths(cfg.CacheDir, extras, hfdownloader.DefaultCacheDir())
+}
+
+// cacheDeleteCandidates uses the same root-selection policy as cache scanning.
+func cacheDeleteCandidates(current string, previous []string) []string {
+	cfg := Config{CacheDir: current, PreviousCacheDirs: previous}
+	return cacheScanRoots(cfg)
 }
 
 // parseCommandFilters extracts filter information from a manifest command string.

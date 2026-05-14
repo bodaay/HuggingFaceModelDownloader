@@ -627,11 +627,19 @@
     const selectedQuants = Array.from(document.querySelectorAll('#quantOptions input[type="checkbox"]:checked'))
       .map(cb => cb.dataset.filter);
 
-    let cmd = `hfdownloader -r ${currentAnalysis.repo}`;
+    let cmd = `hfdownloader download ${currentAnalysis.repo}`;
 
     // Add dataset flag
     if (currentAnalysis.is_dataset) {
-      cmd += ' -d';
+      cmd += ' --dataset';
+    }
+
+    // Add storage mode flags
+    const storageMode = state.settings.storageMode || 'cache';
+    if (storageMode === 'flat') {
+      cmd += ' --flat';
+    } else if (storageMode === 'flat-structured') {
+      cmd += ' --flat-structured';
     }
 
     // Add revision if not main (from analysis)
@@ -641,9 +649,9 @@
 
     // Add filters - either from GGUF selection or advanced options
     if (selectedQuants.length > 0 && selectedQuants.length < (currentAnalysis.gguf?.quantizations?.length || 0)) {
-      cmd += ` -f "${selectedQuants.join(',')}"`;
+      cmd += ` -F "${selectedQuants.join(',')}"`;
     } else if (advancedOptions.filter) {
-      cmd += ` -f "${advancedOptions.filter}"`;
+      cmd += ` -F "${advancedOptions.filter}"`;
     }
 
     // Add excludes
@@ -735,7 +743,8 @@
         revision: currentAnalysis?.branch || 'main',
         dataset: isDataset,
         filters,
-        excludes
+        excludes,
+        storageMode: state.settings.storageMode || 'cache'
       };
 
       await api('POST', '/download', body);
@@ -748,13 +757,16 @@
 
   // Make downloadFromAnalysis available globally
   window.downloadFromAnalysis = function(repo, isDataset) {
-    if (isDataset) {
-      $('#datasetRepo').value = repo;
-      navigateTo('download');
-    } else {
-      $('#modelRepo').value = repo;
-      navigateTo('download');
+    const prefix = isDataset ? 'dataset' : 'model';
+    $(`#${prefix}Repo`).value = repo;
+    
+    // Set storage mode from current settings
+    const storageModeEl = $(`#${prefix}StorageMode`);
+    if (storageModeEl && state.settings.storageMode) {
+      storageModeEl.value = state.settings.storageMode;
     }
+    
+    navigateTo('download');
   };
 
   // =========================================
@@ -787,6 +799,7 @@
     const revision = $(`#${prefix}Revision`)?.value.trim() || 'main';
     const filter = $(`#${prefix}Filter`)?.value.trim();
     const exclude = $(`#${prefix}Exclude`)?.value.trim();
+    const storageMode = $(`#${prefix}StorageMode`)?.value || 'cache';
 
     if (!repo) {
       showToast('Please enter a repository', 'error');
@@ -798,7 +811,8 @@
       revision,
       dataset: isDataset,
       filters: filter ? filter.split(',').map(s => s.trim()).filter(Boolean) : [],
-      excludes: exclude ? exclude.split(',').map(s => s.trim()).filter(Boolean) : []
+      excludes: exclude ? exclude.split(',').map(s => s.trim()).filter(Boolean) : [],
+      storageMode: storageMode
     };
 
     try {
@@ -826,6 +840,7 @@
       dataset: isDataset,
       filters: ($(`#${prefix}Filter`)?.value || '').split(',').map(s => s.trim()).filter(Boolean),
       excludes: ($(`#${prefix}Exclude`)?.value || '').split(',').map(s => s.trim()).filter(Boolean),
+      storageMode: $(`#${prefix}StorageMode`)?.value || 'cache',
       dryRun: true
     };
 
@@ -1133,7 +1148,7 @@
   // Cache Page
   // =========================================
 
-  let cacheData = { repos: [], stats: {}, cacheDir: '' };
+  let cacheData = { repos: [], stats: {}, cacheDir: '', scannedCacheDirs: [] };
   let cacheFilter = 'all';
   let cacheSort = 'name';
   let cacheView = 'grid';
@@ -1219,7 +1234,9 @@
           </div>
           <h3>${cacheData.repos?.length === 0 ? 'Cache is Empty' : 'No Results'}</h3>
           <p>${message}</p>
-          ${cacheData.cacheDir ? `<p class="cache-dir-hint">Cache: ${escapeHtml(cacheData.cacheDir)}</p>` : ''}
+          ${(cacheData.scannedCacheDirs && cacheData.scannedCacheDirs.length > 0)
+            ? `<p class="cache-dir-hint">Scanned cache roots: ${cacheData.scannedCacheDirs.map(d => escapeHtml(d)).join(' | ')}</p>`
+            : (cacheData.cacheDir ? `<p class="cache-dir-hint">Cache: ${escapeHtml(cacheData.cacheDir)}</p>` : '')}
         </div>
       `;
       return;
@@ -1676,10 +1693,15 @@
       const data = await api('GET', '/settings');
       state.settings = data;
 
-      // Display cache directory (read-only)
+      // Display cache directory (now editable)
       const cacheDirEl = $('#cacheDir');
-      if (cacheDirEl) {
-        cacheDirEl.textContent = data.cacheDir || '~/.cache/huggingface';
+      if (cacheDirEl && cacheDirEl.tagName === 'INPUT') {
+        cacheDirEl.value = data.cacheDir || '~/.cache/huggingface';
+      }
+
+      const storageModeEl = $('#storageMode');
+      if (storageModeEl) {
+      storageModeEl.value = data.storageMode || 'cache';
       }
 
       // Display config file paths
@@ -1736,7 +1758,23 @@
   }
 
   async function saveSettings() {
+    const currentCacheDir = state.settings?.cacheDir || '';
+    const newCacheDir = ($('#cacheDir')?.value || '').trim();
+    if (currentCacheDir && newCacheDir && currentCacheDir !== newCacheDir) {
+      const activeJobs = Array.from(state.jobs.values()).filter(j =>
+        j && (j.status === 'queued' || j.status === 'running' || j.status === 'paused')
+      ).length;
+      const warningMsg = activeJobs > 0
+        ? `You have ${activeJobs} active/pending job(s). Changing cache directory now may leave partial/incomplete files in the old cache path. Continue?`
+        : 'Changing cache directory may leave old partial/incomplete downloads in the previous cache path. Continue?';
+      if (!window.confirm(warningMsg)) {
+        return;
+      }
+    }
+
     const body = {
+      cacheDir: $('#cacheDir')?.value || '',
+      storageMode: $('#storageMode')?.value || 'cache',
       token: $('#hfToken')?.value || '',
       connections: parseInt($('#connections')?.value) || 8,
       maxActive: parseInt($('#maxActive')?.value) || 3,
@@ -1763,6 +1801,32 @@
 
     try {
       const result = await api('POST', '/settings', body);
+
+      // Keep client state in sync immediately so Analyze/Download pages
+      // use the new storage mode without requiring a full page refresh.
+      state.settings = {
+        ...state.settings,
+        ...body,
+        cacheDir: body.cacheDir,
+        storageMode: body.storageMode
+      };
+
+      // Sync download form storage mode selectors to the updated default.
+      const modelStorageModeEl = $('#modelStorageMode');
+      if (modelStorageModeEl) {
+        modelStorageModeEl.value = state.settings.storageMode || 'cache';
+      }
+      const datasetStorageModeEl = $('#datasetStorageMode');
+      if (datasetStorageModeEl) {
+        datasetStorageModeEl.value = state.settings.storageMode || 'cache';
+      }
+
+      // If Analyze page is active, refresh command previews immediately.
+      if (currentAnalysis) {
+        updateCLICommandFromSelections();
+        updateDownloadCommand();
+      }
+
       showToast(result.message || 'Settings saved', 'success');
       // Clear password field after save
       if ($('#proxyPassword')) {
@@ -2517,6 +2581,14 @@
       cmd += ' --dataset';
     }
 
+    // Add storage mode flags
+    const storageMode = state.settings.storageMode || 'cache';
+    if (storageMode === 'flat') {
+      cmd += ' --flat';
+    } else if (storageMode === 'flat-structured') {
+      cmd += ' --flat-structured';
+    }
+
     if (currentAnalysis.branch && currentAnalysis.branch !== 'main') {
       cmd += ` -b ${currentAnalysis.branch}`;
     }
@@ -2666,6 +2738,7 @@
     initModal();
 
     // Load initial data
+    loadSettings();  // Load settings early so storage mode is available for downloads
     loadJobs();
   }
 

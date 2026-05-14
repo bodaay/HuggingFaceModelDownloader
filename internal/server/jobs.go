@@ -34,6 +34,7 @@ type Job struct {
 	Filters   []string          `json:"filters,omitempty"`
 	Excludes  []string          `json:"excludes,omitempty"`
 	OutputDir string            `json:"outputDir"`
+	StorageMode string          `json:"storageMode,omitempty"`
 	Status    JobStatus         `json:"status"`
 	Progress  JobProgress       `json:"progress"`
 	Error     string            `json:"error,omitempty"`
@@ -150,10 +151,31 @@ func (m *JobManager) CreateJob(req DownloadRequest) (*Job, bool, error) {
 		revision = "main"
 	}
 
-	// Use HuggingFace cache directory (v3 mode)
-	cacheDir := m.config.CacheDir
-	if cacheDir == "" {
-		cacheDir = hfdownloader.DefaultCacheDir()
+	// Determine output directory and storage mode
+	storageMode := req.StorageMode
+	if storageMode == "" {
+		storageMode = string(m.config.StorageMode)
+	}
+	if storageMode == "" {
+		storageMode = string(StorageModeCache)
+	}
+
+	var outputDir string
+	baseDir := m.config.CacheDir
+	if baseDir == "" {
+		baseDir = hfdownloader.DefaultCacheDir()
+	}
+
+	switch storageMode {
+	case string(StorageModeFlat):
+		// Flat file mode: files go directly to base directory
+		outputDir = baseDir
+	case string(StorageModeFlatStructured):
+		// Flat structured mode: base path is baseDir; downloader appends owner/model once
+		outputDir = baseDir
+	default:
+		// Cache mode (default): use the cache directory (hfdownloader will create hub/models--)
+		outputDir = baseDir
 	}
 
 	// Check for existing active job with same repo+revision+type.
@@ -172,16 +194,17 @@ func (m *JobManager) CreateJob(req DownloadRequest) (*Job, bool, error) {
 	}
 
 	job := &Job{
-		ID:        generateID(),
-		Repo:      req.Repo,
-		Revision:  revision,
-		IsDataset: req.Dataset,
-		Filters:   req.Filters,
-		Excludes:  req.Excludes,
-		OutputDir: cacheDir, // HuggingFace cache directory
-		Status:    JobStatusQueued,
-		CreatedAt: time.Now(),
-		Progress:  JobProgress{},
+		ID:          generateID(),
+		Repo:        req.Repo,
+		Revision:    revision,
+		IsDataset:   req.Dataset,
+		Filters:     req.Filters,
+		Excludes:    req.Excludes,
+		OutputDir:   outputDir,
+		StorageMode: storageMode,
+		Status:      JobStatusQueued,
+		CreatedAt:   time.Now(),
+		Progress:    JobProgress{},
 	}
 
 	m.jobs[job.ID] = job
@@ -465,14 +488,8 @@ func (m *JobManager) runJob(job *Job) {
 		AppendFilterSubdir: false,
 	}
 
-	// Use HuggingFace cache structure (v3 mode) instead of legacy OutputDir
-	cacheDir := m.config.CacheDir
-	if cacheDir == "" {
-		cacheDir = hfdownloader.DefaultCacheDir()
-	}
-
+	// Build settings based on storage mode
 	settings := hfdownloader.Settings{
-		CacheDir:           cacheDir, // Use HF cache structure
 		Concurrency:        m.config.Concurrency,
 		MaxActiveDownloads: m.config.MaxActive,
 		Token:              m.config.Token,
@@ -483,6 +500,25 @@ func (m *JobManager) runJob(job *Job) {
 		BackoffMax:         "10s",
 		Endpoint:           m.config.Endpoint,
 		Proxy:              m.config.Proxy,
+	}
+
+	// Set output based on storage mode
+	storageMode := job.StorageMode
+	if storageMode == string(StorageModeFlat) || storageMode == string(StorageModeFlatStructured) {
+		// Flat modes: use OutputDir directly, no HF cache structure
+		// MUST clear CacheDir so hfdownloader doesn't create hub/models--owner--name/
+		settings.OutputDir = job.OutputDir
+		settings.CacheDir = ""
+		settings.NoRepoSubdir = storageMode == string(StorageModeFlat)
+		settings.NoFriendlyView = true
+		settings.NoManifest = false // Still create manifest
+	} else {
+		// Cache mode: use CacheDir (HuggingFace cache structure)
+		cacheDir := m.config.CacheDir
+		if cacheDir == "" {
+			cacheDir = hfdownloader.DefaultCacheDir()
+		}
+		settings.CacheDir = cacheDir
 	}
 
 	// Progress callback - NOTE: must not hold lock when calling notifyListeners

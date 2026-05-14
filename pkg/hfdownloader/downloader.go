@@ -159,9 +159,18 @@ func Download(ctx context.Context, job Job, cfg Settings, progress ProgressFunc)
 	// Ensure destination root exists (only for legacy mode)
 	// HF cache mode already created directories via repoDir.EnsureDirs()
 	if !useHFCache {
-		if err := os.MkdirAll(destinationBase(job, cfg), 0o755); err != nil {
+		destBase := destinationBase(job, cfg)
+		if err := os.MkdirAll(destBase, 0o755); err != nil {
 			return err
 		}
+		// Resolve symlinks in destination base upfront to avoid issues with
+		// os.Rename() when downloading to symlinked directories.
+		// This ensures all file operations use real filesystem paths.
+		if realBase, err := filepath.EvalSymlinks(destBase); err == nil {
+			// Update cfg.OutputDir to use the resolved path for all subsequent operations
+			cfg.OutputDir = realBase
+		}
+		// If EvalSymlinks fails (not a symlink, doesn't exist yet), proceed with original path
 	}
 
 	// Overall concurrency limiter (ctx-aware acquisition)
@@ -181,9 +190,24 @@ func Download(ctx context.Context, job Job, cfg Settings, progress ProgressFunc)
 	// Manifest is always written unless explicitly disabled with NoManifest
 	var manifestBuilder *ManifestBuilder
 	var manifestMu sync.Mutex
-	if useHFCache && !cfg.NoManifest {
+	if !cfg.NoManifest {
 		manifestBuilder = NewManifestBuilder(job, cfg.Command)
 		manifestBuilder.SetCommit(plan.Commit)
+	}
+
+	// Flat mode index should represent intended outputs, including interrupted runs.
+	if manifestBuilder != nil && !useHFCache && cfg.NoRepoSubdir {
+		for _, item := range plan.Items {
+			rel := item.RelativePath
+			if job.AppendFilterSubdir && item.Subdir != "" {
+				rel = filepath.ToSlash(filepath.Join(item.Subdir, item.RelativePath))
+			}
+			mappedRel, skip := mapFlatNoRepoFile(job.Repo, rel)
+			if skip {
+				continue
+			}
+			manifestBuilder.AddFile(mappedRel, item.SHA256, item.Size, item.LFS)
+		}
 	}
 
 LOOP:
@@ -218,6 +242,18 @@ LOOP:
 			if job.AppendFilterSubdir && it.Subdir != "" {
 				filterSubdir = it.Subdir
 				finalRel = filepath.ToSlash(filepath.Join(it.Subdir, it.RelativePath))
+			}
+
+			if !useHFCache && cfg.NoRepoSubdir {
+				mappedRel, skip := mapFlatNoRepoFile(job.Repo, finalRel)
+				if skip {
+					if _, loaded := skipOnce.LoadOrStore(finalRel, struct{}{}); !loaded {
+						emit(ProgressEvent{Event: "file_done", Path: finalRel, Message: "skip (ignored in flat mode)"})
+						atomic.AddInt64(&skippedCount, 1)
+					}
+					return
+				}
+				finalRel = mappedRel
 			}
 
 			var dst string
@@ -271,6 +307,7 @@ LOOP:
 				return
 			}
 
+
 			// Check if we can skip
 			alreadyOK, reason, err := skipCheck()
 			if err != nil {
@@ -285,9 +322,13 @@ LOOP:
 					emit(ProgressEvent{Event: "file_done", Path: finalRel, Message: "skip (" + reason + ")"})
 					atomic.AddInt64(&skippedCount, 1)
 					// Add to manifest (skipped files are still part of the download job)
-					if manifestBuilder != nil {
+					if manifestBuilder != nil && (useHFCache || !cfg.NoRepoSubdir) {
+						manifestName := it.RelativePath
+						if !useHFCache {
+							manifestName = finalRel
+						}
 						manifestMu.Lock()
-						manifestBuilder.AddFile(it.RelativePath, it.SHA256, it.Size, it.LFS)
+						manifestBuilder.AddFile(manifestName, it.SHA256, it.Size, it.LFS)
 						manifestMu.Unlock()
 					}
 				}
@@ -364,9 +405,13 @@ LOOP:
 			}
 
 			// Add to manifest with actual LFS info from API and final SHA256
-			if manifestBuilder != nil {
+			if manifestBuilder != nil && (useHFCache || !cfg.NoRepoSubdir) {
+				manifestName := it.RelativePath
+				if !useHFCache {
+					manifestName = finalRel
+				}
 				manifestMu.Lock()
-				manifestBuilder.AddFile(it.RelativePath, finalSHA256, it.Size, it.LFS)
+				manifestBuilder.AddFile(manifestName, finalSHA256, it.Size, it.LFS)
 				manifestMu.Unlock()
 			}
 
@@ -388,11 +433,22 @@ LOOP:
 	}
 	if firstErr != nil {
 		emit(ProgressEvent{Level: "error", Event: "error", Message: firstErr.Error()})
-		return firstErr
 	}
 
-	if ctx.Err() != nil {
-		return ctx.Err()
+	finalErr := firstErr
+	if finalErr == nil && ctx.Err() != nil {
+		finalErr = ctx.Err()
+	}
+
+	if manifestBuilder != nil && !useHFCache && cfg.NoRepoSubdir {
+		manifest := manifestBuilder.Build()
+		if _, err := manifest.WriteFlatIndex(cfg.OutputDir); err != nil {
+			emit(ProgressEvent{Level: "warn", Event: "warning", Message: fmt.Sprintf("failed to write flat index manifest: %v", err)})
+		}
+	}
+
+	if finalErr != nil {
+		return finalErr
 	}
 
 	// For HF Cache mode: write ref file and ensure friendly directory exists
@@ -433,6 +489,35 @@ LOOP:
 		Message: fmt.Sprintf("download complete (downloaded %d, skipped %d)", downloadedCount, skippedCount),
 	})
 	return nil
+}
+
+// mapFlatNoRepoFile normalizes filenames when using flat mode (no repo subdir).
+// - Skip .gitattributes to keep flat roots clean.
+// - Rename root README.md to <repo-name>.README.md to avoid collisions.
+// - Prefix generic root artifacts (mmproj*, imatrix*) with <repo-name>. to avoid collisions.
+func mapFlatNoRepoFile(repo, rel string) (string, bool) {
+	rel = filepath.ToSlash(filepath.Clean(rel))
+	base := filepath.Base(rel)
+	lowerBase := strings.ToLower(base)
+
+	repoName := repo
+	if parts := strings.SplitN(repo, "/", 2); len(parts) == 2 && parts[1] != "" {
+		repoName = parts[1]
+	}
+
+	if base == ".gitattributes" {
+		return "", true
+	}
+
+	if base == "README.md" && !strings.Contains(rel, "/") {
+		return repoName + ".README.md", false
+	}
+
+	if !strings.Contains(rel, "/") && (strings.HasPrefix(lowerBase, "mmproj") || strings.HasPrefix(lowerBase, "imatrix")) {
+		return repoName + "." + base, false
+	}
+
+	return rel, false
 }
 
 // downloadSingle downloads a file in a single request.
