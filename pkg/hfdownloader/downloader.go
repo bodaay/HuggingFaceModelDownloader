@@ -159,16 +159,13 @@ func Download(ctx context.Context, job Job, cfg Settings, progress ProgressFunc)
 	// Ensure destination root exists (only for legacy mode)
 	// HF cache mode already created directories via repoDir.EnsureDirs()
 	if !useHFCache {
-		destBase := destinationBase(job, cfg)
-		if err := os.MkdirAll(destBase, 0o755); err != nil {
+		if err := os.MkdirAll(cfg.OutputDir, 0o755); err != nil {
 			return err
 		}
-		// Resolve symlinks in destination base upfront to avoid issues with
-		// os.Rename() when downloading to symlinked directories.
-		// This ensures all file operations use real filesystem paths.
-		if realBase, err := filepath.EvalSymlinks(destBase); err == nil {
-			// Update cfg.OutputDir to use the resolved path for all subsequent operations
-			cfg.OutputDir = realBase
+		// Resolve symlinks in output root upfront to avoid os.Rename() issues
+		// when downloading to symlinked directories.
+		if realRoot, err := filepath.EvalSymlinks(cfg.OutputDir); err == nil {
+			cfg.OutputDir = realRoot
 		}
 		// If EvalSymlinks fails (not a symlink, doesn't exist yet), proceed with original path
 	}
