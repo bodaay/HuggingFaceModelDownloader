@@ -292,6 +292,21 @@ LOOP:
 				base := destinationBase(job, cfg)
 				dst = filepath.Join(base, finalRel)
 				skipCheck = func() (bool, string, error) {
+					// Fast path for large local files in size-verify mode.
+					// This avoids hashing huge existing LFS artifacts (e.g. GGUF)
+					// before deciding they can be skipped.
+					if cfg.Verify == "size" {
+						fi, err := os.Stat(dst)
+						if err != nil {
+							if os.IsNotExist(err) {
+								return false, "", nil
+							}
+							return false, "", err
+						}
+						if it.Size > 0 && fi.Size() == it.Size {
+							return true, "size match", nil
+						}
+					}
 					return shouldSkipLocal(it, dst)
 				}
 			}
