@@ -1941,6 +1941,26 @@ a {
   background: var(--color-surface);
 }
 
+button.cache-files-more,
+.analysis-files-toggle {
+  width: 100%;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.analysis-files-toggle {
+  justify-content: center;
+  color: var(--color-text-muted);
+  background: var(--color-bg-tertiary);
+}
+
+button.cache-files-more:hover,
+.analysis-files-toggle:hover {
+  color: var(--color-text);
+  background: var(--color-bg-secondary);
+}
+
 .cache-detail-actions {
   display: flex;
   gap: 12px;
