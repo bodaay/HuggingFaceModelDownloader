@@ -662,11 +662,13 @@
     const selectedQuants = Array.from(document.querySelectorAll('#quantOptions input[type="checkbox"]:checked'))
       .map(cb => cb.dataset.filter);
 
-    let cmd = `hfdownloader -r ${currentAnalysis.repo}`;
+    // Must match the CLI's real flags: the download subcommand, --dataset,
+    // -F and -E (this used to emit -r/-d/-f/-e, which all fail).
+    let cmd = `hfdownloader download ${currentAnalysis.repo}`;
 
     // Add dataset flag
     if (currentAnalysis.is_dataset) {
-      cmd += ' -d';
+      cmd += ' --dataset';
     }
 
     // Add revision if not main (from analysis)
@@ -677,14 +679,14 @@
     // Add filters - either from GGUF selection or advanced options
     if (selectedQuants.length > 0 && selectedQuants.length < (currentAnalysis.gguf?.quantizations?.length || 0)) {
       // Specific quant selection uses exact segment matching (github issue #78)
-      cmd += ` -f "${selectedQuants.join(',')}" --exact`;
+      cmd += ` -F "${selectedQuants.join(',')}" --exact`;
     } else if (advancedOptions.filter) {
-      cmd += ` -f "${advancedOptions.filter}"`;
+      cmd += ` -F "${advancedOptions.filter}"`;
     }
 
     // Add excludes
     if (advancedOptions.exclude) {
-      cmd += ` -e "${advancedOptions.exclude}"`;
+      cmd += ` -E "${advancedOptions.exclude}"`;
     }
 
     commandEl.textContent = cmd;
@@ -2474,8 +2476,11 @@
       'variant': 'Variants',
       'component': 'Components',
       'split': 'Dataset Splits',
+      'config': 'Dataset Configs',
       'format': 'Weight Format',
       'precision': 'Precision',
+      'vision_encoder': 'Vision Encoder (mmproj)',
+      'mtp_draft': 'MTP Draft Models (optional)',
       'default': 'Options'
     };
 
@@ -2627,12 +2632,14 @@
     // Add filter if selections differ from "all selected" or "recommended"
     const totalItems = document.querySelectorAll('.selectable-items input[type="checkbox"]').length;
     if (selectedItems.length > 0 && selectedItems.length < totalItems) {
-      cmd += ` -F ${selectedItems.join(',')}`;
+      // Selections name specific items, matched exactly like the web UI's
+      // own downloads (exactMatch) — github issues #78, #96.
+      cmd += ` -F ${selectedItems.join(',')} --exact`;
     }
 
     // Add advanced options if set
     if (advancedOptions.exclude) {
-      cmd += ` -e "${advancedOptions.exclude}"`;
+      cmd += ` -E "${advancedOptions.exclude}"`;
     }
 
     const cmdEl = $('#cliCommandText');

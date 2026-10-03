@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/bodaay/HuggingFaceModelDownloader/internal/filtermatch"
 )
 
 // unsafeRepoPath reports whether a relative path returned by the repo tree API
@@ -125,28 +127,6 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 			}
 		}
 
-		// Determine which filter (if any) matches this file name, prefer the longest match
-		// Filter matching is case-insensitive (e.g., q4_0 matches Q4_0)
-		matchedFilter := ""
-		if isLFS && len(job.Filters) > 0 {
-			for _, f := range job.Filters {
-				fLower := strings.ToLower(f)
-				if filterMatches(nameLower, fLower, job.ExactMatch) {
-					if len(f) > len(matchedFilter) {
-						matchedFilter = f
-					}
-				}
-			}
-			// If filters provided and none matched, skip typical large LFS blobs
-			if matchedFilter == "" {
-				ln := strings.ToLower(name)
-				ext := strings.ToLower(filepath.Ext(name))
-				if ext == ".bin" || ext == ".act" || ext == ".safetensors" || ext == ".zip" || strings.HasSuffix(ln, ".gguf") || strings.HasSuffix(ln, ".ggml") {
-					return nil
-				}
-			}
-		}
-
 		// Build URL and file size
 		var urlStr string
 		if isLFS {
@@ -182,7 +162,6 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 			SHA256:       sha,
 			Size:         size,
 			AcceptRanges: acceptRanges,
-			Subdir:       matchedFilter, // empty when no filter matched
 		})
 		return nil
 	}
@@ -210,7 +189,100 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 			}
 		}
 	}
-	return &Plan{Items: items, Commit: commitSHA}, nil
+	return &Plan{Items: applyFilters(items, job.Filters, job.ExactMatch), Commit: commitSHA}, nil
+}
+
+// applyFilters keeps the items a filtered job should download and records
+// the filter each matched (in Subdir, used by AppendFilterSubdir). Filters
+// are case-insensitive and matched against the full repo path, so folder
+// names select too (diffusers components like "unet", per-quant folders like
+// "Q4_K_M/", dataset splits like "validation"). With filters set:
+//   - only LFS files go through filters: small (non-LFS) files are always
+//     kept, as they always have been;
+//   - an LFS file matching any filter is kept (the longest filter wins);
+//   - an unmatched LFS weight or data file (isPayloadFile) is dropped,
+//     whatever its format (previously only six weight extensions were, so
+//     ONNX/TF/Flax weights, parquet splits and imatrix files came along with
+//     every filter);
+//   - other unmatched LFS files — tokenizers (tokenizer.model is LFS in
+//     Llama/Mistral/Gemma repos), docs, images — are kept: models need
+//     them to load.
+func applyFilters(items []PlanItem, filters []string, exact bool) []PlanItem {
+	var fs, orig []string // lowercased for matching; as given, for Subdir
+	for _, list := range filters {
+		// A single filter value may itself be a comma-separated list (the
+		// analyzer's per-component file lists, sent as one item by the web UI).
+		for _, f := range strings.Split(list, ",") {
+			if f = strings.TrimSpace(f); f != "" {
+				fs = append(fs, strings.ToLower(f))
+				orig = append(orig, f)
+			}
+		}
+	}
+	if len(fs) == 0 {
+		return items
+	}
+
+	var out []PlanItem
+	for _, it := range items {
+		relLower := strings.ToLower(it.RelativePath)
+		matched := ""
+		for j, f := range fs {
+			if filterMatches(relLower, f, exact) && len(f) > len(matched) {
+				matched = orig[j]
+			}
+		}
+		switch {
+		case matched != "":
+			it.Subdir = matched
+		case it.LFS && isPayloadFile(it.RelativePath):
+			continue
+		}
+		out = append(out, it)
+	}
+	return out
+}
+
+// payloadExts are extensions of model weights, exported model formats and
+// dataset/archive files: what filters choose between.
+var payloadExts = map[string]bool{
+	// weights and exported model formats
+	".safetensors": true, ".bin": true, ".pt": true, ".pth": true, ".ckpt": true,
+	".gguf": true, ".ggml": true, ".gguf_file": true, ".onnx": true, ".onnx_data": true,
+	".msgpack": true, ".h5": true, ".tflite": true, ".ot": true, ".npz": true, ".npy": true,
+	".pb": true, ".mlmodel": true, ".act": true, ".dat": true, // .dat: imatrix data
+	// dataset files and archives
+	".parquet": true, ".arrow": true, ".jsonl": true, ".csv": true, ".tsv": true,
+	".tar": true, ".zip": true, ".gz": true, ".zst": true, ".xz": true, ".bz2": true,
+}
+
+// isPayloadFile reports whether a repo file is a weight, export or data
+// file — dropped by filters it doesn't match — rather than a supporting file
+// such as a tokenizer, config, doc or image.
+func isPayloadFile(rel string) bool {
+	return payloadExts[strings.ToLower(path.Ext(rel))]
+}
+
+// UnmatchedFiltersWarning returns a warning when a filtered job matched no
+// file at all — usually a typo or a quant the repo doesn't have — since the
+// download would otherwise quietly fetch only metadata.
+func UnmatchedFiltersWarning(job Job, plan *Plan) string {
+	var given []string
+	for _, f := range job.Filters {
+		if f = strings.TrimSpace(f); f != "" {
+			given = append(given, f)
+		}
+	}
+	if len(given) == 0 {
+		return ""
+	}
+	for _, it := range plan.Items {
+		if it.Subdir != "" {
+			return ""
+		}
+	}
+	return fmt.Sprintf("no files matched filter(s) %s; only repo metadata will be downloaded (run `hfdownloader analyze %s` to see what is available)",
+		strings.Join(given, ","), job.Repo)
 }
 
 // revisionRejected reports whether err is an API response meaning the
@@ -236,35 +308,10 @@ func resolveAcceptsURL(ctx context.Context, httpc *http.Client, token, u string)
 	return resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusBadRequest
 }
 
-// filterMatches reports whether filter fLower matches the file name nameLower
-// (both already lowercased). In substring mode (the default) it uses a plain
-// substring check. In exact mode it matches when fLower equals either the whole
-// file name (with or without its extension) or a single delimiter-bounded
-// segment of the name. So "q6_k" matches "...-Q6_K.gguf" but not
-// "...-Q6_K_XL.gguf" (github issue #78), while a full-name filter such as a
-// vision encoder's "...-mmproj-bf16" still matches its file (github issue #84).
-func filterMatches(nameLower, fLower string, exact bool) bool {
-	if !exact {
-		return strings.Contains(nameLower, fLower)
-	}
-	// Whole-name match: handles filters that are a full file name, e.g. the
-	// mmproj/vision-encoder companion whose filter is the name minus ".gguf".
-	if fLower == nameLower || fLower == strings.TrimSuffix(nameLower, filepath.Ext(nameLower)) {
-		return true
-	}
-	for _, seg := range strings.FieldsFunc(nameLower, isFilterDelimiter) {
-		if seg == fLower {
-			return true
-		}
-	}
-	return false
-}
-
-// isFilterDelimiter reports whether r separates segments for exact-match
-// filtering. Underscores are intentionally NOT delimiters because quantization
-// names contain them (e.g. Q6_K, Q4_K_M).
-func isFilterDelimiter(r rune) bool {
-	return r == '-' || r == '.' || r == ' '
+// filterMatches reports whether filter fLower matches the repo path relLower
+// (both lowercased); see filtermatch.Match for the rules.
+func filterMatches(relLower, fLower string, exact bool) bool {
+	return filtermatch.Match(relLower, fLower, exact)
 }
 
 // destinationBase returns the base output directory for a job.

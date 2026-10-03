@@ -128,9 +128,11 @@ func TestAnalyzeGGUF_UnslothRepoCoverage(t *testing.T) {
 	// Explicitly assert the UD labels are present and distinct from their
 	// non-UD counterparts. Before the fix the UD entries would be labeled
 	// Q2_K..Q8_K and collide with the non-UD files.
+	// Unsloth Dynamic quants keep their "UD-" prefix so they are told apart
+	// from plain quants of the same type.
 	wantPresent := []string{
-		"Q2_K_XL", "Q3_K_XL", "Q4_K_XL", "Q5_K_XL", "Q6_K_XL", "Q8_K_XL",
-		"IQ1_S", "IQ1_M",
+		"UD-Q2_K_XL", "UD-Q3_K_XL", "UD-Q4_K_XL", "UD-Q5_K_XL", "UD-Q6_K_XL", "UD-Q8_K_XL",
+		"UD-IQ1_S", "UD-IQ1_M",
 	}
 	for _, w := range wantPresent {
 		if labels[w] == 0 {

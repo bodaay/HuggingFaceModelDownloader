@@ -24,7 +24,7 @@
 //	if info.Type == smartdl.TypeGGUF {
 //	    gguf := info.GGUF
 //	    for _, q := range gguf.Quantizations {
-//	        fmt.Printf("  %s: %s (%s RAM)\n", q.Name, q.File.SizeHuman, q.EstimatedRAMHuman)
+//	        fmt.Printf("  %s: %s (%s RAM)\n", q.Name, q.SizeHuman, q.EstimatedRAMHuman)
 //	    }
 //	}
 package smartdl
@@ -55,6 +55,11 @@ const (
 
 	// TypeAWQ indicates an AWQ quantized model.
 	TypeAWQ RepoType = "awq"
+
+	// TypeQuantized is a model quantized with another method declared in
+	// config.json (bitsandbytes, FP8, compressed-tensors, HQQ, EXL2/EXL3,
+	// MLX, ...); QuantizedInfo.Method names it.
+	TypeQuantized RepoType = "quantized"
 
 	// TypeONNX indicates an ONNX model.
 	TypeONNX RepoType = "onnx"
@@ -95,6 +100,8 @@ func (t RepoType) Description() string {
 		return "GPTQ quantized model"
 	case TypeAWQ:
 		return "AWQ quantized model"
+	case TypeQuantized:
+		return "Quantized model"
 	case TypeONNX:
 		return "ONNX model"
 	case TypeDataset:
@@ -230,6 +237,11 @@ type GGUFInfo struct {
 	// models. Populated when .gguf files whose basename starts with "mmproj"
 	// are present in the repo (e.g. gemma-3, llava, qwen2.5-vl in GGUF form).
 	MMProjFiles []FileInfo `json:"mmproj_files,omitempty"`
+
+	// MTPFiles are multi-token-prediction draft models (e.g. "mtp-*.gguf",
+	// "*-MTP-draft.gguf", files in an "MTP/" folder): optional companions
+	// for speculative decoding, not quantizations of the main model.
+	MTPFiles []FileInfo `json:"mtp_files,omitempty"`
 }
 
 // GGUFQuantization represents a single GGUF quantization option.
@@ -237,8 +249,19 @@ type GGUFQuantization struct {
 	// Name is the quantization name (e.g., "Q4_K_M").
 	Name string `json:"name"`
 
-	// File is the file info for this quantization.
+	// File is the first (or only) file of this quantization.
 	File FileInfo `json:"file"`
+
+	// Files are all files of this quantization: every shard of a split
+	// model ("-00001-of-00003"), in order.
+	Files []FileInfo `json:"files,omitempty"`
+
+	// Size is the combined size of Files.
+	Size      int64  `json:"size"`
+	SizeHuman string `json:"size_human"`
+
+	// Filter selects exactly this quantization's files with --exact.
+	Filter string `json:"filter,omitempty"`
 
 	// Quality is the quality rating (1-5 stars).
 	Quality int `json:"quality"`
@@ -284,6 +307,14 @@ type DiffusersInfo struct {
 type DiffusersComponent struct {
 	// Name is the component name (e.g., "unet", "vae").
 	Name string `json:"name"`
+
+	// WeightFiles are the weight files chosen for this component: one format
+	// and variant (fp16 safetensors preferred), never Flax/ONNX/OpenVINO
+	// exports. Empty for weightless components (tokenizer, scheduler).
+	WeightFiles []string `json:"weight_files,omitempty"`
+
+	// WeightSize is the combined size of WeightFiles.
+	WeightSize int64 `json:"weight_size,omitempty"`
 
 	// Library is the source library (e.g., "diffusers", "transformers").
 	Library string `json:"library,omitempty"`
@@ -369,8 +400,11 @@ type QuantizedInfo struct {
 	// Version is the quantization format version.
 	Version string `json:"version,omitempty"`
 
-	// BitsPerWeight is the EXL2 bits per weight.
+	// BitsPerWeight is the EXL2/EXL3 bits per weight.
 	BitsPerWeight float64 `json:"bits_per_weight,omitempty"`
+
+	// HeadBits is the EXL3 output-head bit width.
+	HeadBits int `json:"head_bits,omitempty"`
 
 	// ExcludedModules is the list of modules not quantized.
 	ExcludedModules []string `json:"excluded_modules,omitempty"`
@@ -399,11 +433,27 @@ type DatasetInfo struct {
 	// Configs is the list of available configurations/subsets.
 	Configs []string `json:"configs,omitempty"`
 
+	// ConfigDetails describes each config's folder, size and file count.
+	ConfigDetails []DatasetConfig `json:"config_details,omitempty"`
+
 	// Formats is the list of file formats found.
 	Formats []string `json:"formats,omitempty"`
 
 	// PrimaryFormat is the recommended format to download.
 	PrimaryFormat string `json:"primary_format,omitempty"`
+}
+
+// DatasetConfig is a dataset configuration (subset) stored in its own folder.
+type DatasetConfig struct {
+	// Name is the config name (e.g. "cola", "en").
+	Name string `json:"name"`
+	// Path is the folder holding the config's files (e.g. "cola", "data/en").
+	Path      string `json:"path"`
+	FileCount int    `json:"file_count"`
+	Size      int64  `json:"size"`
+	SizeHuman string `json:"size_human"`
+	// Splits are the split names found in this config.
+	Splits []string `json:"splits,omitempty"`
 }
 
 // DatasetSplit represents a dataset split (train, test, etc.).
@@ -574,7 +624,10 @@ func (r *RepoInfo) GenerateCLICommand(selectedFilters []string) string {
 	}
 
 	if len(selectedFilters) > 0 {
-		cmd += " -F " + strings.Join(selectedFilters, ",")
+		// Selectable items name specific quants/components/splits, so match
+		// them exactly: "-F q6_k" alone would also pull Q6_K_L and Q6_K_XL
+		// (github issues #78, #96).
+		cmd += " -F " + strings.Join(selectedFilters, ",") + " --exact"
 	}
 
 	return cmd

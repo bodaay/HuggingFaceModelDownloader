@@ -3,38 +3,103 @@
 
 package smartdl
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // Quantization method descriptions.
 var quantMethodDescriptions = map[string]string{
-	"gptq":        "GPTQ - GPU-accelerated post-training quantization",
-	"awq":         "AWQ - Activation-aware Weight Quantization",
-	"exl2":        "EXL2 - ExLlamaV2 mixed-precision quantization",
-	"bitsandbytes": "bitsandbytes INT8/INT4 quantization",
-	"bnb":         "bitsandbytes INT8/INT4 quantization",
-	"hqq":         "HQQ - Half-Quadratic Quantization",
-	"eetq":        "EETQ - Easy and Efficient Quantization",
+	"gptq":               "GPTQ - GPU-accelerated post-training quantization",
+	"awq":                "AWQ - Activation-aware Weight Quantization",
+	"exl2":               "EXL2 - ExLlamaV2 mixed-precision quantization",
+	"exl3":               "EXL3 - ExLlamaV3 trellis quantization",
+	"bitsandbytes":       "bitsandbytes INT8/INT4 quantization",
+	"bnb":                "bitsandbytes INT8/INT4 quantization",
+	"hqq":                "HQQ - Half-Quadratic Quantization",
+	"eetq":               "EETQ - Easy and Efficient Quantization",
+	"fp8":                "FP8 - 8-bit floating point weights",
+	"compressed-tensors": "compressed-tensors (llm-compressor) quantization",
+	"mlx":                "MLX - Apple silicon quantization (mlx-lm)",
 }
 
-// analyzeQuantized analyzes GPTQ/AWQ/EXL2 quantized models.
+// quantizedRepoType maps a quantization method to its repo type.
+func quantizedRepoType(method string) RepoType {
+	switch method {
+	case "gptq":
+		return TypeGPTQ
+	case "awq":
+		return TypeAWQ
+	}
+	return TypeQuantized
+}
+
+// quantizedTypeDescription describes a quantized repo, e.g.
+// "bitsandbytes quantized model (4-bit)".
+func quantizedTypeDescription(q *QuantizedInfo) string {
+	name := map[string]string{
+		"gptq": "GPTQ", "awq": "AWQ", "exl2": "EXL2", "exl3": "EXL3", "bitsandbytes": "bitsandbytes",
+		"bnb": "bitsandbytes", "hqq": "HQQ", "eetq": "EETQ", "fp8": "FP8", "compressed-tensors": "compressed-tensors", "mlx": "MLX",
+	}[q.Method]
+	if name == "" {
+		name = q.Method
+	}
+	desc := name + " quantized model"
+	switch {
+	case q.BitsPerWeight > 0:
+		desc += fmt.Sprintf(" (%.2f bpw)", q.BitsPerWeight)
+	case q.Bits > 0:
+		desc += fmt.Sprintf(" (%d-bit)", q.Bits)
+	}
+	return desc
+}
+
+// analyzeQuantized analyzes quantized models. The quantization settings come
+// from, in order: quantize_config.json (older AutoGPTQ/AutoAWQ repos),
+// quantization_config.json (EXL3),
+// config.json's "quantization_config" (transformers-native GPTQ, AWQ,
+// bitsandbytes, FP8, compressed-tensors, EXL3, ...), or config.json's
+// "quantization" block written by mlx-lm. Returns nil when none is present.
 func analyzeQuantized(metadata map[string]interface{}) *QuantizedInfo {
 	info := &QuantizedInfo{}
 
-	// Parse quantize_config.json
-	config, ok := metadata["quantize_config.json"].(map[string]interface{})
-	if !ok {
-		// Try config.json for some quantized models
-		config, ok = metadata["config.json"].(map[string]interface{})
-		if !ok {
-			return nil
+	cfgJSON, _ := metadata["config.json"].(map[string]interface{})
+	config, fromQuantizeConfig := metadata["quantize_config.json"].(map[string]interface{})
+	exlConfig, _ := metadata["quantization_config.json"].(map[string]interface{})
+	switch {
+	case fromQuantizeConfig:
+	case exlConfig != nil && exlConfig["quant_method"] != nil:
+		config = exlConfig // EXL3 writes a standalone quantization_config.json
+	case cfgJSON != nil && cfgJSON["quantization_config"] != nil:
+		config, _ = cfgJSON["quantization_config"].(map[string]interface{})
+	case cfgJSON != nil && cfgJSON["quant_method"] != nil:
+		config = cfgJSON // flat form, quant_method at the top level
+	case cfgJSON != nil && cfgJSON["quantization"] != nil:
+		config, _ = cfgJSON["quantization"].(map[string]interface{})
+		if config != nil {
+			info.Method = "mlx"
 		}
+	}
+	if config == nil {
+		return nil
 	}
 
 	// Detect quantization method
 	if method, ok := config["quant_method"].(string); ok {
-		info.Method = method
-		if desc, exists := quantMethodDescriptions[method]; exists {
-			info.MethodDescription = desc
+		info.Method = strings.ToLower(method)
+	} else if info.Method == "" && config["load_in_4bit"] != nil {
+		info.Method = "bitsandbytes"
+	} else if info.Method == "" && fromQuantizeConfig {
+		info.Method = "gptq" // AutoGPTQ's quantize_config.json predates quant_method
+	}
+	if desc, exists := quantMethodDescriptions[info.Method]; exists {
+		info.MethodDescription = desc
+	}
+	if info.Method == "bitsandbytes" && info.Bits == 0 {
+		if b, _ := config["load_in_4bit"].(bool); b {
+			info.Bits = 4
+		} else if b, _ := config["load_in_8bit"].(bool); b {
+			info.Bits = 8
 		}
 	}
 
@@ -67,6 +132,15 @@ func analyzeQuantized(metadata map[string]interface{}) *QuantizedInfo {
 	// EXL2 specific
 	if bpw, ok := config["bits_per_weight"].(float64); ok {
 		info.BitsPerWeight = bpw
+	}
+	// EXL3 stores fractional bits (e.g. 2.51) in "bits"
+	if info.Method == "exl3" {
+		if bits, ok := config["bits"].(float64); ok && bits != float64(int(bits)) {
+			info.BitsPerWeight = bits
+		}
+		if hb, ok := config["head_bits"].(float64); ok {
+			info.HeadBits = int(hb)
+		}
 	}
 
 	// Module quantization info
@@ -120,6 +194,12 @@ func detectBackends(info *QuantizedInfo) []string {
 		backends = append(backends, "hqq", "transformers")
 	case "eetq":
 		backends = append(backends, "eetq", "transformers")
+	case "exl3":
+		backends = append(backends, "exllamav3", "tabbyAPI")
+	case "fp8", "compressed-tensors":
+		backends = append(backends, "vllm", "sglang", "transformers")
+	case "mlx":
+		backends = append(backends, "mlx-lm")
 	}
 
 	return backends

@@ -167,6 +167,9 @@ func runInteractiveSelector(ctx context.Context, info *smartdl.RepoInfo, ro *Roo
 			IsDataset: info.IsDataset,
 			Revision:  info.Branch,
 			Filters:   result.SelectedFilters,
+			// Picker items name specific quants: q6_k must not also pull
+			// q6_k_l / q6_k_xl (github issue #96).
+			ExactMatch: true,
 		}
 		if job.Revision == "" {
 			job.Revision = "main"
@@ -251,7 +254,7 @@ func printAnalysis(info *smartdl.RepoInfo) {
 		printDiffusersAnalysis(info)
 	case smartdl.TypeLoRA:
 		printLoRAAnalysis(info)
-	case smartdl.TypeGPTQ, smartdl.TypeAWQ:
+	case smartdl.TypeGPTQ, smartdl.TypeAWQ, smartdl.TypeQuantized:
 		printQuantizedAnalysis(info)
 	case smartdl.TypeDataset:
 		printDatasetAnalysis(info)
@@ -298,9 +301,11 @@ func printSelectableItems(info *smartdl.RepoInfo) {
 		"variant":        "Available Variants",
 		"component":      "Available Components",
 		"split":          "Available Splits",
+		"config":         "Dataset Configs",
 		"format":         "Weight Formats",
 		"precision":      "Precision Options",
 		"vision_encoder": "Vision Encoder (mmproj)",
+		"mtp_draft":      "MTP Draft Models (optional, for speculative decoding)",
 		"options":        "Available Options",
 	}
 
@@ -327,7 +332,7 @@ func printSelectableItems(info *smartdl.RepoInfo) {
 				if item.Recommended {
 					rec = " *"
 				}
-				fmt.Printf("  %-12s  %12s  %12s  %s  -F %s%s\n",
+				fmt.Printf("  %-12s  %12s  %12s  %s  -F %s --exact%s\n",
 					item.Label,
 					item.SizeHuman,
 					item.RAMHuman,
@@ -344,7 +349,7 @@ func printSelectableItems(info *smartdl.RepoInfo) {
 				if item.Recommended {
 					rec = "yes"
 				}
-				fmt.Printf("  %-20s  %12s  %10s  -F %s\n",
+				fmt.Printf("  %-20s  %12s  %10s  -F %s --exact\n",
 					item.Label,
 					item.SizeHuman,
 					rec,
@@ -363,7 +368,7 @@ func printSelectableItems(info *smartdl.RepoInfo) {
 				if sizeStr == "" {
 					sizeStr = "-"
 				}
-				fmt.Printf("  %-15s  %12s  %10s  -F %s\n",
+				fmt.Printf("  %-15s  %12s  %10s  -F %s --exact\n",
 					item.Label,
 					sizeStr,
 					rec,
@@ -554,6 +559,14 @@ func printDiffusersAnalysis(info *smartdl.RepoInfo) {
 
 	if len(diff.Variants) > 0 {
 		fmt.Printf("Variants:   %s\n", strings.Join(diff.Variants, ", "))
+		for _, c := range diff.Components {
+			if len(c.WeightFiles) > 0 && strings.Contains(strings.ToLower(c.WeightFiles[0]), ".fp16.") {
+				// The selection below downloads fp16 weights only; diffusers
+				// loads them only when asked for that variant.
+				fmt.Println(`            Recommended selection is fp16: load with from_pretrained(..., variant="fp16")`)
+				break
+			}
+		}
 		fmt.Println()
 	}
 

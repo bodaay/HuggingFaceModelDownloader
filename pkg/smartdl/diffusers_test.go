@@ -4,6 +4,7 @@
 package smartdl
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -253,9 +254,9 @@ func TestDetectVariants(t *testing.T) {
 
 func TestDetectPrecisions(t *testing.T) {
 	tests := []struct {
-		name     string
-		files    []FileInfo
-		hasFP32  bool
+		name    string
+		files   []FileInfo
+		hasFP32 bool
 	}{
 		{
 			name: "standard safetensors",
@@ -337,57 +338,69 @@ func TestDiffusersToSelectableItems(t *testing.T) {
 		}
 	})
 
-	t.Run("with variants and components", func(t *testing.T) {
+	t.Run("components select their chosen weights", func(t *testing.T) {
 		info := &DiffusersInfo{
 			PipelineType: "StableDiffusionPipeline",
 			Variants:     []string{"fp16", "fp32"},
 			Components: []DiffusersComponent{
-				{Name: "unet", ClassName: "UNet2DConditionModel", Size: 3400000000, SizeHuman: "3.2 GiB", Required: true},
-				{Name: "vae", ClassName: "AutoencoderKL", Size: 330000000, SizeHuman: "315 MiB", Required: true},
+				{Name: "unet", ClassName: "UNet2DConditionModel", Size: 3400000000, Required: true,
+					WeightFiles: []string{"unet/diffusion_pytorch_model.fp16.safetensors"}, WeightSize: 1700000000},
+				{Name: "scheduler", ClassName: "PNDMScheduler", Required: true},
 			},
 		}
 
 		items := DiffusersToSelectableItems(info)
-		if len(items) != 4 { // 2 variants + 2 components
-			t.Errorf("expected 4 items, got %d", len(items))
+		if len(items) != 2 { // one per component; variants are not OR-filter items
+			t.Fatalf("expected 2 items, got %d", len(items))
 		}
-
-		// Check that fp16 is recommended
-		var fp16Item *SelectableItem
-		for i := range items {
-			if items[i].ID == "fp16" {
-				fp16Item = &items[i]
-				break
-			}
+		unet, sched := items[0], items[1]
+		if unet.FilterValue != "unet/diffusion_pytorch_model.fp16.safetensors" || unet.Size != 1700000000 || !unet.Recommended {
+			t.Errorf("unet item = %+v", unet)
 		}
-		if fp16Item == nil {
-			t.Fatal("fp16 item not found")
-		}
-		if !fp16Item.Recommended {
-			t.Error("fp16 should be recommended")
-		}
-		if fp16Item.Category != "variant" {
-			t.Errorf("fp16 category = %q, want 'variant'", fp16Item.Category)
-		}
-
-		// Check that required components are marked as recommended
-		var unetItem *SelectableItem
-		for i := range items {
-			if items[i].ID == "unet" {
-				unetItem = &items[i]
-				break
-			}
-		}
-		if unetItem == nil {
-			t.Fatal("unet item not found")
-		}
-		if !unetItem.Recommended {
-			t.Error("unet should be recommended (required)")
-		}
-		if unetItem.Category != "component" {
-			t.Errorf("unet category = %q, want 'component'", unetItem.Category)
+		if sched.FilterValue != "scheduler/" {
+			t.Errorf("weightless component filter = %q, want the folder", sched.FilterValue)
 		}
 	})
+}
+
+// SDXL-style component folders ship several weight formats side by side; only
+// one should be chosen (the old folder filter pulled ~39 GiB instead of ~7).
+func TestChooseComponentWeights(t *testing.T) {
+	lfs := func(p string) FileInfo {
+		return FileInfo{Path: p, Name: p[strings.LastIndex(p, "/")+1:], IsLFS: true, Size: 100}
+	}
+	files := []FileInfo{
+		lfs("unet/diffusion_pytorch_model.safetensors"),
+		lfs("unet/diffusion_pytorch_model.fp16.safetensors"),
+		lfs("unet/diffusion_pytorch_model.bin"),
+		lfs("unet/diffusion_pytorch_model.msgpack"),
+		lfs("unet/openvino_model.bin"),
+		lfs("unet/model.onnx"),
+		lfs("text_encoder/model-00001-of-00002.safetensors"),
+		lfs("text_encoder/model-00002-of-00002.safetensors"),
+		lfs("text_encoder/flax_model.msgpack"),
+		lfs("vae/diffusion_pytorch_model.bin"),
+		lfs("vae/diffusion_pytorch_model.msgpack"),
+		{Path: "unet/config.json", Name: "config.json"},
+	}
+	paths := func(fs []FileInfo) string {
+		var out []string
+		for _, f := range fs {
+			out = append(out, f.Path)
+		}
+		return strings.Join(out, ",")
+	}
+	cases := map[string]string{
+		"unet":         "unet/diffusion_pytorch_model.fp16.safetensors",
+		"text_encoder": "text_encoder/model-00001-of-00002.safetensors,text_encoder/model-00002-of-00002.safetensors",
+		"vae":          "vae/diffusion_pytorch_model.bin",
+		"tokenizer":    "",
+	}
+	for comp, want := range cases {
+		if got := paths(chooseComponentWeights(files, comp)); got != want {
+			t.Errorf("%s: chose %q, want %q", comp, got, want)
+		}
+	}
 }
 
 func TestCalculateDownloadSize(t *testing.T) {

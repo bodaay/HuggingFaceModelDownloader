@@ -283,8 +283,10 @@ func TestAnalyzeGGUF(t *testing.T) {
 		if len(result.Quantizations) != 1 {
 			t.Fatalf("expected 1 quantization, got %d", len(result.Quantizations))
 		}
-		if result.Quantizations[0].Name != "Unknown" {
-			t.Errorf("Name = %q, want 'Unknown'", result.Quantizations[0].Name)
+		// Named after the file rather than "Unknown", with a filter that
+		// actually selects it (github issue #89).
+		if q := result.Quantizations[0]; q.Name != "model" || q.Filter != "model" {
+			t.Errorf("Name, Filter = %q, %q; want the file name for both", q.Name, q.Filter)
 		}
 	})
 }

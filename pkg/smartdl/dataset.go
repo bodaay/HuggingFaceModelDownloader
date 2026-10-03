@@ -23,8 +23,6 @@ var formatDescriptions = map[string]string{
 	"zip":     "Compressed archive",
 }
 
-// Standard split names.
-var standardSplits = []string{"train", "test", "validation", "dev", "eval"}
 
 // analyzeDataset analyzes a dataset repository.
 func analyzeDataset(files []FileInfo) *DatasetInfo {
@@ -33,7 +31,7 @@ func analyzeDataset(files []FileInfo) *DatasetInfo {
 	// Collect splits and formats
 	splitMap := make(map[string]*DatasetSplit)
 	formatSet := make(map[string]bool)
-	configSet := make(map[string]bool)
+	configMap := make(map[string]*DatasetConfig)
 
 	for _, f := range files {
 		ext := strings.ToLower(filepath.Ext(f.Name))
@@ -61,9 +59,17 @@ func analyzeDataset(files []FileInfo) *DatasetInfo {
 		}
 
 		// Detect config/subset from path
-		config := detectConfig(f.Path)
-		if config != "" {
-			configSet[config] = true
+		if name, dir := detectConfigDir(f.Path); name != "" {
+			c := configMap[dir]
+			if c == nil {
+				c = &DatasetConfig{Name: name, Path: dir}
+				configMap[dir] = c
+			}
+			c.FileCount++
+			c.Size += f.Size
+			if split != "default" && !containsString(c.Splits, split) {
+				c.Splits = append(c.Splits, split)
+			}
 		}
 
 		// Add to split
@@ -95,10 +101,14 @@ func analyzeDataset(files []FileInfo) *DatasetInfo {
 	sort.Strings(info.Formats)
 
 	// Collect configs
-	for config := range configSet {
-		info.Configs = append(info.Configs, config)
+	for _, c := range configMap {
+		c.SizeHuman = humanSize(c.Size)
+		info.ConfigDetails = append(info.ConfigDetails, *c)
 	}
-	sort.Strings(info.Configs)
+	sort.Slice(info.ConfigDetails, func(i, j int) bool { return info.ConfigDetails[i].Path < info.ConfigDetails[j].Path })
+	for _, c := range info.ConfigDetails {
+		info.Configs = append(info.Configs, c.Name)
+	}
 
 	// Set primary format (prefer parquet > arrow > json)
 	info.PrimaryFormat = selectPrimaryFormat(info.Formats)
@@ -125,78 +135,71 @@ func isDataFileExtension(ext string) bool {
 	return dataExts[ext]
 }
 
-// detectSplit extracts split name from file path or name.
+
+// standardSplits are the common split names, in display priority order.
+var standardSplits = []string{"train", "test", "validation", "dev", "eval"}
+
+// splitNames are dataset split names recognized as path segments.
+var splitNames = map[string]bool{"train": true, "test": true, "validation": true, "valid": true, "val": true, "dev": true, "eval": true}
+
+// splitSegments splits a lowercased path the way --exact filters do.
+func splitSegments(s string) []string {
+	return strings.FieldsFunc(s, func(r rune) bool { return r == '/' || r == '-' || r == '.' || r == ' ' })
+}
+
+// detectSplit returns the split a data file belongs to: a path segment that
+// is a split name ("c4-train.00000-of-01024.json.gz", "clean/train.360/x",
+// "data/validation-0000.parquet") or a split name with a suffix
+// ("validation_matched"). File-name segments win over folder segments.
+// Segments are the same as --exact matching uses, so the split name selects
+// exactly these files.
 func detectSplit(path, name string) string {
-	pathLower := strings.ToLower(path)
-	nameLower := strings.ToLower(name)
-
-	// Check for standard splits in path
-	for _, split := range standardSplits {
-		if strings.Contains(pathLower, "/"+split+"/") ||
-			strings.HasPrefix(pathLower, split+"/") ||
-			strings.Contains(nameLower, split+"-") ||
-			strings.Contains(nameLower, split+"_") ||
-			strings.HasPrefix(nameLower, split+".") ||
-			strings.HasPrefix(nameLower, split+"-") {
-			return split
-		}
-	}
-
-	// Check for data/ prefix (common pattern)
-	if strings.HasPrefix(pathLower, "data/") {
-		parts := strings.Split(path, "/")
-		if len(parts) >= 2 {
-			// Check if second part is a split name
-			candidate := strings.ToLower(parts[1])
-			for _, split := range standardSplits {
-				if candidate == split {
-					return split
-				}
+	check := func(segs []string) string {
+		for _, seg := range segs {
+			if splitNames[seg] {
+				return seg
 			}
-			// Return as config/split hybrid
-			return candidate
+			if i := strings.Index(seg, "_"); i > 0 && splitNames[seg[:i]] {
+				return seg
+			}
 		}
+		return ""
 	}
-
-	return ""
+	if s := check(splitSegments(strings.ToLower(name))); s != "" {
+		return s
+	}
+	return check(splitSegments(strings.ToLower(filepath.ToSlash(filepath.Dir(path)))))
 }
 
-// detectConfig extracts configuration/subset name from path.
+// detectConfig returns the dataset config (subset) a file belongs to, or "".
 func detectConfig(path string) string {
-	// Common patterns: data/<config>/<split>/ or <config>/train/
-	parts := strings.Split(path, "/")
-
-	if len(parts) >= 2 {
-		first := parts[0]
-
-		// Skip common non-config prefixes
-		if first == "data" && len(parts) >= 3 {
-			candidate := parts[1]
-			// Check if it's not a standard split
-			for _, split := range standardSplits {
-				if strings.ToLower(candidate) == split {
-					return ""
-				}
-			}
-			return candidate
-		}
-
-		// Check if first part is not a standard split and not "data"
-		if first != "data" {
-			for _, split := range standardSplits {
-				if strings.ToLower(first) == split {
-					return ""
-				}
-			}
-			// Could be a config
-			if len(parts) >= 2 {
-				return first
-			}
-		}
-	}
-
-	return ""
+	name, _ := detectConfigDir(path)
+	return name
 }
+
+// detectConfigDir returns a file's config name and the folder holding the
+// config's files: the first folder ("cola/train-0000.parquet" → cola), or
+// the folder under data/ ("data/en/x.json" → en, data/en). Folders named
+// like a split are not configs.
+func detectConfigDir(path string) (name, dir string) {
+	parts := strings.Split(filepath.ToSlash(path), "/")
+	if len(parts) < 2 {
+		return "", ""
+	}
+	if parts[0] == "data" {
+		if len(parts) < 3 {
+			return "", ""
+		}
+		name, dir = parts[1], "data/"+parts[1]
+	} else {
+		name, dir = parts[0], parts[0]
+	}
+	if splitNames[strings.ToLower(name)] {
+		return "", ""
+	}
+	return name, dir
+}
+
 
 // splitPriority returns ordering priority for splits.
 func splitPriority(split string) int {
@@ -285,25 +288,79 @@ func HasMultipleFormats(info *DatasetInfo) bool {
 	return len(info.Formats) > 1
 }
 
-// DatasetToSelectableItems converts dataset splits to SelectableItems.
+
+func containsString(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// DatasetToSelectableItems converts dataset configs and splits to
+// SelectableItems. Filters combine with OR, so a config item selects all of
+// that config's splits and a split item selects that split in every config.
+// The catch-all "default" split (files with no recognizable split) is not
+// offered: no filter selects exactly those files. When configs exist one is
+// recommended ("default" if present, else the first) rather than "train",
+// which would pull the train split of every config (allenai/c4: terabytes).
 func DatasetToSelectableItems(info *DatasetInfo) []SelectableItem {
-	if info == nil || len(info.Splits) == 0 {
+	if info == nil || (len(info.Splits) == 0 && len(info.ConfigDetails) == 0) {
 		return nil
 	}
 
 	var items []SelectableItem
 
+	// Recommend "default", else the first config with a train split (glue's
+	// first config alphabetically, "ax", is a test-only diagnostic set).
+	recommendedConfig := ""
+	if len(info.ConfigDetails) > 1 {
+		recommendedConfig = info.ConfigDetails[0].Path
+		withTrain := ""
+		for _, c := range info.ConfigDetails {
+			if strings.EqualFold(c.Name, "default") {
+				withTrain = c.Path
+				break
+			}
+			if withTrain == "" && containsString(c.Splits, "train") {
+				withTrain = c.Path
+			}
+		}
+		if withTrain != "" {
+			recommendedConfig = withTrain
+		}
+	}
+	if len(info.ConfigDetails) > 1 {
+		for _, c := range info.ConfigDetails {
+			items = append(items, SelectableItem{
+				ID:          "config:" + c.Path,
+				Label:       c.Name,
+				Description: fmt.Sprintf("Dataset config (%d files)", c.FileCount),
+				Size:        c.Size,
+				SizeHuman:   c.SizeHuman,
+				Recommended: c.Path == recommendedConfig,
+				Category:    "config",
+				FilterValue: c.Path + "/",
+			})
+		}
+	}
+
 	// Add splits
 	splitDescriptions := map[string]string{
 		"train":      "Primary training data",
 		"validation": "Validation/evaluation set",
+		"valid":      "Validation/evaluation set",
+		"val":        "Validation/evaluation set",
 		"dev":        "Development set",
 		"test":       "Held-out test set",
 		"eval":       "Evaluation set",
-		"default":    "Default dataset split",
 	}
 
 	for _, split := range info.Splits {
+		if split.Name == "default" {
+			continue
+		}
 		desc := splitDescriptions[split.Name]
 		if desc == "" {
 			desc = "Dataset split"
@@ -314,17 +371,16 @@ func DatasetToSelectableItems(info *DatasetInfo) []SelectableItem {
 			desc = fmt.Sprintf("%s (%d files)", desc, split.FileCount)
 		}
 
-		item := SelectableItem{
+		items = append(items, SelectableItem{
 			ID:          split.Name,
-			Label:       strings.Title(split.Name),
+			Label:       split.Name,
 			Description: desc,
 			Size:        split.Size,
 			SizeHuman:   split.SizeHuman,
-			Recommended: split.Name == "train",
+			Recommended: recommendedConfig == "" && split.Name == "train",
 			Category:    "split",
 			FilterValue: split.Name,
-		}
-		items = append(items, item)
+		})
 	}
 
 	return items
