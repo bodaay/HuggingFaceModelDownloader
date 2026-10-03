@@ -455,8 +455,9 @@ func (a *Analyzer) detectType(files []FileInfo, isDataset bool) RepoType {
 		return TypeDiffusers
 	}
 
-	// 3. LoRA/Adapter - adapter_config.json
-	if hasFile["adapter_config.json"] {
+	// 3. LoRA/Adapter - adapter_config.json, or a diffusers LoRA
+	// (pytorch_lora_weights.safetensors, e.g. latent-consistency/lcm-lora-sdxl)
+	if hasFile["adapter_config.json"] || hasFile["pytorch_lora_weights.safetensors"] || hasFile["pytorch_lora_weights.bin"] {
 		return TypeLoRA
 	}
 
@@ -781,5 +782,8 @@ func populateSelectableItems(info *RepoInfo) {
 		info.RelatedDownloads = LoRAToRelatedDownloads(info.LoRA)
 	case TypeGPTQ, TypeAWQ, TypeQuantized:
 		info.SelectableItems = QuantizedToSelectableItems(info.Quantized, info.Files)
+	case TypeAudio, TypeVision, TypeMultimodal:
+		// e.g. whisper and SmolVLM ship PyTorch, ONNX, TF and Flax weights.
+		info.SelectableItems = WeightFormatItems(info.Files)
 	}
 }

@@ -503,8 +503,12 @@ func TransformersToSelectableItems(info *TransformersInfo, files []FileInfo) []S
 		}
 	}
 
-	// Add format options if both are available
-	if hasSafetensors && hasPytorchBin {
+	// Format choice: every weight format the repo ships (safetensors,
+	// PyTorch, ONNX, TF, Flax, ...). Falls back to the analyzed weight files
+	// when no file list is available.
+	if formatItems := WeightFormatItems(files); len(formatItems) > 0 {
+		items = append(items, formatItems...)
+	} else if hasSafetensors && hasPytorchBin {
 		items = append(items, SelectableItem{
 			ID:           "safetensors",
 			Label:        "SafeTensors",
