@@ -11,7 +11,7 @@ import (
 
 // Version is set at build time via ldflags
 // Keep in sync with VERSION file
-var Version = "3.2.0"
+var Version = "3.3.0"
 
 func main() {
 	if err := cli.Execute(Version); err != nil {
