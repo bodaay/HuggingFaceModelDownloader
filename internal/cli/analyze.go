@@ -74,6 +74,10 @@ Examples:
 				Token:    token,
 				Endpoint: endpoint,
 			}
+			// Honor the configured (or environment) proxy like downloads do.
+			if client, err := hfdownloader.BuildHTTPClient(configProxy()); err == nil {
+				opts.HTTPClient = client
+			}
 			analyzer := smartdl.NewAnalyzer(opts)
 
 			// Analyze with revision

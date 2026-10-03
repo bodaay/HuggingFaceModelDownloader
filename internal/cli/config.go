@@ -163,3 +163,23 @@ func configLinkMode() (hfdownloader.LinkMode, error) {
 	}
 	return hfdownloader.LinkAuto, nil
 }
+
+// configProxy returns the proxy section of the config file, or nil (then
+// the environment's HTTPS_PROXY/HTTP_PROXY apply).
+func configProxy() *hfdownloader.ProxyConfig {
+	cfg := loadConfigMap()
+	if cfg == nil {
+		return nil
+	}
+	m, ok := cfg["proxy"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	str := func(k string) string {
+		if v, ok := m[k]; ok && v != nil {
+			return fmt.Sprint(v)
+		}
+		return ""
+	}
+	return &hfdownloader.ProxyConfig{URL: str("url"), Username: str("username"), Password: str("password"), NoProxy: str("no_proxy")}
+}

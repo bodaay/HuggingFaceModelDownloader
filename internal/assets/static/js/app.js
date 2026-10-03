@@ -972,7 +972,10 @@
   // we only swap the buttons when the category changes. Running / queued
   // both show Cancel; paused has Resume+Cancel; terminal states show Dismiss.
   function statusCategory(status) {
-    if (status === 'running' || status === 'queued') return 'active';
+    // running and queued have different buttons (Pause only while running),
+    // so they must be separate categories or a queued job that starts never
+    // gets its Pause button until the page reloads.
+    if (status === 'running' || status === 'queued') return status;
     if (status === 'paused') return 'paused';
     if (status === 'completed' || status === 'failed' || status === 'cancelled') return 'done';
     return status || 'unknown';

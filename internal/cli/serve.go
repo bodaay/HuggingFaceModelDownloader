@@ -84,6 +84,11 @@ web app on a different origin needs to call the API.`,
 			if _, err := hfdownloader.ParseLinkMode(cfg.LinkMode); err != nil {
 				return err
 			}
+			// --auth-user alone used to enable auth with an empty password, and
+			// --auth-pass alone silently left auth off.
+			if (authUser == "") != (authPass == "") {
+				return fmt.Errorf("--auth-user and --auth-pass must be used together")
+			}
 
 			// Then override with CLI flags if explicitly set
 			if cmd.Flags().Changed("connections") {

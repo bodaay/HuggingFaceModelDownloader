@@ -6,10 +6,13 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -214,16 +217,25 @@ func (s *Server) handlePlanInternal(w http.ResponseWriter, req DownloadRequest) 
 		AppendFilterSubdir: req.AppendFilterSubdir,
 	}
 
+	if !hfdownloader.IsValidModelName(req.Repo) {
+		writeError(w, http.StatusBadRequest, "Invalid repository", fmt.Sprintf("%q is not owner/name", req.Repo))
+		return
+	}
+
+	// Locked snapshot: settings updates replace s.config concurrently.
+	cfg := s.settingsConfig()
+
 	// Use server-configured output directory (not from request for security)
-	outputDir := s.config.ModelsDir
+	outputDir := cfg.ModelsDir
 	if req.Dataset {
-		outputDir = s.config.DatasetsDir
+		outputDir = cfg.DatasetsDir
 	}
 
 	settings := hfdownloader.Settings{
 		OutputDir: outputDir,
-		Token:     s.config.Token,
-		Endpoint:  s.config.Endpoint,
+		Token:     cfg.Token,
+		Endpoint:  cfg.Endpoint,
+		Proxy:     cfg.Proxy,
 	}
 
 	// Collect plan items
@@ -249,7 +261,7 @@ func (s *Server) handlePlanInternal(w http.ResponseWriter, req DownloadRequest) 
 	// For now, we'll scan the repo manually
 	err := hfdownloader.ScanPlan(ctx, dlJob, settings, progressFunc)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to scan repository", err.Error())
+		writeError(w, hubErrorStatus(err), "Failed to scan repository", err.Error())
 		return
 	}
 
@@ -448,6 +460,13 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reject bad values up front: they used to be saved and then made every
+	// later job fail (even after a restart) with a misleading error.
+	if msg := validateSettingsUpdate(req.Concurrency, req.MaxActive, req.Retries, req.MultipartThreshold, req.Verify, req.Endpoint); msg != "" {
+		writeError(w, http.StatusBadRequest, "Invalid settings", msg)
+		return
+	}
+
 	// Apply updates under the write lock. Only the API-mutable fields are
 	// touched; startup-only fields (dirs, auth, origins) are left untouched so
 	// the middleware that reads them lock-free never races this writer.
@@ -558,6 +577,54 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+var sizePattern = regexp.MustCompile(`(?i)^\s*\d+(\.\d+)?\s*(b|kb|kib|mb|mib|gb|gib)?\s*$`)
+
+// validateSettingsUpdate returns a message describing the first invalid
+// value in a settings update, or "".
+func validateSettingsUpdate(conns, maxActive, retries *int, threshold, verify, endpoint *string) string {
+	if conns != nil && (*conns < 1 || *conns > 64) {
+		return "connections must be between 1 and 64"
+	}
+	if maxActive != nil && (*maxActive < 1 || *maxActive > 32) {
+		return "maxActive must be between 1 and 32"
+	}
+	if retries != nil && (*retries < 0 || *retries > 20) {
+		return "retries must be between 0 and 20"
+	}
+	if threshold != nil && *threshold != "" && !sizePattern.MatchString(*threshold) {
+		return fmt.Sprintf("multipartThreshold %q is not a size like 32MiB", *threshold)
+	}
+	if verify != nil && *verify != "" {
+		switch *verify {
+		case "none", "size", "etag", "sha256":
+		default:
+			return fmt.Sprintf("verify %q must be none, size, etag or sha256", *verify)
+		}
+	}
+	if endpoint != nil && *endpoint != "" {
+		u, err := url.Parse(*endpoint)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Sprintf("endpoint %q must be an http(s) URL", *endpoint)
+		}
+	}
+	return ""
+}
+
+// hubErrorStatus maps a Hub lookup error to an HTTP status: 404 for missing
+// repos/revisions, 401 for gated or private ones, else 502 (upstream).
+func hubErrorStatus(err error) int {
+	msg := strings.ToLower(err.Error())
+	switch {
+	case errors.Is(err, hfdownloader.ErrNotFound) || strings.Contains(msg, "not found"):
+		return http.StatusNotFound
+	case errors.Is(err, hfdownloader.ErrUnauthorized) || strings.Contains(msg, "unauthorized") || strings.Contains(msg, "forbidden"):
+		return http.StatusUnauthorized
+	case errors.Is(err, context.DeadlineExceeded):
+		return http.StatusGatewayTimeout
+	}
+	return http.StatusBadGateway
+}
+
 // --- Helpers ---
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
@@ -593,10 +660,15 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		revision = "main"
 	}
 
-	// Create analyzer
+	// Create analyzer with the configured proxy (it used to connect directly
+	// even when a proxy was set). Locked snapshot of the settings.
+	cfg := s.settingsConfig()
 	opts := smartdl.AnalyzerOptions{
-		Token:    s.config.Token,
-		Endpoint: s.config.Endpoint,
+		Token:    cfg.Token,
+		Endpoint: cfg.Endpoint,
+	}
+	if client, err := hfdownloader.BuildHTTPClient(cfg.Proxy); err == nil {
+		opts.HTTPClient = client
 	}
 	analyzer := smartdl.NewAnalyzer(opts)
 
@@ -616,7 +688,7 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "Analysis failed", err.Error())
+		writeError(w, hubErrorStatus(err), "Analysis failed", err.Error())
 		return
 	}
 
@@ -627,22 +699,22 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 
 // CachedRepoInfo represents a cached repository for the API response.
 type CachedRepoInfo struct {
-	Repo           string            `json:"repo"`
-	Owner          string            `json:"owner"`
-	Name           string            `json:"name"`
-	Type           string            `json:"type"` // "model" or "dataset"
-	Path           string            `json:"path"`
-	FriendlyPath   string            `json:"friendlyPath,omitempty"`
-	Size           int64             `json:"size"`
-	SizeHuman      string            `json:"sizeHuman"`
-	FileCount      int               `json:"fileCount"`
-	Branch         string            `json:"branch,omitempty"`
-	Commit         string            `json:"commit,omitempty"`
-	Downloaded     string            `json:"downloaded,omitempty"`
-	DownloadStatus string            `json:"downloadStatus,omitempty"` // "complete", "filtered", "unknown"
-	Snapshots      []string          `json:"snapshots,omitempty"`
-	Files          []CachedFileInfo  `json:"files,omitempty"`
-	Manifest       *ManifestInfo     `json:"manifest,omitempty"`
+	Repo           string           `json:"repo"`
+	Owner          string           `json:"owner"`
+	Name           string           `json:"name"`
+	Type           string           `json:"type"` // "model" or "dataset"
+	Path           string           `json:"path"`
+	FriendlyPath   string           `json:"friendlyPath,omitempty"`
+	Size           int64            `json:"size"`
+	SizeHuman      string           `json:"sizeHuman"`
+	FileCount      int              `json:"fileCount"`
+	Branch         string           `json:"branch,omitempty"`
+	Commit         string           `json:"commit,omitempty"`
+	Downloaded     string           `json:"downloaded,omitempty"`
+	DownloadStatus string           `json:"downloadStatus,omitempty"` // "complete", "filtered", "unknown"
+	Snapshots      []string         `json:"snapshots,omitempty"`
+	Files          []CachedFileInfo `json:"files,omitempty"`
+	Manifest       *ManifestInfo    `json:"manifest,omitempty"`
 }
 
 // CachedFileInfo represents a file in the cache.
@@ -655,23 +727,23 @@ type CachedFileInfo struct {
 
 // ManifestInfo contains manifest data if available.
 type ManifestInfo struct {
-	Branch      string `json:"branch"`
-	Commit      string `json:"commit"`
-	Downloaded  string `json:"downloaded"`
-	Command     string `json:"command,omitempty"`
-	TotalSize   int64  `json:"totalSize"`
-	TotalFiles  int    `json:"totalFiles"`
-	IsFiltered  bool   `json:"isFiltered"`  // True if download used filters
-	Filters     string `json:"filters,omitempty"` // The filter string if used
+	Branch     string `json:"branch"`
+	Commit     string `json:"commit"`
+	Downloaded string `json:"downloaded"`
+	Command    string `json:"command,omitempty"`
+	TotalSize  int64  `json:"totalSize"`
+	TotalFiles int    `json:"totalFiles"`
+	IsFiltered bool   `json:"isFiltered"`        // True if download used filters
+	Filters    string `json:"filters,omitempty"` // The filter string if used
 }
 
 // CacheStats contains aggregate statistics about the cache.
 type CacheStats struct {
-	TotalModels   int    `json:"totalModels"`
-	TotalDatasets int    `json:"totalDatasets"`
-	TotalSize     int64  `json:"totalSize"`
+	TotalModels    int    `json:"totalModels"`
+	TotalDatasets  int    `json:"totalDatasets"`
+	TotalSize      int64  `json:"totalSize"`
 	TotalSizeHuman string `json:"totalSizeHuman"`
-	TotalFiles    int    `json:"totalFiles"`
+	TotalFiles     int    `json:"totalFiles"`
 }
 
 // handleCacheList lists all cached repositories with rich metadata.
@@ -1097,6 +1169,13 @@ func (s *Server) handleCacheExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCacheDelete(w http.ResponseWriter, r *http.Request) {
+	if repo := r.PathValue("repo"); repo != "" && s.jobs.HasActiveJob(repo, r.URL.Query().Get("type") == "dataset") {
+		// Deleting files under a running download made the job fail with
+		// "no such file" errors.
+		writeError(w, http.StatusConflict, "Repository is being downloaded",
+			"cancel or wait for its download job before deleting it")
+		return
+	}
 	repo := r.PathValue("repo")
 	if repo == "" {
 		writeError(w, http.StatusBadRequest, "Missing repo path", "")

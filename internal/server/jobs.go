@@ -266,9 +266,14 @@ func (m *JobManager) CreateJob(req DownloadRequest) (*Job, bool, error) {
 	// against runJob's in-place mutations of the live job.
 	m.mu.Lock()
 	for _, existing := range m.jobs {
+		// Same selection only: a request for the same repo with different
+		// filters is a different download, not a duplicate.
 		if existing.Repo == req.Repo &&
 			existing.Revision == revision &&
 			existing.IsDataset == req.Dataset &&
+			sameStrings(existing.Filters, req.Filters) &&
+			sameStrings(existing.Excludes, req.Excludes) &&
+			existing.ExactMatch == req.ExactMatch &&
 			(existing.Status == JobStatusQueued || existing.Status == JobStatusRunning) {
 			snapshot := m.cloneJobLocked(existing)
 			m.mu.Unlock()
@@ -609,6 +614,10 @@ func (m *JobManager) runJob(job *Job) {
 	// multipart ticker keeps reporting unchanged bytes during a retry).
 	var activityPath string
 	var activityMark int64
+	// Speed: an exponential moving average over ~1s samples.
+	var speedLastBytes int64
+	var speedLastTime time.Time
+	var speedEMA float64
 	findFile := func(path string) *JobFileProgress {
 		for i := range job.Files {
 			if job.Files[i].Path == path {
@@ -685,6 +694,22 @@ func (m *JobManager) runJob(job *Job) {
 				total += f.Downloaded
 			}
 			job.Progress.DownloadedBytes = total
+			now := time.Now()
+			if speedLastTime.IsZero() {
+				speedLastTime, speedLastBytes = now, total
+			} else if dt := now.Sub(speedLastTime).Seconds(); dt >= 1 {
+				rate := float64(total-speedLastBytes) / dt
+				if rate < 0 {
+					rate = 0
+				}
+				if speedEMA == 0 {
+					speedEMA = rate
+				} else {
+					speedEMA = 0.3*rate + 0.7*speedEMA
+				}
+				job.Progress.BytesPerSecond = int64(speedEMA)
+				speedLastTime, speedLastBytes = now, total
+			}
 
 		case "file_done":
 			if activityPath == evt.Path {
@@ -743,6 +768,7 @@ func finishRunStatusLocked(job *Job, myGeneration int, ctxErr, runErr error) boo
 	endTime := time.Now()
 	job.EndedAt = &endTime
 	job.Progress.Activity = ""
+	job.Progress.BytesPerSecond = 0
 	if ctxErr != nil {
 		job.Status = JobStatusCancelled
 	} else if runErr != nil {
@@ -752,4 +778,35 @@ func finishRunStatusLocked(job *Job, myGeneration int, ctxErr, runErr error) boo
 		job.Status = JobStatusCompleted
 	}
 	return true
+}
+
+// sameStrings reports whether two string lists hold the same values, in any
+// order.
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	count := map[string]int{}
+	for _, v := range a {
+		count[v]++
+	}
+	for _, v := range b {
+		if count[v]--; count[v] < 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// HasActiveJob reports whether repo has a queued, running or paused job.
+func (m *JobManager) HasActiveJob(repo string, isDataset bool) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, j := range m.jobs {
+		if j.Repo == repo && j.IsDataset == isDataset &&
+			(j.Status == JobStatusQueued || j.Status == JobStatusRunning || j.Status == JobStatusPaused) {
+			return true
+		}
+	}
+	return false
 }

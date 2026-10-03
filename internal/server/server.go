@@ -172,7 +172,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	addr := fmt.Sprintf("%s:%d", s.config.Addr, s.config.Port)
 
 	// Build middleware chain: CORS -> Auth -> Logging -> Handler
-	handler := s.corsMiddleware(s.basicAuthMiddleware(s.loggingMiddleware(mux)))
+	handler := s.corsMiddleware(s.basicAuthMiddleware(s.loggingMiddleware(limitBodyMiddleware(mux))))
 
 	s.httpServer = &http.Server{
 		Addr:         addr,
@@ -253,6 +253,19 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 }
 
 // Middleware
+
+// maxRequestBody caps API request bodies. Requests are small JSON documents;
+// without a cap a single 200 MB body pushed the server to ~680 MB of RAM.
+const maxRequestBody = 1 << 20
+
+func limitBodyMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
