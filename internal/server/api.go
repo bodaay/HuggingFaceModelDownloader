@@ -486,7 +486,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if req.Verify != nil && *req.Verify != "" {
 		s.config.Verify = *req.Verify
 	}
-	if req.Retries != nil && *req.Retries > 0 {
+	if req.Retries != nil && *req.Retries >= 0 { // 0 = no retries (validated above)
 		s.config.Retries = *req.Retries
 	}
 	if req.Endpoint != nil {
@@ -679,7 +679,7 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	info, err := analyzer.AnalyzeWithRevision(ctx, repo, isDataset, revision)
 	if err != nil {
 		// Check if both model and dataset exist
-		if err == smartdl.ErrBothExist {
+		if errors.Is(err, smartdl.ErrBothExist) { // the analyzer wraps it
 			writeJSON(w, http.StatusOK, map[string]any{
 				"needsSelection": true,
 				"repo":           repo,

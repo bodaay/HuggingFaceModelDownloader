@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -67,7 +68,7 @@ type JobFileProgress struct {
 	Path       string `json:"path"`
 	TotalBytes int64  `json:"totalBytes"`
 	Downloaded int64  `json:"downloaded"`
-	Status     string `json:"status"` // pending, active, assembling, verifying, complete, skipped, error
+	Status     string `json:"status"` // pending, active, assembling, verifying, complete, skipped
 }
 
 // JobManager manages download jobs.
@@ -598,6 +599,9 @@ func (m *JobManager) runJob(job *Job) {
 		Endpoint:           cfg.Endpoint,
 		Proxy:              cfg.Proxy,
 		LinkMode:           cfg.LinkMode,
+		// Recorded in the hfd.yaml manifest; the cache browser reads the
+		// filters back from it to show filtered downloads as "filtered".
+		Command: jobCommand(job),
 	}
 
 	// Local mode: write real files into LocalDir instead of the HF cache
@@ -719,6 +723,9 @@ func (m *JobManager) runJob(job *Job) {
 			for i := range job.Files {
 				if job.Files[i].Path == evt.Path {
 					job.Files[i].Status = "complete"
+					if strings.HasPrefix(evt.Message, "skip") {
+						job.Files[i].Status = "skipped" // already in the cache
+					}
 					job.Files[i].Downloaded = job.Files[i].TotalBytes
 					break
 				}
@@ -809,4 +816,25 @@ func (m *JobManager) HasActiveJob(repo string, isDataset bool) bool {
 		}
 	}
 	return false
+}
+
+// jobCommand is the CLI command equivalent to a web download job.
+func jobCommand(j *Job) string {
+	parts := []string{"hfdownloader", "download", j.Repo}
+	if j.IsDataset {
+		parts = append(parts, "--dataset")
+	}
+	if j.Revision != "" && j.Revision != "main" {
+		parts = append(parts, "-b", j.Revision)
+	}
+	if len(j.Filters) > 0 {
+		parts = append(parts, "-F", strings.Join(j.Filters, ","))
+	}
+	if j.ExactMatch {
+		parts = append(parts, "--exact")
+	}
+	if len(j.Excludes) > 0 {
+		parts = append(parts, "-E", strings.Join(j.Excludes, ","))
+	}
+	return strings.Join(parts, " ")
 }

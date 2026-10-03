@@ -44,6 +44,11 @@ func validate(job Job, cfg Settings) error {
 	if !IsValidModelName(job.Repo) {
 		return fmt.Errorf("invalid repo id %q (expected owner/name)", job.Repo)
 	}
+	switch cfg.Verify {
+	case "", "none", "size", "etag", "sha256":
+	default:
+		return fmt.Errorf("invalid verify mode %q (want none, size, etag or sha256)", cfg.Verify)
+	}
 	if strings.TrimSpace(job.Shards) != "" {
 		if _, err := ParseShardRanges(job.Shards); err != nil {
 			return err

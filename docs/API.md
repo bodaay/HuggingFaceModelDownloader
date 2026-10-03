@@ -475,10 +475,8 @@ omitted when empty.
 about once a second) and is reset to `0` when the job ends.
 
 Per-file `status` values: `pending` (planned), `active` (downloading),
-`assembling` (joining multipart chunks), `verifying` (hashing), `complete`.
-Files that were already present and skipped are also reported as `complete`.
-(`skipped` and `error` are reserved values that the server does not currently
-emit.)
+`assembling` (joining multipart chunks), `verifying` (hashing), `complete`,
+and `skipped` (already present in the cache).
 
 ---
 

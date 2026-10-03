@@ -79,3 +79,14 @@ func TestRequestBodyLimit(t *testing.T) {
 		t.Errorf("2 MiB body: status %d, want a 4xx", w.Code)
 	}
 }
+
+func TestJobCommand(t *testing.T) {
+	j := &Job{Repo: "o/r", Revision: "v2", IsDataset: true, Filters: []string{"q4_k_m", "mmproj-f16"}, ExactMatch: true, Excludes: []string{".md"}}
+	want := "hfdownloader download o/r --dataset -b v2 -F q4_k_m,mmproj-f16 --exact -E .md"
+	if got := jobCommand(j); got != want {
+		t.Errorf("jobCommand = %q, want %q", got, want)
+	}
+	if got := jobCommand(&Job{Repo: "o/r", Revision: "main"}); got != "hfdownloader download o/r" {
+		t.Errorf("plain job command = %q", got)
+	}
+}
