@@ -2694,7 +2694,7 @@
     }
     const name = rel.slice(rel.lastIndexOf('/') + 1);
     const stripExt = s => { const i = s.lastIndexOf('.'); return i > 0 ? s.slice(0, i) : s; };
-    const stripShard = s => stripExt(s).replace(/-\d{5}-of-\d{5}$/, '');
+    const stripShard = s => stripExt(s).replace(/-\d{3,}-of-\d{3,}$/, '');
     if (f === rel || f === name || f === stripShard(name) || f === stripExt(rel)) return true;
     return rel.split(/[\/\-. ]+/).includes(f);
   }

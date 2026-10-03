@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -190,7 +191,11 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 			}
 		}
 	}
-	return &Plan{Items: applyFilters(items, job.Filters, job.ExactMatch, job.IsDataset), Commit: commitSHA}, nil
+	items = applyFilters(items, job.Filters, job.ExactMatch, job.IsDataset)
+	if items, err = applyShardRange(items, job.Shards); err != nil {
+		return nil, err
+	}
+	return &Plan{Items: items, Commit: commitSHA}, nil
 }
 
 // applyFilters keeps the items a filtered job should download and records
@@ -272,6 +277,65 @@ func isPayloadFile(rel string, isDataset bool) bool {
 		return true
 	}
 	return isDataset && (ext == ".json" || ext == ".txt")
+}
+
+// shardPattern matches the split-file suffix and captures the shard number.
+var shardPattern = regexp.MustCompile(`-(\d+)-of-\d+(?:\.[^/]*)?$`)
+
+// ParseShardRanges parses "1-100", "5", "1-50,120-185" into inclusive ranges.
+func ParseShardRanges(spec string) ([][2]int, error) {
+	var out [][2]int
+	for _, part := range strings.Split(spec, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		lo, hi, isRange := strings.Cut(part, "-")
+		a, err := strconv.Atoi(strings.TrimSpace(lo))
+		b := a
+		if err == nil && isRange {
+			b, err = strconv.Atoi(strings.TrimSpace(hi))
+		}
+		if err != nil || a < 1 || b < a {
+			return nil, fmt.Errorf("invalid shard range %q (use e.g. 1-100 or 1-50,120-185)", part)
+		}
+		out = append(out, [2]int{a, b})
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("empty shard range")
+	}
+	return out, nil
+}
+
+// applyShardRange keeps split files whose shard number is in the ranges;
+// files that aren't split are kept.
+func applyShardRange(items []PlanItem, spec string) ([]PlanItem, error) {
+	if strings.TrimSpace(spec) == "" {
+		return items, nil
+	}
+	ranges, err := ParseShardRanges(spec)
+	if err != nil {
+		return nil, err
+	}
+	var out []PlanItem
+	for _, it := range items {
+		m := shardPattern.FindStringSubmatch(path.Base(it.RelativePath))
+		if m != nil {
+			n, _ := strconv.Atoi(m[1])
+			in := false
+			for _, r := range ranges {
+				if n >= r[0] && n <= r[1] {
+					in = true
+					break
+				}
+			}
+			if !in {
+				continue
+			}
+		}
+		out = append(out, it)
+	}
+	return out, nil
 }
 
 // UnmatchedFiltersWarning returns a warning when a filtered job matched no
