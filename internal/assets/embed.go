@@ -20,4 +20,3 @@ func StaticFS() fs.FS {
 	sub, _ := fs.Sub(staticFiles, "static")
 	return sub
 }
-

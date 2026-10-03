@@ -23,7 +23,6 @@ var formatDescriptions = map[string]string{
 	"zip":     "Compressed archive",
 }
 
-
 // analyzeDataset analyzes a dataset repository.
 func analyzeDataset(files []FileInfo) *DatasetInfo {
 	info := &DatasetInfo{}
@@ -135,7 +134,6 @@ func isDataFileExtension(ext string) bool {
 	return dataExts[ext]
 }
 
-
 // standardSplits are the common split names, in display priority order.
 var standardSplits = []string{"train", "test", "validation", "dev", "eval"}
 
@@ -199,7 +197,6 @@ func detectConfigDir(path string) (name, dir string) {
 	}
 	return name, dir
 }
-
 
 // splitPriority returns ordering priority for splits.
 func splitPriority(split string) int {
@@ -287,7 +284,6 @@ func HasMultipleConfigs(info *DatasetInfo) bool {
 func HasMultipleFormats(info *DatasetInfo) bool {
 	return len(info.Formats) > 1
 }
-
 
 func containsString(list []string, s string) bool {
 	for _, v := range list {

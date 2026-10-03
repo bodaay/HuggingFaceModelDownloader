@@ -84,6 +84,11 @@ web app on a different origin needs to call the API.`,
 			if _, err := hfdownloader.ParseLinkMode(cfg.LinkMode); err != nil {
 				return err
 			}
+			// --auth-user alone used to enable auth with an empty password, and
+			// --auth-pass alone silently left auth off.
+			if (authUser == "") != (authPass == "") {
+				return fmt.Errorf("--auth-user and --auth-pass must be used together")
+			}
 
 			// Then override with CLI flags if explicitly set
 			if cmd.Flags().Changed("connections") {
@@ -151,7 +156,7 @@ web app on a different origin needs to call the API.`,
 	cmd.Flags().IntVarP(&conns, "connections", "c", 8, "Connections per file")
 	cmd.Flags().IntVar(&active, "max-active", 3, "Max concurrent file downloads")
 	cmd.Flags().StringVar(&multipartThreshold, "multipart-threshold", "32MiB", "Use multipart for files >= this size")
-	cmd.Flags().StringVar(&verify, "verify", "size", "Verification mode: none|size|sha256")
+	cmd.Flags().StringVar(&verify, "verify", "size", "Verification for files without a known SHA256: none|size|etag|sha256")
 	cmd.Flags().IntVar(&retries, "retries", 4, "Max retry attempts per HTTP request")
 	cmd.Flags().StringVar(&endpoint, "endpoint", "", "Custom HuggingFace endpoint URL (e.g., https://hf-mirror.com)")
 

@@ -17,19 +17,19 @@ import (
 
 // RepoInfo represents detailed info about a downloaded repo.
 type RepoInfo struct {
-	Type         string         `json:"type"`
-	Repo         string         `json:"repo"`
-	Branch       string         `json:"branch"`
-	Commit       string         `json:"commit"`
-	TotalFiles   int            `json:"total_files"`
-	TotalSize    int64          `json:"total_size"`
-	TotalSizeHuman string       `json:"total_size_human"`
-	StartedAt    string         `json:"started_at"`
-	CompletedAt  string         `json:"completed_at"`
-	Command      string         `json:"command"`
-	FriendlyPath string         `json:"friendly_path"`
-	CachePath    string         `json:"cache_path"`
-	Files        []RepoFileInfo `json:"files"`
+	Type           string         `json:"type"`
+	Repo           string         `json:"repo"`
+	Branch         string         `json:"branch"`
+	Commit         string         `json:"commit"`
+	TotalFiles     int            `json:"total_files"`
+	TotalSize      int64          `json:"total_size"`
+	TotalSizeHuman string         `json:"total_size_human"`
+	StartedAt      string         `json:"started_at"`
+	CompletedAt    string         `json:"completed_at"`
+	Command        string         `json:"command"`
+	FriendlyPath   string         `json:"friendly_path"`
+	CachePath      string         `json:"cache_path"`
+	Files          []RepoFileInfo `json:"files"`
 }
 
 // RepoFileInfo represents a file in the repo.

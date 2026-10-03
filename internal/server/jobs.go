@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -67,7 +68,7 @@ type JobFileProgress struct {
 	Path       string `json:"path"`
 	TotalBytes int64  `json:"totalBytes"`
 	Downloaded int64  `json:"downloaded"`
-	Status     string `json:"status"` // pending, active, assembling, verifying, complete, skipped, error
+	Status     string `json:"status"` // pending, active, assembling, verifying, complete, skipped
 }
 
 // JobManager manages download jobs.
@@ -266,9 +267,14 @@ func (m *JobManager) CreateJob(req DownloadRequest) (*Job, bool, error) {
 	// against runJob's in-place mutations of the live job.
 	m.mu.Lock()
 	for _, existing := range m.jobs {
+		// Same selection only: a request for the same repo with different
+		// filters is a different download, not a duplicate.
 		if existing.Repo == req.Repo &&
 			existing.Revision == revision &&
 			existing.IsDataset == req.Dataset &&
+			sameStrings(existing.Filters, req.Filters) &&
+			sameStrings(existing.Excludes, req.Excludes) &&
+			existing.ExactMatch == req.ExactMatch &&
 			(existing.Status == JobStatusQueued || existing.Status == JobStatusRunning) {
 			snapshot := m.cloneJobLocked(existing)
 			m.mu.Unlock()
@@ -593,6 +599,9 @@ func (m *JobManager) runJob(job *Job) {
 		Endpoint:           cfg.Endpoint,
 		Proxy:              cfg.Proxy,
 		LinkMode:           cfg.LinkMode,
+		// Recorded in the hfd.yaml manifest; the cache browser reads the
+		// filters back from it to show filtered downloads as "filtered".
+		Command: jobCommand(job),
 	}
 
 	// Local mode: write real files into LocalDir instead of the HF cache
@@ -609,6 +618,10 @@ func (m *JobManager) runJob(job *Job) {
 	// multipart ticker keeps reporting unchanged bytes during a retry).
 	var activityPath string
 	var activityMark int64
+	// Speed: an exponential moving average over ~1s samples.
+	var speedLastBytes int64
+	var speedLastTime time.Time
+	var speedEMA float64
 	findFile := func(path string) *JobFileProgress {
 		for i := range job.Files {
 			if job.Files[i].Path == path {
@@ -685,6 +698,22 @@ func (m *JobManager) runJob(job *Job) {
 				total += f.Downloaded
 			}
 			job.Progress.DownloadedBytes = total
+			now := time.Now()
+			if speedLastTime.IsZero() {
+				speedLastTime, speedLastBytes = now, total
+			} else if dt := now.Sub(speedLastTime).Seconds(); dt >= 1 {
+				rate := float64(total-speedLastBytes) / dt
+				if rate < 0 {
+					rate = 0
+				}
+				if speedEMA == 0 {
+					speedEMA = rate
+				} else {
+					speedEMA = 0.3*rate + 0.7*speedEMA
+				}
+				job.Progress.BytesPerSecond = int64(speedEMA)
+				speedLastTime, speedLastBytes = now, total
+			}
 
 		case "file_done":
 			if activityPath == evt.Path {
@@ -694,6 +723,9 @@ func (m *JobManager) runJob(job *Job) {
 			for i := range job.Files {
 				if job.Files[i].Path == evt.Path {
 					job.Files[i].Status = "complete"
+					if strings.HasPrefix(evt.Message, "skip") {
+						job.Files[i].Status = "skipped" // already in the cache
+					}
 					job.Files[i].Downloaded = job.Files[i].TotalBytes
 					break
 				}
@@ -743,6 +775,7 @@ func finishRunStatusLocked(job *Job, myGeneration int, ctxErr, runErr error) boo
 	endTime := time.Now()
 	job.EndedAt = &endTime
 	job.Progress.Activity = ""
+	job.Progress.BytesPerSecond = 0
 	if ctxErr != nil {
 		job.Status = JobStatusCancelled
 	} else if runErr != nil {
@@ -752,4 +785,58 @@ func finishRunStatusLocked(job *Job, myGeneration int, ctxErr, runErr error) boo
 		job.Status = JobStatusCompleted
 	}
 	return true
+}
+
+// sameStrings reports whether two string lists hold the same values, in any
+// order.
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	count := map[string]int{}
+	for _, v := range a {
+		count[v]++
+	}
+	for _, v := range b {
+		if count[v]--; count[v] < 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// HasActiveJob reports whether repo has a queued, running or paused job.
+func (m *JobManager) HasActiveJob(repo string, isDataset bool) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, j := range m.jobs {
+		// EqualFold: on case-insensitive filesystems (macOS, Windows)
+		// "BARTOWSKI/x" and "bartowski/x" are the same cache directory.
+		if strings.EqualFold(j.Repo, repo) && j.IsDataset == isDataset &&
+			(j.Status == JobStatusQueued || j.Status == JobStatusRunning || j.Status == JobStatusPaused) {
+			return true
+		}
+	}
+	return false
+}
+
+// jobCommand is the CLI command equivalent to a web download job.
+func jobCommand(j *Job) string {
+	parts := []string{"hfdownloader", "download", j.Repo}
+	if j.IsDataset {
+		parts = append(parts, "--dataset")
+	}
+	if j.Revision != "" && j.Revision != "main" {
+		parts = append(parts, "-b", j.Revision)
+	}
+	if len(j.Filters) > 0 {
+		parts = append(parts, "-F", strings.Join(j.Filters, ","))
+	}
+	if j.ExactMatch {
+		parts = append(parts, "--exact")
+	}
+	if len(j.Excludes) > 0 {
+		parts = append(parts, "-E", strings.Join(j.Excludes, ","))
+	}
+	return strings.Join(parts, " ")
 }

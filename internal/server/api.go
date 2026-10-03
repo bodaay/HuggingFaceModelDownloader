@@ -6,10 +6,13 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -139,6 +142,10 @@ func (s *Server) handleStartDownload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Invalid repo format", "Expected owner/name")
 		return
 	}
+	if req.Revision != "" && !hfdownloader.ValidRevision(req.Revision) {
+		writeError(w, http.StatusBadRequest, "Invalid revision", fmt.Sprintf("%q is not a branch, tag or commit", req.Revision))
+		return
+	}
 
 	// If dry-run, return the plan
 	if req.DryRun {
@@ -214,16 +221,25 @@ func (s *Server) handlePlanInternal(w http.ResponseWriter, req DownloadRequest) 
 		AppendFilterSubdir: req.AppendFilterSubdir,
 	}
 
+	if !hfdownloader.IsValidModelName(req.Repo) {
+		writeError(w, http.StatusBadRequest, "Invalid repository", fmt.Sprintf("%q is not owner/name", req.Repo))
+		return
+	}
+
+	// Locked snapshot: settings updates replace s.config concurrently.
+	cfg := s.settingsConfig()
+
 	// Use server-configured output directory (not from request for security)
-	outputDir := s.config.ModelsDir
+	outputDir := cfg.ModelsDir
 	if req.Dataset {
-		outputDir = s.config.DatasetsDir
+		outputDir = cfg.DatasetsDir
 	}
 
 	settings := hfdownloader.Settings{
 		OutputDir: outputDir,
-		Token:     s.config.Token,
-		Endpoint:  s.config.Endpoint,
+		Token:     cfg.Token,
+		Endpoint:  cfg.Endpoint,
+		Proxy:     cfg.Proxy,
 	}
 
 	// Collect plan items
@@ -242,14 +258,14 @@ func (s *Server) handlePlanInternal(w http.ResponseWriter, req DownloadRequest) 
 	}
 
 	// Run in dry-run mode (plan only)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), hubRequestTimeout)
 	defer cancel()
 
 	// We need to get the plan - use a modified Run that returns early
 	// For now, we'll scan the repo manually
 	err := hfdownloader.ScanPlan(ctx, dlJob, settings, progressFunc)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to scan repository", err.Error())
+		writeError(w, hubErrorStatus(err), "Failed to scan repository", err.Error())
 		return
 	}
 
@@ -448,6 +464,24 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reject bad values up front: they used to be saved and then made every
+	// later job fail (even after a restart) with a misleading error.
+	msg := validateSettingsUpdate(req.Concurrency, req.MaxActive, req.Retries, req.MultipartThreshold, req.Verify, req.Endpoint)
+	if msg == "" && req.Proxy != nil && req.Proxy.URL != nil && *req.Proxy.URL != "" {
+		// A malformed proxy URL was saved and then broke every download.
+		u, err := url.Parse(*req.Proxy.URL)
+		switch {
+		case err != nil || u.Host == "":
+			msg = fmt.Sprintf("proxy url %q is not a valid URL", *req.Proxy.URL)
+		case u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "socks5" && u.Scheme != "socks5h":
+			msg = fmt.Sprintf("proxy url %q must use http, https, socks5 or socks5h", *req.Proxy.URL)
+		}
+	}
+	if msg != "" {
+		writeError(w, http.StatusBadRequest, "Invalid settings", msg)
+		return
+	}
+
 	// Apply updates under the write lock. Only the API-mutable fields are
 	// touched; startup-only fields (dirs, auth, origins) are left untouched so
 	// the middleware that reads them lock-free never races this writer.
@@ -467,7 +501,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if req.Verify != nil && *req.Verify != "" {
 		s.config.Verify = *req.Verify
 	}
-	if req.Retries != nil && *req.Retries > 0 {
+	if req.Retries != nil && *req.Retries >= 0 { // 0 = no retries (validated above)
 		s.config.Retries = *req.Retries
 	}
 	if req.Endpoint != nil {
@@ -558,6 +592,59 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+var sizePattern = regexp.MustCompile(`(?i)^\s*\d+(\.\d+)?\s*(b|kb|kib|mb|mib|gb|gib)?\s*$`)
+
+// validateSettingsUpdate returns a message describing the first invalid
+// value in a settings update, or "".
+func validateSettingsUpdate(conns, maxActive, retries *int, threshold, verify, endpoint *string) string {
+	if conns != nil && (*conns < 1 || *conns > 64) {
+		return "connections must be between 1 and 64"
+	}
+	if maxActive != nil && (*maxActive < 1 || *maxActive > 32) {
+		return "maxActive must be between 1 and 32"
+	}
+	if retries != nil && (*retries < 0 || *retries > 20) {
+		return "retries must be between 0 and 20"
+	}
+	if threshold != nil && *threshold != "" && !sizePattern.MatchString(*threshold) {
+		return fmt.Sprintf("multipartThreshold %q is not a size like 32MiB", *threshold)
+	}
+	if verify != nil && *verify != "" {
+		switch *verify {
+		case "none", "size", "etag", "sha256":
+		default:
+			return fmt.Sprintf("verify %q must be none, size, etag or sha256", *verify)
+		}
+	}
+	if endpoint != nil && *endpoint != "" {
+		u, err := url.Parse(*endpoint)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Sprintf("endpoint %q must be an http(s) URL", *endpoint)
+		}
+	}
+	return ""
+}
+
+// hubRequestTimeout bounds analyze/plan Hub requests. It must stay below the
+// server's WriteTimeout or slow requests (large repos, a dead proxy) end in an
+// empty reply instead of an error.
+const hubRequestTimeout = 3 * time.Minute
+
+// hubErrorStatus maps a Hub lookup error to an HTTP status: 404 for missing
+// repos/revisions, 401 for gated or private ones, else 502 (upstream).
+func hubErrorStatus(err error) int {
+	msg := strings.ToLower(err.Error())
+	switch {
+	case errors.Is(err, hfdownloader.ErrNotFound) || strings.Contains(msg, "not found"):
+		return http.StatusNotFound
+	case errors.Is(err, hfdownloader.ErrUnauthorized) || strings.Contains(msg, "unauthorized") || strings.Contains(msg, "forbidden"):
+		return http.StatusUnauthorized
+	case errors.Is(err, context.DeadlineExceeded):
+		return http.StatusGatewayTimeout
+	}
+	return http.StatusBadGateway
+}
+
 // --- Helpers ---
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
@@ -593,21 +680,26 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		revision = "main"
 	}
 
-	// Create analyzer
+	// Create analyzer with the configured proxy (it used to connect directly
+	// even when a proxy was set). Locked snapshot of the settings.
+	cfg := s.settingsConfig()
 	opts := smartdl.AnalyzerOptions{
-		Token:    s.config.Token,
-		Endpoint: s.config.Endpoint,
+		Token:    cfg.Token,
+		Endpoint: cfg.Endpoint,
+	}
+	if client, err := hfdownloader.BuildHTTPClient(cfg.Proxy); err == nil {
+		opts.HTTPClient = client
 	}
 	analyzer := smartdl.NewAnalyzer(opts)
 
 	// Analyze with timeout
-	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), hubRequestTimeout)
 	defer cancel()
 
 	info, err := analyzer.AnalyzeWithRevision(ctx, repo, isDataset, revision)
 	if err != nil {
 		// Check if both model and dataset exist
-		if err == smartdl.ErrBothExist {
+		if errors.Is(err, smartdl.ErrBothExist) { // the analyzer wraps it
 			writeJSON(w, http.StatusOK, map[string]any{
 				"needsSelection": true,
 				"repo":           repo,
@@ -616,7 +708,7 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "Analysis failed", err.Error())
+		writeError(w, hubErrorStatus(err), "Analysis failed", err.Error())
 		return
 	}
 
@@ -627,22 +719,22 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 
 // CachedRepoInfo represents a cached repository for the API response.
 type CachedRepoInfo struct {
-	Repo           string            `json:"repo"`
-	Owner          string            `json:"owner"`
-	Name           string            `json:"name"`
-	Type           string            `json:"type"` // "model" or "dataset"
-	Path           string            `json:"path"`
-	FriendlyPath   string            `json:"friendlyPath,omitempty"`
-	Size           int64             `json:"size"`
-	SizeHuman      string            `json:"sizeHuman"`
-	FileCount      int               `json:"fileCount"`
-	Branch         string            `json:"branch,omitempty"`
-	Commit         string            `json:"commit,omitempty"`
-	Downloaded     string            `json:"downloaded,omitempty"`
-	DownloadStatus string            `json:"downloadStatus,omitempty"` // "complete", "filtered", "unknown"
-	Snapshots      []string          `json:"snapshots,omitempty"`
-	Files          []CachedFileInfo  `json:"files,omitempty"`
-	Manifest       *ManifestInfo     `json:"manifest,omitempty"`
+	Repo           string           `json:"repo"`
+	Owner          string           `json:"owner"`
+	Name           string           `json:"name"`
+	Type           string           `json:"type"` // "model" or "dataset"
+	Path           string           `json:"path"`
+	FriendlyPath   string           `json:"friendlyPath,omitempty"`
+	Size           int64            `json:"size"`
+	SizeHuman      string           `json:"sizeHuman"`
+	FileCount      int              `json:"fileCount"`
+	Branch         string           `json:"branch,omitempty"`
+	Commit         string           `json:"commit,omitempty"`
+	Downloaded     string           `json:"downloaded,omitempty"`
+	DownloadStatus string           `json:"downloadStatus,omitempty"` // "complete", "filtered", "unknown"
+	Snapshots      []string         `json:"snapshots,omitempty"`
+	Files          []CachedFileInfo `json:"files,omitempty"`
+	Manifest       *ManifestInfo    `json:"manifest,omitempty"`
 }
 
 // CachedFileInfo represents a file in the cache.
@@ -655,23 +747,23 @@ type CachedFileInfo struct {
 
 // ManifestInfo contains manifest data if available.
 type ManifestInfo struct {
-	Branch      string `json:"branch"`
-	Commit      string `json:"commit"`
-	Downloaded  string `json:"downloaded"`
-	Command     string `json:"command,omitempty"`
-	TotalSize   int64  `json:"totalSize"`
-	TotalFiles  int    `json:"totalFiles"`
-	IsFiltered  bool   `json:"isFiltered"`  // True if download used filters
-	Filters     string `json:"filters,omitempty"` // The filter string if used
+	Branch     string `json:"branch"`
+	Commit     string `json:"commit"`
+	Downloaded string `json:"downloaded"`
+	Command    string `json:"command,omitempty"`
+	TotalSize  int64  `json:"totalSize"`
+	TotalFiles int    `json:"totalFiles"`
+	IsFiltered bool   `json:"isFiltered"`        // True if download used filters
+	Filters    string `json:"filters,omitempty"` // The filter string if used
 }
 
 // CacheStats contains aggregate statistics about the cache.
 type CacheStats struct {
-	TotalModels   int    `json:"totalModels"`
-	TotalDatasets int    `json:"totalDatasets"`
-	TotalSize     int64  `json:"totalSize"`
+	TotalModels    int    `json:"totalModels"`
+	TotalDatasets  int    `json:"totalDatasets"`
+	TotalSize      int64  `json:"totalSize"`
 	TotalSizeHuman string `json:"totalSizeHuman"`
-	TotalFiles    int    `json:"totalFiles"`
+	TotalFiles     int    `json:"totalFiles"`
 }
 
 // handleCacheList lists all cached repositories with rich metadata.
@@ -983,13 +1075,14 @@ func (s *Server) handleCacheInfo(w http.ResponseWriter, r *http.Request) {
 
 // RebuildResponse represents the result of a cache rebuild operation.
 type RebuildResponse struct {
-	Success         bool     `json:"success"`
-	ReposScanned    int      `json:"reposScanned"`
-	SymlinksCreated int      `json:"symlinksCreated"`
-	SymlinksUpdated int      `json:"symlinksUpdated"`
-	OrphansRemoved  int      `json:"orphansRemoved,omitempty"`
-	Errors          []string `json:"errors,omitempty"`
-	Message         string   `json:"message,omitempty"`
+	Success                 bool     `json:"success"`
+	ReposScanned            int      `json:"reposScanned"`
+	SymlinksCreated         int      `json:"symlinksCreated"`
+	SymlinksUpdated         int      `json:"symlinksUpdated"`
+	OrphansRemoved          int      `json:"orphansRemoved,omitempty"`
+	Errors                  []string `json:"errors,omitempty"`
+	Message                 string   `json:"message,omitempty"`
+	SnapshotEntriesRepaired int      `json:"snapshotEntriesRepaired,omitempty"`
 }
 
 // handleCacheRebuild regenerates the friendly view symlinks from the hub cache.
@@ -1024,6 +1117,8 @@ func (s *Server) handleCacheRebuild(w http.ResponseWriter, r *http.Request) {
 		SymlinksCreated: result.SymlinksCreated,
 		SymlinksUpdated: result.SymlinksUpdated,
 		OrphansRemoved:  result.OrphansRemoved,
+
+		SnapshotEntriesRepaired: result.SnapshotEntriesRepaired,
 	}
 
 	for _, e := range result.Errors {
@@ -1084,6 +1179,10 @@ func (s *Server) handleCacheExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dest := filepath.Join(cfg.ExportDir, repoDir.Owner(), repoDir.Name())
+	if req.Revision != "" && !hfdownloader.ValidRevision(req.Revision) {
+		writeError(w, http.StatusBadRequest, "Invalid revision", fmt.Sprintf("%q is not a branch, tag or commit", req.Revision))
+		return
+	}
 	res, err := repoDir.Export(dest, hfdownloader.ExportOptions{Revision: req.Revision, Filters: req.Filters})
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -1097,6 +1196,13 @@ func (s *Server) handleCacheExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCacheDelete(w http.ResponseWriter, r *http.Request) {
+	if repo := r.PathValue("repo"); repo != "" && s.jobs.HasActiveJob(repo, r.URL.Query().Get("type") == "dataset") {
+		// Deleting files under a running download made the job fail with
+		// "no such file" errors.
+		writeError(w, http.StatusConflict, "Repository is being downloaded",
+			"cancel or wait for its download job before deleting it")
+		return
+	}
 	repo := r.PathValue("repo")
 	if repo == "" {
 		writeError(w, http.StatusBadRequest, "Missing repo path", "")

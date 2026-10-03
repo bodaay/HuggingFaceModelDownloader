@@ -29,28 +29,40 @@ type QuantBranch struct {
 // "SC_6.00bpw_H6_V6".
 var bpwBranch = regexp.MustCompile(`(?i)(?:^|[_-])(\d+(?:\.\d+)?)bpw(?:[_-]h(\d+))?`)
 
+// underscoreBranch matches bartowski-style EXL2 branch names ("4_25" = 4.25
+// bpw, "8_0"); only trusted for repos whose name says exl2/exl3.
+var underscoreBranch = regexp.MustCompile(`^(\d+)_(\d+)$`)
+
 // maxSizedBranches bounds how many branches get a tree listing for sizes.
 const maxSizedBranches = 40
 
 // quantBranchesFromRefs returns the bitrate branches among refs, sorted by
 // bits per weight.
-func quantBranchesFromRefs(refs []RepoRef) []QuantBranch {
+func quantBranchesFromRefs(refs []RepoRef, repo string) []QuantBranch {
+	exl := strings.Contains(strings.ToLower(repo), "exl")
 	var out []QuantBranch
 	for _, r := range refs {
 		if r.Type != "branch" || r.Name == "main" {
 			continue
 		}
-		m := bpwBranch.FindStringSubmatch(r.Name)
-		if m == nil {
+		var b QuantBranch
+		if m := bpwBranch.FindStringSubmatch(r.Name); m != nil {
+			bits, err := strconv.ParseFloat(m[1], 64)
+			if err != nil {
+				continue
+			}
+			b = QuantBranch{Name: r.Name, BitsPerWeight: bits}
+			if m[2] != "" {
+				b.HeadBits, _ = strconv.Atoi(m[2])
+			}
+		} else if m := underscoreBranch.FindStringSubmatch(r.Name); m != nil && exl {
+			bits, err := strconv.ParseFloat(m[1]+"."+m[2], 64)
+			if err != nil {
+				continue
+			}
+			b = QuantBranch{Name: r.Name, BitsPerWeight: bits}
+		} else {
 			continue
-		}
-		bits, err := strconv.ParseFloat(m[1], 64)
-		if err != nil {
-			continue
-		}
-		b := QuantBranch{Name: r.Name, BitsPerWeight: bits}
-		if m[2] != "" {
-			b.HeadBits, _ = strconv.Atoi(m[2])
 		}
 		out = append(out, b)
 	}

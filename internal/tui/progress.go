@@ -26,15 +26,14 @@ type LiveRenderer struct {
 	job hfdownloader.Job
 	cfg hfdownloader.Settings
 
-	mu         sync.Mutex
-	start      time.Time
-	events     chan hfdownloader.ProgressEvent
-	done       chan struct{}
-	stopped    bool
-	hideCur    bool
-	supports   bool // ANSI + interactive
-	noColor    bool
-	lastRedraw time.Time
+	mu       sync.Mutex
+	start    time.Time
+	events   chan hfdownloader.ProgressEvent
+	done     chan struct{}
+	stopped  bool
+	hideCur  bool
+	supports bool // ANSI + interactive
+	noColor  bool
 
 	// aggregate
 	totalFiles int
@@ -604,11 +603,7 @@ func ansiOkay() bool {
 		// On modern Windows 10+ terminals this is typically fine.
 		// Fall back to plain output when TERM=dumb or NO_COLOR set.
 	}
-	termEnv := strings.ToLower(os.Getenv("TERM"))
-	if termEnv == "dumb" {
-		return false
-	}
-	return true
+	return strings.ToLower(os.Getenv("TERM")) != "dumb"
 }
 
 func colorize(s, style string, lr *LiveRenderer) string {
@@ -635,4 +630,3 @@ func colorize(s, style string, lr *LiveRenderer) string {
 
 func bold(s string) string { return "\x1b[1m" + s + "\x1b[0m" }
 func dim(s string) string  { return "\x1b[2m" + s + "\x1b[0m" }
-

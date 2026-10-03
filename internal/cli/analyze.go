@@ -74,6 +74,10 @@ Examples:
 				Token:    token,
 				Endpoint: endpoint,
 			}
+			// Honor the configured (or environment) proxy like downloads do.
+			if client, err := hfdownloader.BuildHTTPClient(configProxy()); err == nil {
+				opts.HTTPClient = client
+			}
 			analyzer := smartdl.NewAnalyzer(opts)
 
 			// Analyze with revision
@@ -317,7 +321,7 @@ func printSelectableItems(info *smartdl.RepoInfo) {
 	for cat, items := range categories {
 		title := categoryTitles[cat]
 		if title == "" {
-			title = "Available " + strings.Title(cat)
+			title = "Available " + strings.ToUpper(cat[:1]) + cat[1:]
 		}
 
 		fmt.Println()
@@ -641,13 +645,22 @@ func printQuantizedAnalysis(info *smartdl.RepoInfo) {
 	}
 
 	q := info.Quantized
-	fmt.Printf("Method:     %s", strings.ToUpper(q.Method))
 	if q.MethodDescription != "" {
-		fmt.Printf(" - %s", q.MethodDescription)
+		fmt.Printf("Method:     %s\n", q.MethodDescription)
+	} else {
+		fmt.Printf("Method:     %s\n", strings.ToUpper(q.Method))
 	}
-	fmt.Println()
 
-	fmt.Printf("Bits:       %d-bit\n", q.Bits)
+	switch {
+	case q.BitsPerWeight > 0:
+		fmt.Printf("Bits:       %.2f bpw", q.BitsPerWeight)
+		if q.HeadBits > 0 {
+			fmt.Printf(" (%d-bit head)", q.HeadBits)
+		}
+		fmt.Println()
+	case q.Bits > 0:
+		fmt.Printf("Bits:       %d-bit\n", q.Bits)
+	}
 	if q.GroupSize > 0 {
 		fmt.Printf("Group Size: %d\n", q.GroupSize)
 	}

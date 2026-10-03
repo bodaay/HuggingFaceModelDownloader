@@ -158,4 +158,3 @@ func TestIntegration_DryRun(t *testing.T) {
 		t.Logf("  %s (%d bytes, LFS=%v)", f.Path, f.Size, f.LFS)
 	}
 }
-

@@ -47,8 +47,8 @@ func newConfigCmd() *cobra.Command {
 
 func newConfigInitCmd() *cobra.Command {
 	var (
-		force      bool
-		useYAML    bool
+		force   bool
+		useYAML bool
 	)
 
 	cmd := &cobra.Command{
@@ -153,7 +153,6 @@ func newConfigPathCmd() *cobra.Command {
 	}
 }
 
-
 // configLinkMode returns the link-mode from the config file (auto if unset).
 func configLinkMode() (hfdownloader.LinkMode, error) {
 	if cfg := loadConfigMap(); cfg != nil {
@@ -162,4 +161,24 @@ func configLinkMode() (hfdownloader.LinkMode, error) {
 		}
 	}
 	return hfdownloader.LinkAuto, nil
+}
+
+// configProxy returns the proxy section of the config file, or nil (then
+// the environment's HTTPS_PROXY/HTTP_PROXY apply).
+func configProxy() *hfdownloader.ProxyConfig {
+	cfg := loadConfigMap()
+	if cfg == nil {
+		return nil
+	}
+	m, ok := cfg["proxy"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	str := func(k string) string {
+		if v, ok := m[k]; ok && v != nil {
+			return fmt.Sprint(v)
+		}
+		return ""
+	}
+	return &hfdownloader.ProxyConfig{URL: str("url"), Username: str("username"), Password: str("password"), NoProxy: str("no_proxy")}
 }

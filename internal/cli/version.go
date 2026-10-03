@@ -77,4 +77,3 @@ func newVersionCmd(version string) *cobra.Command {
 
 	return cmd
 }
-

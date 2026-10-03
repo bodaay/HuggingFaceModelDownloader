@@ -575,6 +575,22 @@ func GGUFToSelectableItems(info *GGUFInfo) []SelectableItem {
 			FilterValue: filter,
 			Files:       []string{chosen.Path},
 		})
+		// The other precisions (e.g. BF16, F32) as optional alternatives.
+		for _, f := range info.MMProjFiles {
+			if f.Path == chosen.Path {
+				continue
+			}
+			items = append(items, SelectableItem{
+				ID:          "mmproj:" + strings.ToLower(f.Path),
+				Label:       filepath.Base(f.Name),
+				Description: "Multimodal projector (alternative precision)",
+				Size:        f.Size,
+				SizeHuman:   f.SizeHuman,
+				Category:    "vision_encoder",
+				FilterValue: strings.ToLower(strings.TrimSuffix(filepath.Base(f.Name), filepath.Ext(f.Name))),
+				Files:       []string{f.Path},
+			})
+		}
 	}
 
 	// MTP draft models: optional companions for speculative decoding.

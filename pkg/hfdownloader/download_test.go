@@ -5,38 +5,11 @@ package hfdownloader
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
-
-// mockHFAPI creates a mock HuggingFace API server for testing
-func mockHFAPI(t *testing.T, responses map[string]interface{}) *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Logf("Mock request: %s %s", r.Method, r.URL.Path)
-
-		if resp, ok := responses[r.URL.Path]; ok {
-			w.Header().Set("Content-Type", "application/json")
-			switch v := resp.(type) {
-			case []byte:
-				w.Write(v)
-			case string:
-				w.Write([]byte(v))
-			default:
-				json.NewEncoder(w).Encode(v)
-			}
-			return
-		}
-
-		// Default 404
-		t.Logf("No mock for path: %s", r.URL.Path)
-		w.WriteHeader(http.StatusNotFound)
-	}))
-}
 
 func TestJob_Validation(t *testing.T) {
 	tests := []struct {

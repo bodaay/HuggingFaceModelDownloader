@@ -157,4 +157,3 @@ func shouldSkipLocal(it PlanItem, dst string) (bool, string, error) {
 
 	return false, "", nil
 }
-

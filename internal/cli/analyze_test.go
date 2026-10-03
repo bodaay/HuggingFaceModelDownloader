@@ -53,13 +53,13 @@ func captureOutput(f func()) string {
 
 func TestPrintAnalysis(t *testing.T) {
 	info := &smartdl.RepoInfo{
-		Repo:           "owner/repo",
-		Branch:         "main",
-		Type:           smartdl.TypeGGUF,
+		Repo:            "owner/repo",
+		Branch:          "main",
+		Type:            smartdl.TypeGGUF,
 		TypeDescription: "GGUF quantized model",
-		FileCount:      5,
-		TotalSizeHuman: "4.5 GiB",
-		CLICommand:     "hfdownloader download owner/repo",
+		FileCount:       5,
+		TotalSizeHuman:  "4.5 GiB",
+		CLICommand:      "hfdownloader download owner/repo",
 	}
 
 	output := captureOutput(func() {
@@ -311,15 +311,15 @@ func TestPrintSelectableItems(t *testing.T) {
 		info := &smartdl.RepoInfo{
 			SelectableItems: []smartdl.SelectableItem{
 				{
-					ID:           "q4_k_m",
-					Label:        "Q4_K_M",
-					Category:     "quantization",
-					Size:         4 * 1024 * 1024 * 1024,
-					SizeHuman:    "4.0 GiB",
-					RAMHuman:     "5.0 GiB",
-					Quality:      4,
-					Recommended:  true,
-					FilterValue:  "q4_k_m",
+					ID:          "q4_k_m",
+					Label:       "Q4_K_M",
+					Category:    "quantization",
+					Size:        4 * 1024 * 1024 * 1024,
+					SizeHuman:   "4.0 GiB",
+					RAMHuman:    "5.0 GiB",
+					Quality:     4,
+					Recommended: true,
+					FilterValue: "q4_k_m",
 				},
 			},
 		}

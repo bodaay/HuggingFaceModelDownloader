@@ -41,4 +41,3 @@ func TestWSHub_ClientCount(t *testing.T) {
 		t.Errorf("Expected 0 clients, got %d", count)
 	}
 }
-

@@ -10,17 +10,17 @@ import (
 func TestParseTransformersConfig(t *testing.T) {
 	t.Run("full config", func(t *testing.T) {
 		cfg := map[string]interface{}{
-			"architectures":          []interface{}{"LlamaForCausalLM"},
-			"model_type":             "llama",
-			"hidden_size":            float64(4096),
-			"num_hidden_layers":      float64(32),
-			"num_attention_heads":    float64(32),
-			"intermediate_size":      float64(11008),
-			"vocab_size":             float64(32000),
+			"architectures":           []interface{}{"LlamaForCausalLM"},
+			"model_type":              "llama",
+			"hidden_size":             float64(4096),
+			"num_hidden_layers":       float64(32),
+			"num_attention_heads":     float64(32),
+			"intermediate_size":       float64(11008),
+			"vocab_size":              float64(32000),
 			"max_position_embeddings": float64(4096),
-			"torch_dtype":            "float16",
-			"bos_token_id":           float64(1),
-			"eos_token_id":           float64(2),
+			"torch_dtype":             "float16",
+			"bos_token_id":            float64(1),
+			"eos_token_id":            float64(2),
 		}
 
 		info := &TransformersInfo{}
@@ -96,14 +96,14 @@ func TestParseTransformersConfig(t *testing.T) {
 
 func TestParseTokenizerConfig(t *testing.T) {
 	cfg := map[string]interface{}{
-		"tokenizer_class":   "LlamaTokenizerFast",
-		"vocab_size":        float64(32000),
-		"model_max_length":  float64(4096),
-		"padding_side":      "left",
-		"truncation_side":   "right",
-		"add_bos_token":     true,
-		"add_eos_token":     false,
-		"chat_template":     "{% for message in messages %}...",
+		"tokenizer_class":  "LlamaTokenizerFast",
+		"vocab_size":       float64(32000),
+		"model_max_length": float64(4096),
+		"padding_side":     "left",
+		"truncation_side":  "right",
+		"add_bos_token":    true,
+		"add_eos_token":    false,
+		"chat_template":    "{% for message in messages %}...",
 	}
 
 	tok := parseTokenizerConfig(cfg)
@@ -143,7 +143,7 @@ func TestAnalyzeWeightFiles(t *testing.T) {
 		{Name: "model-00001-of-00004.safetensors", Path: "model-00001-of-00004.safetensors", Size: 4000000000},
 		{Name: "model-00002-of-00004.safetensors", Path: "model-00002-of-00004.safetensors", Size: 4000000000},
 		{Name: "pytorch_model.bin", Path: "pytorch_model.bin", Size: 14000000000},
-		{Name: "config.json", Path: "config.json", Size: 1000}, // Not a weight file
+		{Name: "config.json", Path: "config.json", Size: 1000},         // Not a weight file
 		{Name: "optimizer.pt", Path: "optimizer.pt", Size: 5000000000}, // Should be skipped
 	}
 
@@ -573,12 +573,12 @@ func TestAnalyzeTransformers(t *testing.T) {
 
 	metadata := map[string]interface{}{
 		"config.json": map[string]interface{}{
-			"architectures":          []interface{}{"LlamaForCausalLM"},
-			"model_type":             "llama",
-			"hidden_size":            float64(4096),
-			"num_hidden_layers":      float64(32),
-			"vocab_size":             float64(32000),
-			"torch_dtype":            "float16",
+			"architectures":     []interface{}{"LlamaForCausalLM"},
+			"model_type":        "llama",
+			"hidden_size":       float64(4096),
+			"num_hidden_layers": float64(32),
+			"vocab_size":        float64(32000),
+			"torch_dtype":       "float16",
 		},
 		"tokenizer_config.json": map[string]interface{}{
 			"tokenizer_class":  "LlamaTokenizerFast",

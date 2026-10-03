@@ -352,3 +352,14 @@ func TestDownload_DuplicateContentFiles(t *testing.T) {
 		t.Errorf("identical content downloaded more than once (%d HEADs)", n)
 	}
 }
+
+func TestValidate_VerifyMode(t *testing.T) {
+	for _, v := range []string{"", "none", "size", "etag", "sha256"} {
+		if err := validate(Job{Repo: "o/r"}, Settings{Verify: v}); err != nil {
+			t.Errorf("verify %q rejected: %v", v, err)
+		}
+	}
+	if err := validate(Job{Repo: "o/r"}, Settings{Verify: "bogus"}); err == nil {
+		t.Error("verify bogus accepted")
+	}
+}

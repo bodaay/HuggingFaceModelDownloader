@@ -240,3 +240,87 @@ func TestLinkSupport(t *testing.T) {
 	}
 	_ = time.Second
 }
+
+// QA found export accepted revision "../../../../secret": it hardlinked files
+// from outside the cache and leaked file contents in an error message.
+func TestExport_RejectsRevisionTraversal(t *testing.T) {
+	cache, rd, _, _ := downloadFake(t, Settings{})
+	secret := filepath.Join(filepath.Dir(cache.Root), "secret")
+	os.MkdirAll(secret, 0o755)
+	os.WriteFile(filepath.Join(secret, "key.txt"), []byte("TOPSECRET"), 0o644)
+
+	for _, rev := range []string{"../../../../secret", "../../../../secret/key.txt", "/etc", `..\..\x`, "a/../../b", "main\x00"} {
+		dest := t.TempDir()
+		_, err := rd.Export(dest, ExportOptions{Revision: rev})
+		if err == nil {
+			t.Errorf("revision %q accepted", rev)
+		} else if strings.Contains(err.Error(), "TOPSECRET") {
+			t.Errorf("revision %q leaked file content: %v", rev, err)
+		}
+		if entries, _ := os.ReadDir(dest); len(entries) != 0 {
+			t.Errorf("revision %q wrote %d entries", rev, len(entries))
+		}
+	}
+	if _, err := rd.ReadRef("../../x"); err == nil {
+		t.Error("ReadRef accepted a traversal ref")
+	}
+	if err := rd.WriteRef("../../x", "abc"); err == nil {
+		t.Error("WriteRef accepted a traversal ref")
+	}
+}
+
+func TestValidRevision(t *testing.T) {
+	for _, ok := range []string{"main", "v1.0", "refs/pr/12", "4.00bpw", "SC_6.00bpw_H6_V6", "0123456789abcdef0123456789abcdef01234567"} {
+		if !ValidRevision(ok) {
+			t.Errorf("%q rejected", ok)
+		}
+	}
+	for _, bad := range []string{"", "..", "../x", "a/../b", "/abs", `a\b`, "a//b", "x\x00", "C:foo"} {
+		if ValidRevision(bad) {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+	if err := validate(Job{Repo: "o/r", Revision: "../../x"}, Settings{}); err == nil {
+		t.Error("download validate accepted a traversal revision")
+	}
+}
+
+func TestExport_FilterMatchingNothingFails(t *testing.T) {
+	_, rd, _, _ := downloadFake(t, Settings{})
+	if _, err := rd.Export(t.TempDir(), ExportOptions{Filters: []string{"q8_0"}}); err == nil || !strings.Contains(err.Error(), "no files matched") {
+		t.Errorf("err = %v, want a no-match error", err)
+	}
+}
+
+func TestExport_DestInsideCacheViaSymlink(t *testing.T) {
+	cache, rd, _, _ := downloadFake(t, Settings{})
+	link := filepath.Join(t.TempDir(), "cache-link")
+	if err := os.Symlink(cache.Root, link); err != nil {
+		t.Skip("symlinks unavailable")
+	}
+	if _, err := rd.Export(filepath.Join(link, "out"), ExportOptions{}); err == nil {
+		t.Error("export into the cache through a symlink accepted")
+	}
+}
+
+// Mirroring a hardlink-mode cache must not store each file twice.
+func TestCopyRepoCache_PreservesHardlinks(t *testing.T) {
+	cache, rd, commit, _ := downloadFake(t, Settings{LinkMode: "hardlink"})
+	dst := t.TempDir()
+	if err := CopyRepoCache(rd.Path(), cache.Root, dst); err != nil {
+		t.Fatal(err)
+	}
+	rel, _ := filepath.Rel(cache.Root, rd.SnapshotPath(commit, "model.gguf"))
+	copiedSnap := filepath.Join(dst, rel)
+	blobRel, _ := filepath.Rel(cache.Root, rd.BlobsDir())
+	blobs, _ := os.ReadDir(filepath.Join(dst, blobRel))
+	shared := false
+	for _, b := range blobs {
+		if sameFile(copiedSnap, filepath.Join(dst, blobRel, b.Name())) {
+			shared = true
+		}
+	}
+	if !shared {
+		t.Error("mirrored snapshot entry is a separate copy of its blob")
+	}
+}

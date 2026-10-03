@@ -353,7 +353,7 @@ func TestParseGGUFQuantization(t *testing.T) {
 func TestRecommendGGUF(t *testing.T) {
 	info := &GGUFInfo{
 		Quantizations: []GGUFQuantization{
-			{Name: "Q8_0", Quality: 5, EstimatedRAM: 10 * 1024 * 1024 * 1024}, // 10GB
+			{Name: "Q8_0", Quality: 5, EstimatedRAM: 10 * 1024 * 1024 * 1024},  // 10GB
 			{Name: "Q5_K_M", Quality: 5, EstimatedRAM: 6 * 1024 * 1024 * 1024}, // 6GB
 			{Name: "Q4_K_M", Quality: 4, EstimatedRAM: 5 * 1024 * 1024 * 1024}, // 5GB
 			{Name: "Q2_K", Quality: 1, EstimatedRAM: 2 * 1024 * 1024 * 1024},   // 2GB

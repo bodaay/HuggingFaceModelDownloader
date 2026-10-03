@@ -28,6 +28,15 @@ func CopyRepoCache(repoPath, srcCache, dstCache string) error {
 		return err
 	}
 
+	// Files already copied, by size, to recreate hardlinks (hardlink-mode
+	// caches: a snapshot entry shares its blob's data) instead of storing the
+	// data twice on the target.
+	type copied struct {
+		info os.FileInfo
+		dst  string
+	}
+	bySize := map[int64][]copied{}
+
 	return filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -53,7 +62,20 @@ func CopyRepoCache(repoPath, srcCache, dstCache string) error {
 			return os.Symlink(link, dst)
 		}
 
-		return CopyFileStream(path, dst)
+		for _, c := range bySize[info.Size()] {
+			if os.SameFile(c.info, info) {
+				os.Remove(dst)
+				if err := os.MkdirAll(filepath.Dir(dst), 0o755); err == nil && os.Link(c.dst, dst) == nil {
+					return nil
+				}
+				break // can't link on the target: copy
+			}
+		}
+		if err := CopyFileStream(path, dst); err != nil {
+			return err
+		}
+		bySize[info.Size()] = append(bySize[info.Size()], copied{info, dst})
+		return nil
 	})
 }
 

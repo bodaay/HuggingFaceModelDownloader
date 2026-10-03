@@ -313,7 +313,7 @@ func estimateParameters(info *TransformersInfo) int64 {
 		}
 
 		// Layer norms: 2 * hidden_size per layer + 1 final
-		layerNorm := 2 * h * l + h
+		layerNorm := 2*h*l + h
 
 		return embedding + attention + ffn + layerNorm
 	}
@@ -406,20 +406,20 @@ func inferTaskFromArchitecture(arch string) (string, string) {
 // describeArchitecture provides a human-readable description of the architecture.
 func describeArchitecture(arch string) string {
 	descriptions := map[string]string{
-		"LlamaForCausalLM":              "Meta Llama decoder-only transformer",
-		"MistralForCausalLM":            "Mistral AI decoder-only transformer with sliding window attention",
-		"Qwen2ForCausalLM":              "Alibaba Qwen2 decoder-only transformer",
-		"Phi3ForCausalLM":               "Microsoft Phi-3 small language model",
-		"PhiForCausalLM":                "Microsoft Phi small language model",
-		"GPT2LMHeadModel":               "OpenAI GPT-2 decoder-only transformer",
-		"GPTNeoForCausalLM":             "EleutherAI GPT-Neo decoder-only transformer",
-		"GPTNeoXForCausalLM":            "EleutherAI GPT-NeoX decoder-only transformer",
-		"GPTJForCausalLM":               "EleutherAI GPT-J decoder-only transformer",
-		"FalconForCausalLM":             "TII Falcon decoder-only transformer",
-		"BertForSequenceClassification": "BERT encoder for sequence classification",
-		"BertForTokenClassification":    "BERT encoder for token classification",
-		"BertForQuestionAnswering":      "BERT encoder for question answering",
-		"BertModel":                     "BERT encoder base model",
+		"LlamaForCausalLM":                 "Meta Llama decoder-only transformer",
+		"MistralForCausalLM":               "Mistral AI decoder-only transformer with sliding window attention",
+		"Qwen2ForCausalLM":                 "Alibaba Qwen2 decoder-only transformer",
+		"Phi3ForCausalLM":                  "Microsoft Phi-3 small language model",
+		"PhiForCausalLM":                   "Microsoft Phi small language model",
+		"GPT2LMHeadModel":                  "OpenAI GPT-2 decoder-only transformer",
+		"GPTNeoForCausalLM":                "EleutherAI GPT-Neo decoder-only transformer",
+		"GPTNeoXForCausalLM":               "EleutherAI GPT-NeoX decoder-only transformer",
+		"GPTJForCausalLM":                  "EleutherAI GPT-J decoder-only transformer",
+		"FalconForCausalLM":                "TII Falcon decoder-only transformer",
+		"BertForSequenceClassification":    "BERT encoder for sequence classification",
+		"BertForTokenClassification":       "BERT encoder for token classification",
+		"BertForQuestionAnswering":         "BERT encoder for question answering",
+		"BertModel":                        "BERT encoder base model",
 		"RobertaForSequenceClassification": "RoBERTa encoder for sequence classification",
 		"RobertaModel":                     "RoBERTa encoder base model",
 		"T5ForConditionalGeneration":       "T5 encoder-decoder for text-to-text",
@@ -503,8 +503,12 @@ func TransformersToSelectableItems(info *TransformersInfo, files []FileInfo) []S
 		}
 	}
 
-	// Add format options if both are available
-	if hasSafetensors && hasPytorchBin {
+	// Format choice: every weight format the repo ships (safetensors,
+	// PyTorch, ONNX, TF, Flax, ...). Falls back to the analyzed weight files
+	// when no file list is available.
+	if formatItems := WeightFormatItems(files); len(formatItems) > 0 {
+		items = append(items, formatItems...)
+	} else if hasSafetensors && hasPytorchBin {
 		items = append(items, SelectableItem{
 			ID:           "safetensors",
 			Label:        "SafeTensors",

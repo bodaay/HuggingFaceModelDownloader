@@ -585,7 +585,6 @@ func jsonProgress(w io.Writer) hfdownloader.ProgressFunc {
 	}
 }
 
-
 // confirmCopyOnlyCache asks, once, what to do when the cache drive supports
 // neither symlinks nor hardlinks (e.g. FAT/exFAT): every cache entry would be
 // a copy, doubling disk use. Only in an interactive terminal with link-mode

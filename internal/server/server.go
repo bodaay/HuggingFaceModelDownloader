@@ -21,22 +21,22 @@ import (
 
 // Config holds server configuration.
 type Config struct {
-	Addr               string
-	Port               int
-	Token              string // HuggingFace token
-	ModelsDir          string // Output directory for models (not configurable via API)
-	DatasetsDir        string // Output directory for datasets (not configurable via API)
-	CacheDir           string // HuggingFace cache directory for v3 mode
+	Addr        string
+	Port        int
+	Token       string // HuggingFace token
+	ModelsDir   string // Output directory for models (not configurable via API)
+	DatasetsDir string // Output directory for datasets (not configurable via API)
+	CacheDir    string // HuggingFace cache directory for v3 mode
 	// LocalDir, when set, puts the whole server in flat/local-file mode: every
 	// download writes real files into <LocalDir>/<owner>/<repo> instead of the
 	// HF cache layout. Set once at startup (serve --local-dir); not changeable
 	// per request. Empty = HF cache mode.
-	LocalDir string
+	LocalDir           string
 	Concurrency        int
 	MaxActive          int
-	MultipartThreshold string // Minimum size for multipart download
-	Verify             string // Verification mode: none, size, sha256
-	Retries            int    // Number of retry attempts
+	MultipartThreshold string   // Minimum size for multipart download
+	Verify             string   // Verification mode: none, size, sha256
+	Retries            int      // Number of retry attempts
 	AllowedOrigins     []string // CORS origins
 	// LinkMode is how HF cache entries refer to downloaded data (see
 	// hfdownloader.LinkMode); empty = auto.
@@ -44,8 +44,8 @@ type Config struct {
 	// ExportDir enables "Export as real files" in the web UI: exports are
 	// written to <ExportDir>/<owner>/<name>. Empty disables exporting from
 	// the web, so the API can't be used to write files anywhere else.
-	ExportDir          string
-	Endpoint           string   // Custom HuggingFace endpoint (e.g., for mirrors)
+	ExportDir string
+	Endpoint  string // Custom HuggingFace endpoint (e.g., for mirrors)
 
 	// Authentication
 	AuthUser string // Basic auth username (empty = no auth)
@@ -172,13 +172,16 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	addr := fmt.Sprintf("%s:%d", s.config.Addr, s.config.Port)
 
 	// Build middleware chain: CORS -> Auth -> Logging -> Handler
-	handler := s.corsMiddleware(s.basicAuthMiddleware(s.loggingMiddleware(mux)))
+	handler := s.corsMiddleware(s.basicAuthMiddleware(s.loggingMiddleware(limitBodyMiddleware(mux))))
 
 	s.httpServer = &http.Server{
-		Addr:         addr,
-		Handler:      handler,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		Addr:        addr,
+		Handler:     handler,
+		ReadTimeout: 30 * time.Second,
+		// Above hubRequestTimeout: analyzing big repos (allenai/c4 lists
+		// 69k files) can take well over 30s. WebSockets are hijacked and
+		// unaffected.
+		WriteTimeout: hubRequestTimeout + 30*time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
 
@@ -254,6 +257,19 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 
 // Middleware
 
+// maxRequestBody caps API request bodies. Requests are small JSON documents;
+// without a cap a single 200 MB body pushed the server to ~680 MB of RAM.
+const maxRequestBody = 1 << 20
+
+func limitBodyMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -316,4 +332,3 @@ func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
-

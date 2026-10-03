@@ -349,6 +349,9 @@ func UnmatchedFiltersWarning(job Job, plan *Plan) string {
 		}
 	}
 	if len(given) == 0 {
+		if strings.TrimSpace(job.Shards) != "" && !hasSplitFile(plan.Items) {
+			return fmt.Sprintf("no split files matched --shards %s (run `hfdownloader analyze %s` to see the shard count)", job.Shards, job.Repo)
+		}
 		return ""
 	}
 	for _, it := range plan.Items {
@@ -358,6 +361,16 @@ func UnmatchedFiltersWarning(job Job, plan *Plan) string {
 	}
 	return fmt.Sprintf("no files matched filter(s) %s; only files that filters don't apply to (configs, tokenizers, docs) will be downloaded (run `hfdownloader analyze %s` to see what is available)",
 		strings.Join(given, ","), job.Repo)
+}
+
+// hasSplitFile reports whether items include a split file ("-00001-of-00004").
+func hasSplitFile(items []PlanItem) bool {
+	for _, it := range items {
+		if shardPattern.MatchString(path.Base(it.RelativePath)) {
+			return true
+		}
+	}
+	return false
 }
 
 // revisionRejected reports whether err is an API response meaning the
@@ -424,4 +437,3 @@ func ScanPlan(ctx context.Context, job Job, cfg Settings, progress ProgressFunc)
 func Run(ctx context.Context, job Job, cfg Settings, progress ProgressFunc) error {
 	return Download(ctx, job, cfg, progress)
 }
-
