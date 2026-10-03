@@ -1,3 +1,93 @@
+# Release Notes - v3.4.0
+
+> **Release Date:** October 2026
+> **Export, Windows Links & Smarter Quantization Picking**
+
+## Highlights
+
+Turn what you already downloaded into plain files for LM Studio, Ollama or
+llama.cpp without re-downloading, a cache that works on Windows without
+Developer Mode, download huge sharded models in batches, and pick EXL2/EXL3
+bitrates that live on separate branches.
+
+## Export & Flat Files (#83, #91)
+
+- **`hfdownloader export <repo> <dest>`** writes a cached repo as plain files
+  in its own layout — nothing is re-downloaded. On the same drive the files
+  are **hardlinks** (real files, no extra disk space); otherwise they are
+  copied. `-F` exports only some weights (tokenizers/configs always come
+  along), `-b` picks a revision, `--mode` forces hardlink/copy/symlink.
+- **Web UI: "Export as real files"** on any cached repo, written to
+  `<export-dir>/<owner>/<name>`. Enabled with `serve --export-dir <folder>`;
+  without it the API refuses, so it can't write anywhere else.
+- Exported hardlinks share data with the cache: use `--mode copy` for files
+  you will edit.
+
+## Windows: Hardlinks Instead of Missing Links
+
+- Without Administrator/Developer Mode, Windows used to skip the cache's
+  links entirely — files ended up only as `blobs/<sha256>`, invisible to
+  Python, the HF CLI and you. hfdownloader now uses **hardlinks** there
+  (no extra disk space). On drives without any links (FAT/exFAT) it copies,
+  asking once first in an interactive terminal.
+- New `--link-mode auto|symlink|hardlink|copy` (download and serve, config
+  key `link-mode`).
+- **`hfdownloader rebuild` repairs caches written by older Windows builds**
+  (recreates the missing snapshot entries from the download manifest).
+
+## Downloading
+
+- **`--shards 1-100`** (or `1-50,120-185`) downloads only those shards of
+  split files, so a huge model can be fetched in batches (#90).
+- **Quantizations on branches (#94):** EXL3/EXL2 repos that keep each
+  bitrate on its own branch (`turboderp/...-exl3`: `4.00bpw`,
+  `SC_6.00bpw_H6_V6`; bartowski exl2: `4_25`, `6_5`) are listed with bits,
+  head bits and size; `analyze` recommends one and `-b <branch>` downloads it
+  (CLI, `analyze -i` and the web UI).
+- **Weight-format choice for every model type** (safetensors, PyTorch, ONNX,
+  TensorFlow, TFLite, Flax, OpenVINO, Rust) — e.g. whisper-tiny's
+  recommended download is 148 MiB instead of 580 MiB of four formats.
+- GGUF repos offer every mmproj precision; diffusers LoRAs are detected.
+
+## Web UI & API
+
+- Pause button now appears on jobs that waited in the queue; download speed
+  is shown; skipped files show as "skipped".
+- Saving settings no longer wipes other config keys (`cache-dir`,
+  `stall-timeout`, ...), validates values (bad values used to break every
+  later job) and writes the config file privately (0600).
+- A second download of the same repo with different filters is its own job;
+  deleting a repo's cache while it downloads is refused (409).
+- Analyze and plan honor your proxy, return 404/401 for missing or gated
+  repos, and no longer cut off slow analyses of huge repos.
+- Request bodies are capped at 1 MiB; `--auth-user` requires `--auth-pass`.
+
+## Security
+
+- Revisions are validated wherever they become paths (download, export, web
+  API): `..`-style revisions could read files outside the cache through the
+  new export endpoint during this release cycle (fixed before release).
+
+## Behavior Changes
+
+- **Go 1.25 is now the minimum** for building from source (security fixes in
+  `golang.org/x/net` require it; Go 1.24 is no longer supported upstream).
+  Release binaries and the Docker image are built with Go 1.26.8.
+- On Windows, cache entries are hardlinks instead of missing.
+- Filtered GGUF downloads also skip large LFS `.imatrix` files.
+- `list`/`info` show sizes as KiB/MiB/GiB.
+
+## Internal
+
+- `golang.org/x/net` v0.56.0 / `x/sys` v0.46.0: `govulncheck` finds no
+  vulnerabilities; `staticcheck` clean; the codebase is `gofmt`ed.
+- Docs (`docs/CLI.md`, `docs/API.md`, README) were checked flag by flag and
+  endpoint by endpoint against the binary.
+
+**Full Changelog**: https://github.com/bodaay/HuggingFaceModelDownloader/compare/v3.3.0...v3.4.0
+
+---
+
 # Release Notes - v3.3.0
 
 > **Release Date:** October 2026
