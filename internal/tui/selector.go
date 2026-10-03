@@ -21,6 +21,10 @@ type SelectorResult struct {
 	// SelectedFilters is the list of filter values to use with -F flag.
 	SelectedFilters []string
 
+	// SelectedRevision is the branch to download when a branch item
+	// (a quantization stored on its own branch) is selected.
+	SelectedRevision string
+
 	// CLICommand is the generated CLI command.
 	CLICommand string
 }
@@ -152,6 +156,7 @@ func (m *SelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter": // Download
 			m.result.Action = "download"
 			m.result.SelectedFilters = m.getSelectedFilters()
+			m.result.SelectedRevision = m.getSelectedRevision()
 			m.result.CLICommand = m.generateCommand()
 			m.done = true
 			return m, tea.Quit
@@ -287,14 +292,28 @@ func (m *SelectorModel) View() string {
 // toggleCurrent toggles the selection of the current item.
 func (m *SelectorModel) toggleCurrent() {
 	if m.cursor >= 0 && m.cursor < len(m.allItems) {
-		m.allItems[m.cursor].Selected = !m.allItems[m.cursor].Selected
+		m.setSelected(m.cursor, !m.allItems[m.cursor].Selected)
 
-		// Update category groups as well
-		for i := range m.categories {
-			for j := range m.categories[i].Items {
-				if m.categories[i].Items[j].Index == m.allItems[m.cursor].Index {
-					m.categories[i].Items[j].Selected = m.allItems[m.cursor].Selected
+		// Branch items (quantizations on separate branches) are exclusive:
+		// one download fetches one branch.
+		if m.allItems[m.cursor].Selected && m.allItems[m.cursor].Item.Revision != "" {
+			for i := range m.allItems {
+				if i != m.cursor && m.allItems[i].Item.Revision != "" {
+					m.setSelected(i, false)
 				}
+			}
+		}
+	}
+}
+
+// setSelected updates an item's selection in both the flat list and its
+// category group.
+func (m *SelectorModel) setSelected(idx int, selected bool) {
+	m.allItems[idx].Selected = selected
+	for i := range m.categories {
+		for j := range m.categories[i].Items {
+			if m.categories[i].Items[j].Index == m.allItems[idx].Index {
+				m.categories[i].Items[j].Selected = selected
 			}
 		}
 	}
@@ -334,8 +353,21 @@ func (m *SelectorModel) getSelectionStats() (count int, size int64) {
 	return
 }
 
+// getSelectedRevision returns the branch of the selected branch item, if any.
+func (m *SelectorModel) getSelectedRevision() string {
+	for _, item := range m.allItems {
+		if item.Selected && item.Item.Revision != "" {
+			return item.Item.Revision
+		}
+	}
+	return ""
+}
+
 // generateCommand generates the CLI command for current selection.
 func (m *SelectorModel) generateCommand() string {
+	if rev := m.getSelectedRevision(); rev != "" {
+		return m.repoInfo.GenerateBranchCommand(rev)
+	}
 	filters := m.getSelectedFilters()
 	return m.repoInfo.GenerateCLICommand(filters)
 }

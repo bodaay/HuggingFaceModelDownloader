@@ -13,7 +13,7 @@ import (
 )
 
 // shardSuffix matches a split-file suffix such as "-00001-of-00003".
-var shardSuffix = regexp.MustCompile(`-\d{5}-of-\d{5}$`)
+var shardSuffix = regexp.MustCompile(`-\d{3,}-of-\d{3,}$`)
 
 // StripShard removes the extension and any split-file suffix from a file
 // name: "Model-Q4_K_M-00001-of-00003.gguf" → "Model-Q4_K_M".

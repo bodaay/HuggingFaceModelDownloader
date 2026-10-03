@@ -78,6 +78,12 @@ type Job struct {
 	// Excludes are always matched as substrings, regardless of this setting.
 	ExactMatch bool
 
+	// Shards limits split files ("model-00042-of-00185.safetensors") to the
+	// given shard numbers, e.g. "1-100" or "1-50,120-185" (github issue #90):
+	// download a large model in batches. Files that aren't split are not
+	// affected. Combines with Filters.
+	Shards string
+
 	// AppendFilterSubdir puts each filter's matched files in a subdirectory
 	// named after the filter. Useful for organizing multiple quantizations.
 	//

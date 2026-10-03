@@ -166,3 +166,30 @@ func TestApplyFilters_MoreFormats(t *testing.T) {
 		})
 	}
 }
+
+// github issue #90: download a large sharded model in batches.
+func TestApplyShardRange(t *testing.T) {
+	its := items(
+		"model-00001-of-00005.safetensors", "model-00002-of-00005.safetensors", "model-00003-of-00005.safetensors",
+		"model-00004-of-00005.safetensors", "model-00005-of-00005.safetensors",
+		"Q4_K_M/m-Q4_K_M-00002-of-00003.gguf", "model.safetensors.index.json|small", "config.json|small",
+		"ds/model-00007-of-000163.safetensors", // DeepSeek-V3 uses a 6-digit total
+	)
+	got, err := applyShardRange(its, "1-2, 5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"Q4_K_M/m-Q4_K_M-00002-of-00003.gguf", "config.json", "model-00001-of-00005.safetensors",
+		"model-00002-of-00005.safetensors", "model-00005-of-00005.safetensors", "model.safetensors.index.json"}
+	if g := selectedPaths(got); !reflect.DeepEqual(g, want) {
+		t.Errorf("got  %v\nwant %v", g, want)
+	}
+	for _, bad := range []string{"0-3", "5-2", "x", "1-", ","} {
+		if _, err := ParseShardRanges(bad); err == nil {
+			t.Errorf("ParseShardRanges(%q) accepted", bad)
+		}
+	}
+	if err := validate(Job{Repo: "o/r", Shards: "3-1"}, Settings{}); err == nil {
+		t.Error("validate accepted a bad shard range")
+	}
+}

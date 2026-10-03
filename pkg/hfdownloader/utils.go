@@ -44,6 +44,11 @@ func validate(job Job, cfg Settings) error {
 	if !IsValidModelName(job.Repo) {
 		return fmt.Errorf("invalid repo id %q (expected owner/name)", job.Repo)
 	}
+	if strings.TrimSpace(job.Shards) != "" {
+		if _, err := ParseShardRanges(job.Shards); err != nil {
+			return err
+		}
+	}
 	if cfg.StallTimeout != "" {
 		d, err := time.ParseDuration(cfg.StallTimeout)
 		if err != nil {

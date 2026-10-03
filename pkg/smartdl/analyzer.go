@@ -131,8 +131,35 @@ func (a *Analyzer) AnalyzeWithRevision(ctx context.Context, repo string, isDatas
 	// Run type-specific analysis
 	a.analyzeTypeSpecific(info)
 
+	// Quantizations stored on branches (EXL2/EXL3, github issue #94): main
+	// holds only measurement files; list the bitrate branches as choices.
+	if !isDataset && revision == "main" {
+		if branches := quantBranchesFromRefs(info.Refs); len(branches) > 0 && rootWeightBytes(files) < 50<<20 {
+			method := a.branchQuantMethod(ctx, repo, branches)
+			a.fillBranchSizes(ctx, repo, branches)
+			info.QuantBranches = branches
+			info.Type = TypeQuantized
+			if info.Quantized == nil {
+				info.Quantized = &QuantizedInfo{Method: method, MethodDescription: quantMethodDescriptions[method]}
+				info.Quantized.Backends = detectBackends(info.Quantized)
+			}
+			name := strings.ToUpper(method)
+			if name == "" {
+				name = "Quantized"
+			}
+			info.TypeDescription = fmt.Sprintf("%s quantized model, %d bitrates on separate branches", name, len(branches))
+		}
+	}
+
 	// Populate SelectableItems based on type
 	populateSelectableItems(info)
+	if len(info.QuantBranches) > 0 {
+		method := ""
+		if info.Quantized != nil {
+			method = info.Quantized.Method
+		}
+		info.SelectableItems = append(info.SelectableItems, QuantBranchItems(info.QuantBranches, method)...)
+	}
 
 	// Generate CLI commands
 	info.PopulateCLICommands()
@@ -478,6 +505,22 @@ func fileSize(files []FileInfo, path string) int64 {
 		}
 	}
 	return 0
+}
+
+// rootWeightBytes is the total size of .safetensors/.bin files in the repo
+// root. Branch-per-bitrate repos keep only small calibration files on main
+// (turboderp's cal_trace.safetensors, ~4 MB).
+func rootWeightBytes(files []FileInfo) int64 {
+	var n int64
+	for _, f := range files {
+		if strings.Contains(f.Path, "/") {
+			continue
+		}
+		if ext := strings.ToLower(filepath.Ext(f.Path)); ext == ".safetensors" || ext == ".bin" {
+			n += f.Size
+		}
+	}
+	return n
 }
 
 // hasRootWeights reports whether the repo root holds PyTorch weights.

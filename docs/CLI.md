@@ -136,6 +136,7 @@ hfdownloader [REPO] [flags]              # Same as above
 | `--backoff-max` | | string | `10s` | Max retry delay |
 | `--stall-timeout` | | string | `60s` | Retry a transfer that receives no data for this long (`0` disables) |
 | `--link-mode` | | string | `auto` | How cache entries refer to downloaded data: `auto` (symlink, else hardlink, else copy), `symlink`, `hardlink`, `copy` |
+| `--shards` | | string | | Only these shards of split files, e.g. `1-100` or `1-50,120-185` — download a large model in batches (files that aren't split are unaffected) |
 | `--verify` | | string | `size` | Verification: none, size, etag, sha256 |
 | `--stale-timeout` | | string | `5m` | Timeout for stale downloads |
 

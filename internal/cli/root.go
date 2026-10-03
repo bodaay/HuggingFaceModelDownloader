@@ -173,6 +173,7 @@ func newDownloadCmd(ctx context.Context, ro *RootOpts) *cobra.Command {
 	cmd.Flags().StringSliceVarP(&job.Filters, "filters", "F", nil, "Comma-separated filters to match LFS artifacts (e.g. q4_0,q5_0)")
 	cmd.Flags().StringSliceVarP(&job.Excludes, "exclude", "E", nil, "Comma-separated patterns to exclude (e.g. .md,fp16)")
 	cmd.Flags().BoolVar(&job.AppendFilterSubdir, "append-filter-subdir", false, "Append each filter as a subdirectory")
+	cmd.Flags().StringVar(&job.Shards, "shards", "", "Only these shards of split files, e.g. 1-100 or 1-50,120-185 (download a large model in batches)")
 	cmd.Flags().BoolVar(&job.ExactMatch, "exact", false, "Match filters against whole name segments instead of substrings (e.g. -F q6_k matches Q6_K but not Q6_K_XL)")
 
 	// Settings flags
