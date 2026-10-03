@@ -24,6 +24,7 @@ func DefaultConfig() map[string]any {
 		"retries":             4,
 		"backoff-initial":     "400ms",
 		"backoff-max":         "10s",
+		"stall-timeout":       "60s",
 		"token":               "",
 	}
 }

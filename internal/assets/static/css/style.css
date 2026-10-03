@@ -1277,6 +1277,15 @@ a {
   color: var(--color-warning);
 }
 
+.job-activity {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .job-error {
   margin-top: 12px;
   padding: 10px 14px;

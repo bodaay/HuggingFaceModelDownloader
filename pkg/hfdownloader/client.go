@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/bodaay/HuggingFaceModelDownloader/internal/hubtree"
 )
 
 // DefaultEndpoint is the default HuggingFace Hub URL.
@@ -95,52 +97,40 @@ func headForETag(ctx context.Context, httpc *http.Client, token string, it PlanI
 	return resp.Header.Get("ETag"), resp.Header.Get("x-amz-meta-sha256"), nil
 }
 
-// walkTree recursively walks the HuggingFace repo tree.
+// walkTree lists every file in the repo tree (recursive, paginated; see
+// internal/hubtree) and calls fn for each.
 func walkTree(ctx context.Context, httpc *http.Client, token, endpoint string, job Job, prefix string, fn func(hfNode) error) error {
-	reqURL := treeURL(endpoint, job, prefix)
-	req, _ := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
-	addAuth(req, token)
-	resp, err := httpc.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	// Return a typed *APIError so callers can errors.Is(err, ErrUnauthorized)
-	// / ErrNotFound / ErrRateLimited (see APIError.Is) instead of matching on
-	// message strings.
-	if resp.StatusCode == 401 {
-		return &APIError{StatusCode: 401, Status: resp.Status, URL: reqURL,
-			Message: fmt.Sprintf("repo requires token or you do not have access (visit %s)", agreementURL(endpoint, job))}
-	}
-	if resp.StatusCode == 403 {
-		return &APIError{StatusCode: 403, Status: resp.Status, URL: reqURL,
-			Message: fmt.Sprintf("please accept the repository terms: %s", agreementURL(endpoint, job))}
-	}
-	if resp.StatusCode != 200 {
-		return &APIError{StatusCode: resp.StatusCode, Status: resp.Status, URL: reqURL}
-	}
-
-	var nodes []hfNode
-	dec := json.NewDecoder(resp.Body)
-	if err := dec.Decode(&nodes); err != nil {
-		return err
-	}
-
-	for _, n := range nodes {
-		switch n.Type {
-		case "directory", "tree":
-			if err := walkTree(ctx, httpc, token, endpoint, job, n.Path, fn); err != nil {
-				return err
+	return hubtree.Walk(ctx, hubtree.Options{
+		Client: httpc,
+		URL: func(dir string) string {
+			// dir is a full path from the repo root ("" = where the walk starts).
+			if dir == "" {
+				dir = prefix
 			}
-		default:
-			if err := fn(n); err != nil {
-				return err
+			return treeURL(endpoint, job, dir)
+		},
+		Authorize: func(req *http.Request) { addAuth(req, token) },
+		// Return a typed *APIError so callers can errors.Is(err, ErrUnauthorized)
+		// / ErrNotFound / ErrRateLimited (see APIError.Is) instead of matching on
+		// message strings.
+		Status: func(resp *http.Response) error {
+			reqURL := resp.Request.URL.String()
+			switch resp.StatusCode {
+			case http.StatusUnauthorized:
+				return &APIError{StatusCode: 401, Status: resp.Status, URL: reqURL,
+					Message: fmt.Sprintf("repo requires token or you do not have access (visit %s)", agreementURL(endpoint, job))}
+			case http.StatusForbidden:
+				return &APIError{StatusCode: 403, Status: resp.Status, URL: reqURL,
+					Message: fmt.Sprintf("please accept the repository terms: %s", agreementURL(endpoint, job))}
 			}
-		}
-	}
-	return nil
+			return &APIError{StatusCode: resp.StatusCode, Status: resp.Status, URL: reqURL}
+		},
+	}, fn)
 }
+
+// NodePath and IsDir let hfNode be listed by hubtree.Walk.
+func (n hfNode) NodePath() string { return n.Path }
+func (n hfNode) IsDir() bool      { return n.Type == "directory" || n.Type == "tree" }
 
 // URL builders - all accept endpoint to support custom mirrors
 

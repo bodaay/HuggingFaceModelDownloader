@@ -80,11 +80,16 @@
       };
 
       state.ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          handleWSMessage(msg);
-        } catch (e) {
-          console.error('WS parse error:', e);
+        // The server sends one JSON message per frame; older servers batched
+        // several newline-separated messages into one, so parse each line on
+        // its own and never let one bad line drop the rest.
+        for (const line of String(event.data).split('\n')) {
+          if (!line.trim()) continue;
+          try {
+            handleWSMessage(JSON.parse(line));
+          } catch (e) {
+            console.error('WS parse error:', e);
+          }
         }
       };
 
@@ -999,6 +1004,7 @@
           <span data-role="bytes"></span>
           <span data-role="files"></span>
         </div>
+        <div class="job-activity" data-role="activity" style="display: none"></div>
         <div class="job-error" data-role="error" style="display: none"></div>
     `;
     // Static fields (set once, never changed by progress events).
@@ -1062,6 +1068,18 @@
     const filesText = (p.completedFiles || 0) + ' / ' + (p.totalFiles || 0) + ' files';
     const filesEl = el.querySelector('[data-role="files"]');
     if (filesEl.textContent !== filesText) filesEl.textContent = filesText;
+
+    // Activity: verify/assemble phases and retries, so a finished-but-
+    // verifying or retrying download doesn't look frozen.
+    const activityEl = el.querySelector('[data-role="activity"]');
+    const activity = status === 'running' ? (p.activity || '') : '';
+    if (activity) {
+      if (activityEl.textContent !== activity) activityEl.textContent = activity;
+      if (activityEl.style.display === 'none') activityEl.style.display = '';
+    } else if (activityEl.style.display !== 'none') {
+      activityEl.style.display = 'none';
+      activityEl.textContent = '';
+    }
 
     // Error.
     const errorEl = el.querySelector('[data-role="error"]');

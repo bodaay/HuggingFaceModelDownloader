@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/bodaay/HuggingFaceModelDownloader/internal/hubtree"
 )
 
 const defaultEndpoint = "https://huggingface.co"
@@ -242,63 +244,46 @@ func (a *Analyzer) fetchFileTree(ctx context.Context, repo string, isDataset boo
 	return files, commit, err
 }
 
-// walkTree recursively walks the repository tree. When commitOut is non-nil
-// and still empty, the resolved commit SHA is captured from the X-Repo-Commit
-// response header that HuggingFace returns for the requested revision.
+// walkTree lists every file in the repository tree (recursive, paginated;
+// see internal/hubtree). When commitOut is non-nil and still empty, the
+// resolved commit SHA is captured from the X-Repo-Commit response header
+// that HuggingFace returns for the requested revision.
 func (a *Analyzer) walkTree(ctx context.Context, repo string, isDataset bool, revision, prefix string, commitOut *string, fn func(hfTreeNode) error) error {
-	reqURL := a.treeURL(repo, isDataset, revision, prefix)
-
-	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
-	if err != nil {
-		return err
-	}
-	a.addAuth(req)
-
-	resp, err := a.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	// Capture the resolved commit from the first response that carries it.
-	if commitOut != nil && *commitOut == "" {
-		if c := resp.Header.Get("X-Repo-Commit"); c != "" {
-			*commitOut = c
-		}
-	}
-
-	if resp.StatusCode == 401 {
-		return fmt.Errorf("unauthorized: repo requires token or you do not have access")
-	}
-	if resp.StatusCode == 403 {
-		return fmt.Errorf("forbidden: please accept the repository terms at %s", a.repoURL(repo, isDataset))
-	}
-	if resp.StatusCode == 404 {
-		return fmt.Errorf("repository not found: %s", repo)
-	}
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("API error: %s", resp.Status)
-	}
-
-	var nodes []hfTreeNode
-	if err := json.NewDecoder(resp.Body).Decode(&nodes); err != nil {
-		return fmt.Errorf("decode response: %w", err)
-	}
-
-	for _, n := range nodes {
-		switch n.Type {
-		case "directory", "tree":
-			if err := a.walkTree(ctx, repo, isDataset, revision, n.Path, commitOut, fn); err != nil {
-				return err
+	return hubtree.Walk(ctx, hubtree.Options{
+		Client: a.client,
+		URL: func(dir string) string {
+			// dir is a full path from the repo root ("" = where the walk starts).
+			if dir == "" {
+				dir = prefix
 			}
-		default:
-			if err := fn(n); err != nil {
-				return err
+			return a.treeURL(repo, isDataset, revision, dir)
+		},
+		Authorize: a.addAuth,
+		OnResponse: func(resp *http.Response) {
+			// Capture the resolved commit from the first response that carries it.
+			if commitOut != nil && *commitOut == "" {
+				if c := resp.Header.Get("X-Repo-Commit"); c != "" {
+					*commitOut = c
+				}
 			}
-		}
-	}
-	return nil
+		},
+		Status: func(resp *http.Response) error {
+			switch resp.StatusCode {
+			case 401:
+				return fmt.Errorf("unauthorized: repo requires token or you do not have access")
+			case 403:
+				return fmt.Errorf("forbidden: please accept the repository terms at %s", a.repoURL(repo, isDataset))
+			case 404:
+				return fmt.Errorf("repository not found: %s", repo)
+			}
+			return fmt.Errorf("API error: %s", resp.Status)
+		},
+	}, fn)
 }
+
+// NodePath and IsDir let hfTreeNode be listed by hubtree.Walk.
+func (n hfTreeNode) NodePath() string { return n.Path }
+func (n hfTreeNode) IsDir() bool      { return n.Type == "directory" || n.Type == "tree" }
 
 // treeURL builds the tree API URL.
 func (a *Analyzer) treeURL(repo string, isDataset bool, revision, prefix string) string {

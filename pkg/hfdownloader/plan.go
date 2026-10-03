@@ -5,6 +5,7 @@ package hfdownloader
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"path"
@@ -83,7 +84,15 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 		commitSHA = job.Revision // fallback
 	}
 
-	err = walkTree(ctx, httpc, token, cfg.Endpoint, job, "", func(n hfNode) error {
+	// List and fetch files at the resolved commit rather than the branch name,
+	// so a repo updated mid-download (or between a pause and a resume) can't
+	// mix file versions under one snapshot.
+	pinned := job
+	pinned.Revision = commitSHA
+
+	// urlJob is the job whose revision appears in tree and file URLs.
+	var urlJob Job
+	visit := func(n hfNode) error {
 		if n.Type != "file" && n.Type != "blob" {
 			return nil
 		}
@@ -141,9 +150,9 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 		// Build URL and file size
 		var urlStr string
 		if isLFS {
-			urlStr = lfsURL(cfg.Endpoint, job, rel)
+			urlStr = lfsURL(cfg.Endpoint, urlJob, rel)
 		} else {
-			urlStr = rawURL(cfg.Endpoint, job, rel)
+			urlStr = rawURL(cfg.Endpoint, urlJob, rel)
 		}
 		// For LFS files, ALWAYS use LFS.Size (n.Size is the pointer file size, not actual)
 		var size int64
@@ -176,11 +185,55 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 			Subdir:       matchedFilter, // empty when no filter matched
 		})
 		return nil
-	})
+	}
+	walk := func(j Job) error {
+		items, seen, urlJob = nil, make(map[string]struct{}), j
+		return walkTree(ctx, httpc, token, cfg.Endpoint, j, "", visit)
+	}
+
+	err = walk(pinned)
+	if err != nil && pinned.Revision != job.Revision && revisionRejected(err) {
+		// Some mirrors resolve the commit but only serve branch/tag names.
+		err = walk(job)
+	}
 	if err != nil {
 		return nil, err
 	}
+	if urlJob.Revision != job.Revision && len(items) > 0 && !resolveAcceptsURL(ctx, httpc, token, items[0].URL) {
+		// The tree accepted the commit but file downloads don't: fall back
+		// to the branch/tag name for file URLs.
+		for i := range items {
+			if items[i].LFS {
+				items[i].URL = lfsURL(cfg.Endpoint, job, items[i].RelativePath)
+			} else {
+				items[i].URL = rawURL(cfg.Endpoint, job, items[i].RelativePath)
+			}
+		}
+	}
 	return &Plan{Items: items, Commit: commitSHA}, nil
+}
+
+// revisionRejected reports whether err is an API response meaning the
+// requested revision isn't accepted (as opposed to an auth or network error).
+func revisionRejected(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && (apiErr.StatusCode == http.StatusNotFound || apiErr.StatusCode == http.StatusBadRequest)
+}
+
+// resolveAcceptsURL probes a file URL with HEAD. It returns false only on a
+// definite 400/404, so transient failures never change which URLs are used.
+func resolveAcceptsURL(ctx context.Context, httpc *http.Client, token, u string) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, u, nil)
+	if err != nil {
+		return true
+	}
+	addAuth(req, token)
+	resp, err := httpc.Do(req)
+	if err != nil {
+		return true
+	}
+	resp.Body.Close()
+	return resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusBadRequest
 }
 
 // filterMatches reports whether filter fLower matches the file name nameLower

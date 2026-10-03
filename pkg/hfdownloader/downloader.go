@@ -5,6 +5,8 @@ package hfdownloader
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -175,6 +178,9 @@ func Download(ctx context.Context, job Job, cfg Settings, progress ProgressFunc)
 	// To print "skip" only once per final path per run
 	var skipOnce sync.Map
 
+	// Per-content-hash locks (see the worker below)
+	var blobLocks sync.Map
+
 	var skippedCount int64
 	var downloadedCount int64
 
@@ -214,6 +220,17 @@ LOOP:
 			fileCtx, fileCancel := context.WithCancel(ctx)
 			defer fileCancel()
 
+			// Files with identical content share one blob and one temp file.
+			// Serialize them: the first downloads, the rest then find the
+			// blob complete and only link it (unsloth repos, for example,
+			// ship byte-identical quants under different names).
+			if useHFCache && it.SHA256 != "" {
+				l, _ := blobLocks.LoadOrStore(it.SHA256, &sync.Mutex{})
+				mu := l.(*sync.Mutex)
+				mu.Lock()
+				defer mu.Unlock()
+			}
+
 			finalRel := it.RelativePath
 			filterSubdir := ""
 			if job.AppendFilterSubdir && it.Subdir != "" {
@@ -247,14 +264,8 @@ LOOP:
 					}
 					return false, "", nil
 				}
-				// Download to temp location, will be moved to blob later
-				// Use SHA256 as temp name to avoid collisions (e.g., multiple config.json files)
-				tmpName := "tmp-" + it.SHA256
-				if it.SHA256 == "" {
-					// Fallback: sanitize path to avoid collisions
-					tmpName = "tmp-" + strings.ReplaceAll(it.RelativePath, "/", "_")
-				}
-				dst = filepath.Join(repoDir.BlobsDir(), tmpName)
+				// Download to a temp location, moved to its blob later.
+				dst = filepath.Join(repoDir.BlobsDir(), blobTempName(it))
 			} else {
 				// Legacy mode: flat directory structure
 				base := destinationBase(job, cfg)
@@ -325,7 +336,16 @@ LOOP:
 			// is the strongest available check and catches same-size byte flips
 			// that a size check cannot. Files without a known hash fall back to
 			// the configured mode.
-			if verr := verifyDownloaded(fileCtx, httpc, cfg, itForIO, it, dst, finalRel); verr != nil {
+			verifyProgress := func(done int64) {
+				emit(ProgressEvent{Event: "file_verify", Path: finalRel, Downloaded: done, Total: it.Size})
+			}
+			if verr := verifyDownloadedProgress(fileCtx, httpc, cfg, itForIO, it, dst, finalRel, verifyProgress); verr != nil {
+				// A file that failed verification is corrupt: remove it so it
+				// isn't left consuming disk space (the next run re-downloads).
+				var ve *VerificationError
+				if errors.As(verr, &ve) {
+					_ = os.Remove(dst)
+				}
 				select {
 				case errCh <- verr:
 				default:
@@ -467,6 +487,7 @@ func downloadSingle(ctx context.Context, httpc *http.Client, token string, job J
 	}
 
 	retry := newRetry(cfg)
+	stall := stallTimeout(cfg)
 	var lastErr error
 
 	for attempt := 0; attempt <= cfg.Retries; attempt++ {
@@ -476,7 +497,13 @@ func downloadSingle(ctx context.Context, httpc *http.Client, token string, job J
 		default:
 		}
 
-		req, _ := http.NewRequestWithContext(ctx, "GET", it.URL, nil)
+		// Per-attempt context: the stall watchdog cancels only this attempt,
+		// which then retries from the current offset.
+		attemptCtx, cancelAttempt := context.WithCancel(ctx)
+		startPos := pos
+		var serverWait time.Duration
+
+		req, _ := http.NewRequestWithContext(attemptCtx, "GET", it.URL, nil)
 		addAuth(req, token)
 		if pos > 0 {
 			if it.Size > 0 {
@@ -495,27 +522,42 @@ func downloadSingle(ctx context.Context, httpc *http.Client, token string, job J
 			if pos > 0 && resp.StatusCode == http.StatusOK {
 				if err := out.Truncate(0); err != nil {
 					resp.Body.Close()
+					cancelAttempt()
 					return err
 				}
 				if _, err := out.Seek(0, io.SeekStart); err != nil {
 					resp.Body.Close()
+					cancelAttempt()
 					return err
 				}
 				pos = 0
 			}
 			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-				lastErr = fmt.Errorf("bad status: %s", resp.Status)
+				apiErr := downloadStatusError(resp, it)
+				serverWait = retryAfter(resp)
 				resp.Body.Close()
+				if !apiErr.IsRetryable() {
+					// 401/403/404 won't change on retry; fail fast and don't
+					// leave an empty partial behind.
+					cancelAttempt()
+					out.Close()
+					removeIfEmpty(tmp)
+					return apiErr
+				}
+				lastErr = apiErr
 			} else {
-				pr := newProgressReader(resp.Body, it.Size, it.RelativePath, emit)
+				guard := newStallGuard(resp.Body, stall, cancelAttempt)
+				pr := newProgressReader(guard, it.Size, it.RelativePath, emit)
 				pr.downloaded = pos // emitted progress reflects cumulative bytes
 				_, cerr := io.Copy(out, pr)
+				guard.stop()
 				resp.Body.Close()
 				if cerr == nil {
+					cancelAttempt()
 					out.Close()
 					return os.Rename(tmp, dst)
 				}
-				lastErr = cerr
+				lastErr = guard.wrapErr(cerr, stall)
 				// Update pos to current file position so the next retry issues
 				// a Range request for the remaining bytes instead of duplicating.
 				if cur, serr := out.Seek(0, io.SeekCurrent); serr == nil {
@@ -523,15 +565,158 @@ func downloadSingle(ctx context.Context, httpc *http.Client, token string, job J
 				}
 			}
 		}
+		cancelAttempt()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 
 		if attempt < cfg.Retries {
 			emit(ProgressEvent{Event: "retry", Path: it.RelativePath, Attempt: attempt + 1, Message: lastErr.Error()})
-			if d := retry.Next(); !sleepCtx(ctx, d) {
+			d := retry.Next()
+			if serverWait > d {
+				d = serverWait
+			}
+			if !sleepCtx(ctx, d) {
 				return ctx.Err()
+			}
+			// An attempt that moved the resume point forward isn't a failure
+			// streak: reset the budget so long downloads over flaky links
+			// don't die after a handful of interruptions spread over hours.
+			// Bytes written alone don't count — a server that ignores Range
+			// restarts the file from zero each time and would loop forever.
+			if pos > startPos {
+				attempt = -1
+				retry = newRetry(cfg)
 			}
 		}
 	}
 	return lastErr
+}
+
+// downloadStatusError describes a non-success response to a file request as
+// a typed *APIError (so errors.Is works against ErrUnauthorized/ErrNotFound/
+// ErrRateLimited) with an actionable message for access problems.
+func downloadStatusError(resp *http.Response, it PlanItem) *APIError {
+	e := &APIError{StatusCode: resp.StatusCode, Status: resp.Status, URL: it.URL}
+	switch resp.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		e.Message = "access denied; the repository may be gated or private: accept its terms on the Hub and pass --token or set HF_TOKEN"
+	case http.StatusNotFound:
+		e.Message = "file not found at this revision"
+	}
+	return e
+}
+
+// maxServerWait caps how long a Retry-After header can make us wait.
+const maxServerWait = 2 * time.Minute
+
+// retryAfter returns the delay requested by a 429/503 response's Retry-After
+// header (seconds or HTTP date), capped at maxServerWait; 0 if absent.
+func retryAfter(resp *http.Response) time.Duration {
+	if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode != http.StatusServiceUnavailable {
+		return 0
+	}
+	v := strings.TrimSpace(resp.Header.Get("Retry-After"))
+	if v == "" {
+		return 0
+	}
+	var d time.Duration
+	if secs, err := strconv.Atoi(v); err == nil {
+		d = time.Duration(secs) * time.Second
+	} else if t, err := http.ParseTime(v); err == nil {
+		d = time.Until(t)
+	}
+	if d < 0 {
+		return 0
+	}
+	if d > maxServerWait {
+		return maxServerWait
+	}
+	return d
+}
+
+// removeIfEmpty deletes path if it exists and has no content.
+func removeIfEmpty(path string) {
+	if fi, err := os.Stat(path); err == nil && fi.Size() == 0 {
+		_ = os.Remove(path)
+	}
+}
+
+// errRangeIgnored reports a 200 reply to a part's Range request: the server
+// ignores ranges, so the file must be downloaded as a single stream.
+var errRangeIgnored = errors.New("server ignored range request")
+
+// partsBytes returns the total size of the part files that exist.
+func partsBytes(parts []string) int64 {
+	var total int64
+	for _, p := range parts {
+		if fi, err := os.Stat(p); err == nil {
+			total += fi.Size()
+		}
+	}
+	return total
+}
+
+// blobTempName names the temp file an item downloads into inside blobs/.
+// Items with a known content hash use it (stable across runs, so resumes find
+// their partial data). Others use a hash of the repo path: flattening the path
+// itself let distinct files collide (a/b_c.json vs a_b/c.json) and broke on
+// long paths.
+func blobTempName(it PlanItem) string {
+	if it.SHA256 != "" {
+		return "tmp-" + it.SHA256
+	}
+	sum := sha256.Sum256([]byte(it.RelativePath))
+	return "tmp-path-" + hex.EncodeToString(sum[:16])
+}
+
+// multipartLayoutFile records how a file was split into parts so a resume
+// with a different connection count doesn't stitch together parts with
+// mismatched boundaries.
+func multipartLayoutFile(dst string) string { return dst + ".parts" }
+
+// prepareMultipartLayout discards existing part files that were written with a
+// different split (e.g. the connections setting changed between runs). Parts
+// from before layout records existed are kept when they fit the current split.
+func prepareMultipartLayout(dst string, n int, size int64) error {
+	layout := fmt.Sprintf("%d %d", n, size)
+	prev, err := os.ReadFile(multipartLayoutFile(dst))
+	stale := false
+	switch {
+	case err == nil:
+		stale = string(prev) != layout
+	case errors.Is(err, os.ErrNotExist):
+		// No record: only a part index beyond the current count proves the
+		// old split differed.
+		_, statErr := os.Stat(fmt.Sprintf("%s.part-%02d", dst, n))
+		stale = statErr == nil
+	default:
+		return err
+	}
+	if stale {
+		removeMultipartParts(dst)
+	}
+	return os.WriteFile(multipartLayoutFile(dst), []byte(layout), 0o644)
+}
+
+// removeMultipartParts deletes all part files and the layout record for dst.
+func removeMultipartParts(dst string) {
+	if matches, err := filepath.Glob(globEscape(dst) + ".part-*"); err == nil {
+		for _, p := range matches {
+			_ = os.Remove(p)
+		}
+	}
+	_ = os.Remove(multipartLayoutFile(dst))
+}
+
+// globEscape escapes glob metacharacters so a literal path can prefix a pattern.
+func globEscape(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `*`, `\*`, `?`, `\?`, `[`, `\[`)
+	if runtime.GOOS == "windows" {
+		// Backslash is the path separator on Windows and can't be escaped.
+		r = strings.NewReplacer(`*`, `[*]`, `?`, `[?]`, `[`, `[[]`)
+	}
+	return r.Replace(s)
 }
 
 // downloadMultipart downloads a file using multiple parallel range requests.
@@ -544,6 +729,11 @@ func downloadMultipart(ctx context.Context, httpc *http.Client, token string, jo
 		return err
 	}
 	resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		if apiErr := downloadStatusError(resp, it); !apiErr.IsRetryable() {
+			return apiErr
+		}
+	}
 
 	if it.Size == 0 {
 		if clen := resp.Header.Get("Content-Length"); clen != "" {
@@ -568,6 +758,15 @@ func downloadMultipart(ctx context.Context, httpc *http.Client, token string, jo
 	for i := 0; i < n; i++ {
 		tmpParts[i] = fmt.Sprintf("%s.part-%02d", dst, i)
 	}
+	if err := prepareMultipartLayout(dst, n, it.Size); err != nil {
+		return err
+	}
+	stall := stallTimeout(cfg)
+
+	// partsCtx lets one part stop the others when the whole transfer can't
+	// succeed (permanent HTTP error, or the server ignoring Range).
+	partsCtx, cancelParts := context.WithCancel(ctx)
+	defer cancelParts()
 
 	// Download parts in parallel
 	var wg sync.WaitGroup
@@ -636,39 +835,79 @@ func downloadMultipart(ctx context.Context, httpc *http.Client, token string, jo
 
 			for attempt := 0; attempt <= cfg.Retries; attempt++ {
 				select {
-				case <-ctx.Done():
+				case <-partsCtx.Done():
 					return
 				default:
 				}
 
-				rq, _ := http.NewRequestWithContext(ctx, "GET", it.URL, nil)
+				// Per-attempt context so the stall watchdog can abort just this
+				// part's request and retry it from the current offset.
+				attemptCtx, cancelAttempt := context.WithCancel(partsCtx)
+				startPos := pos
+				var serverWait time.Duration
+
+				rq, _ := http.NewRequestWithContext(attemptCtx, "GET", it.URL, nil)
 				addAuth(rq, token)
 				rq.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start+pos, end))
 
 				rs, err := httpc.Do(rq)
 				if err != nil {
 					lastErr = err
-				} else if rs.StatusCode != 206 {
-					lastErr = fmt.Errorf("range not supported (status %s)", rs.Status)
+				} else if rs.StatusCode == http.StatusOK {
+					// The server ignored Range: parts can't work, so stop them
+					// all and let the caller fall back to a single stream.
 					rs.Body.Close()
-				} else {
-					_, cerr := io.Copy(out, rs.Body)
+					cancelAttempt()
+					cancelParts()
+					errCh <- errRangeIgnored
+					return
+				} else if rs.StatusCode != http.StatusPartialContent {
+					apiErr := downloadStatusError(rs, it)
+					serverWait = retryAfter(rs)
 					rs.Body.Close()
-					if cerr == nil {
+					if !apiErr.IsRetryable() {
+						cancelAttempt()
+						cancelParts()
+						errCh <- apiErr
 						return
 					}
-					lastErr = cerr
+					lastErr = apiErr
+				} else {
+					guard := newStallGuard(rs.Body, stall, cancelAttempt)
+					// Never write past this part's range, even if the server
+					// sends more than was asked for.
+					_, cerr := io.Copy(out, io.LimitReader(guard, expected-pos))
+					guard.stop()
+					rs.Body.Close()
+					if cerr == nil {
+						cancelAttempt()
+						return
+					}
+					lastErr = guard.wrapErr(cerr, stall)
 					// Advance pos by what we actually wrote so the next retry
 					// Range request picks up from the correct offset.
 					if cur, serr := out.Seek(0, io.SeekCurrent); serr == nil {
 						pos = cur
 					}
 				}
+				cancelAttempt()
+				if partsCtx.Err() != nil {
+					return
+				}
 
 				if attempt < cfg.Retries {
 					emit(ProgressEvent{Event: "retry", Path: it.RelativePath, Attempt: attempt + 1, Message: lastErr.Error()})
-					if d := retry.Next(); !sleepCtx(ctx, d) {
+					d := retry.Next()
+					if serverWait > d {
+						d = serverWait
+					}
+					if !sleepCtx(partsCtx, d) {
 						return
+					}
+					// Progress resets the retry budget (see downloadSingle).
+					if pos > startPos {
+						attempt = -1
+						retry = newRetry(cfg)
 					}
 				}
 			}
@@ -729,10 +968,23 @@ func downloadMultipart(ctx context.Context, httpc *http.Client, token string, jo
 		return ctx.Err()
 	}
 
-	select {
-	case e := <-errCh:
-		return e
-	default:
+	close(errCh)
+	var partErr error
+	for e := range errCh {
+		if errors.Is(e, errRangeIgnored) {
+			// Ranges don't work here; download the file as one stream.
+			removeMultipartParts(dst)
+			return downloadSingle(ctx, httpc, token, job, cfg, it, dst, emit)
+		}
+		if partErr == nil {
+			partErr = e
+		}
+	}
+	if partErr != nil {
+		if partsBytes(tmpParts) == 0 {
+			removeMultipartParts(dst) // nothing worth keeping for a resume
+		}
+		return partErr
 	}
 
 	// Emit one explicit full-progress reading so the caller's last observed
@@ -740,35 +992,47 @@ func downloadMultipart(ctx context.Context, httpc *http.Client, token string, jo
 	// ticker happened to last fire.
 	emit(ProgressEvent{Event: "file_progress", Path: it.RelativePath, Downloaded: it.Size, Total: it.Size})
 
-	// Assemble parts
-	out, err := os.Create(dst + ".part")
+	// Assemble parts. For a multi-GB file this is a long disk-bound phase, so
+	// report progress (otherwise the file looks stuck at 100%, github #88)
+	// and stop promptly on cancellation, leaving the parts for a resume.
+	assembled := dst + ".part"
+	if err := assembleParts(ctx, assembled, tmpParts, func(done int64) {
+		emit(ProgressEvent{Event: "file_assemble", Path: it.RelativePath, Downloaded: done, Total: it.Size})
+	}); err != nil {
+		_ = os.Remove(assembled)
+		return err
+	}
+
+	if err := os.Rename(assembled, dst); err != nil {
+		return err
+	}
+
+	removeMultipartParts(dst)
+
+	return nil
+}
+
+// assembleParts concatenates parts in order into out, reporting cumulative
+// bytes written through onProgress.
+func assembleParts(ctx context.Context, out string, parts []string, onProgress func(done int64)) error {
+	f, err := os.Create(out)
 	if err != nil {
 		return err
 	}
-
-	for i := 0; i < n; i++ {
-		p := tmpParts[i]
+	var base int64
+	for _, p := range parts {
 		in, err := os.Open(p)
 		if err != nil {
-			out.Close()
+			f.Close()
 			return err
 		}
-		if _, err := io.Copy(out, in); err != nil {
-			in.Close()
-			out.Close()
-			return err
-		}
+		n, err := copyCtx(ctx, f, in, func(done int64) { onProgress(base + done) })
 		in.Close()
+		if err != nil {
+			f.Close()
+			return err
+		}
+		base += n
 	}
-	out.Close()
-
-	if err := os.Rename(dst+".part", dst); err != nil {
-		return err
-	}
-
-	for _, p := range tmpParts {
-		_ = os.Remove(p)
-	}
-
-	return nil
+	return f.Close()
 }

@@ -178,6 +178,12 @@ type Settings struct {
 	// If empty, defaults to "10s".
 	BackoffMax string
 
+	// StallTimeout abandons and retries a transfer that delivers no data for
+	// this long (e.g. a connection that stays open but stops sending).
+	// Accepts duration strings: "60s", "2m". "0" disables the watchdog.
+	// If empty, defaults to "60s".
+	StallTimeout string
+
 	// Token is the HuggingFace access token for private or gated repos.
 	// Get yours at: https://huggingface.co/settings/tokens
 	// Can also be set via HF_TOKEN environment variable.

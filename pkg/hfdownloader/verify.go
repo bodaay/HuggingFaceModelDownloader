@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -28,8 +27,16 @@ import (
 //     mode is ever a silent no-op); "size" checks the byte count; "none"
 //     skips verification.
 func verifyDownloaded(ctx context.Context, httpc *http.Client, cfg Settings, itForIO, it PlanItem, dst, relPath string) error {
+	return verifyDownloadedProgress(ctx, httpc, cfg, itForIO, it, dst, relPath, nil)
+}
+
+// verifyDownloadedProgress is verifyDownloaded with hashing progress reported
+// through onProgress (bytes hashed so far; may be nil). Hashing a multi-GB
+// file takes long enough that, without progress, a finished download looks
+// stuck at 100% (github issue #88). Hashing stops promptly when ctx is done.
+func verifyDownloadedProgress(ctx context.Context, httpc *http.Client, cfg Settings, itForIO, it PlanItem, dst, relPath string, onProgress func(done int64)) error {
 	if it.SHA256 != "" {
-		return checkSHA256(dst, it.SHA256, relPath, "sha256")
+		return checkSHA256(ctx, dst, it.SHA256, relPath, "sha256", onProgress)
 	}
 
 	switch cfg.Verify {
@@ -37,7 +44,7 @@ func verifyDownloaded(ctx context.Context, httpc *http.Client, cfg Settings, itF
 		return nil
 	case "sha256", "etag":
 		if _, remoteSha, _ := headForETag(ctx, httpc, cfg.Token, itForIO); remoteSha != "" {
-			return checkSHA256(dst, remoteSha, relPath, cfg.Verify)
+			return checkSHA256(ctx, dst, remoteSha, relPath, cfg.Verify, onProgress)
 		}
 		if it.Size > 0 {
 			return checkSize(dst, it.Size, relPath)
@@ -59,6 +66,12 @@ func verifyDownloaded(ctx context.Context, httpc *http.Client, cfg Settings, itF
 
 // computeSHA256 computes and returns the SHA256 hash of a file.
 func computeSHA256(path string) (string, error) {
+	return computeSHA256Ctx(context.Background(), path, nil)
+}
+
+// computeSHA256Ctx computes a file's SHA256, stopping when ctx is done and
+// reporting bytes hashed through onProgress (may be nil).
+func computeSHA256Ctx(ctx context.Context, path string, onProgress func(done int64)) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
@@ -66,7 +79,7 @@ func computeSHA256(path string) (string, error) {
 	defer f.Close()
 
 	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
+	if _, err := copyCtx(ctx, h, f, onProgress); err != nil {
 		return "", err
 	}
 
@@ -90,8 +103,8 @@ func verifySHA256(path string, expected string) error {
 // callers can errors.As it and report structured detail. relPath is the path
 // used for reporting; method labels how the expected hash was obtained
 // ("sha256" from the plan, "etag" from a server HEAD).
-func checkSHA256(path, expected, relPath, method string) error {
-	sum, err := computeSHA256(path)
+func checkSHA256(ctx context.Context, path, expected, relPath, method string, onProgress func(done int64)) error {
+	sum, err := computeSHA256Ctx(ctx, path, onProgress)
 	if err != nil {
 		return err
 	}

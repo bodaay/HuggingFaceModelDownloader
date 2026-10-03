@@ -71,7 +71,7 @@ func (e *APIError) Error() string {
 // IsRetryable returns true if the error might succeed on retry.
 func (e *APIError) IsRetryable() bool {
 	switch e.StatusCode {
-	case 429, 500, 502, 503, 504:
+	case 408, 429, 500, 502, 503, 504:
 		return true
 	default:
 		return false

@@ -131,9 +131,10 @@ hfdownloader [REPO] [flags]              # Same as above
 
 | Flag | Short | Type | Default | Description |
 |------|-------|------|---------|-------------|
-| `--retries` | | int | `4` | Retry attempts |
+| `--retries` | | int | `4` | Retry attempts (the count resets whenever an attempt makes progress) |
 | `--backoff-initial` | | string | `400ms` | Initial retry delay |
 | `--backoff-max` | | string | `10s` | Max retry delay |
+| `--stall-timeout` | | string | `60s` | Retry a transfer that receives no data for this long (`0` disables) |
 | `--verify` | | string | `size` | Verification: none, size, etag, sha256 |
 | `--stale-timeout` | | string | `5m` | Timeout for stale downloads |
 
@@ -245,7 +246,7 @@ hfdownloader serve [flags]
 | `--max-active` | | int | `3` | Max concurrent downloads |
 | `--multipart-threshold` | | string | `32MiB` | Min size for multipart |
 | `--verify` | | string | `size` | Verification mode |
-| `--retries` | | int | `4` | Retry attempts |
+| `--retries` | | int | `4` | Retry attempts (the count resets whenever an attempt makes progress) |
 | `--endpoint` | | string | | Custom HF endpoint |
 | `--auth-user` | | string | | Basic auth username |
 | `--auth-pass` | | string | | Basic auth password |
