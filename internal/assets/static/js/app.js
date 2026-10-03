@@ -1466,6 +1466,30 @@
     if (list && cacheDetailFiles) list.innerHTML = renderCacheFileRows(cacheDetailFiles, cacheDetailFilesExpanded);
   };
 
+  // Export a cached repo as plain files into the server's --export-dir
+  // (github issues #83, #91). Disabled server-side unless --export-dir is set.
+  window.exportCacheRepo = async function(repo, type, btn) {
+    let settings = state.settings;
+    if (!settings) {
+      try { settings = await api('GET', '/settings'); } catch (e) { settings = {}; }
+    }
+    if (!settings.exportDir) {
+      showToast('Export is disabled. Start the server with --export-dir PATH (or set export-dir in the config file).', 'error');
+      return;
+    }
+    if (btn) { btn.disabled = true; btn.dataset.label = btn.textContent; }
+    try {
+      const res = await api('POST', '/cache/export', { repo, type });
+      const how = res.hardlinked && !res.copied ? 'hardlinked, no extra disk space'
+        : res.copied ? `${res.copied} copied` : 'up to date';
+      showToast(`Exported ${res.files} files to ${res.dest} (${how})`, 'success');
+    } catch (e) {
+      showToast(`Export failed: ${e.message}`, 'error');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  };
+
   window.showCacheDetails = async function(repo, type) {
     try {
       showModal('Repository Details', '<div class="loading-state"><div class="spinner"></div></div>');
@@ -1592,6 +1616,13 @@
           ${filesHtml}
 
           <div class="cache-detail-actions">
+            <button class="btn btn-primary" onclick="exportCacheRepo('${escapeHtml(data.repo)}', '${escapeHtml(data.type)}', this)"
+              title="Write the repo as plain files (hardlinked from the cache, no extra disk space when on the same drive)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              Export as real files
+            </button>
             <button class="btn btn-danger" onclick="confirmDeleteCache('${escapeHtml(data.repo)}', '${escapeHtml(data.type)}')">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                 <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -2670,7 +2701,7 @@
 
   // isPayloadPath mirrors pkg/hfdownloader isPayloadFile.
   const PAYLOAD_EXTS = new Set(['.safetensors', '.bin', '.pt', '.pth', '.ckpt', '.gguf', '.ggml', '.gguf_file',
-    '.onnx', '.onnx_data', '.msgpack', '.h5', '.tflite', '.ot', '.npz', '.npy', '.pb', '.mlmodel', '.act', '.dat',
+    '.onnx', '.onnx_data', '.msgpack', '.h5', '.tflite', '.ot', '.npz', '.npy', '.pb', '.mlmodel', '.act', '.dat', '.imatrix',
     '.llamafile', '.nemo', '.pkl', '.pickle', '.joblib', '.keras',
     '.parquet', '.arrow', '.jsonl', '.csv', '.tsv', '.tar', '.tgz', '.zip', '.7z', '.rar', '.gz', '.zst', '.xz', '.bz2']);
   function isPayloadPath(rel, isDataset) {

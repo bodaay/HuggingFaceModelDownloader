@@ -15,11 +15,14 @@ import (
 
 // SyncOutput is the JSON output format for sync results.
 type SyncOutput struct {
-	ReposScanned    int      `json:"repos_scanned"`
-	SymlinksCreated int      `json:"symlinks_created"`
-	SymlinksUpdated int      `json:"symlinks_updated"`
-	OrphansRemoved  int      `json:"orphans_removed,omitempty"`
-	Errors          []string `json:"errors,omitempty"`
+	ReposScanned    int `json:"repos_scanned"`
+	SymlinksCreated int `json:"symlinks_created"`
+	SymlinksUpdated int `json:"symlinks_updated"`
+	// SnapshotEntriesRepaired counts snapshot entries recreated from the
+	// download manifest for caches written without links.
+	SnapshotEntriesRepaired int      `json:"snapshot_entries_repaired,omitempty"`
+	OrphansRemoved          int      `json:"orphans_removed,omitempty"`
+	Errors                  []string `json:"errors,omitempty"`
 }
 
 func newRebuildCmd(ro *RootOpts) *cobra.Command {
@@ -61,6 +64,11 @@ during downloads. Use --write-script to manually update this script.`,
 			}
 
 			cache := hfdownloader.NewHFCache(cacheDir, hfdownloader.DefaultStaleTimeout)
+			if mode, err := configLinkMode(); err != nil {
+				return err
+			} else {
+				cache.LinkMode = mode
+			}
 
 			// Write/update the standalone script if requested
 			if writeScript {
@@ -97,6 +105,8 @@ during downloads. Use --write-script to manually update this script.`,
 					SymlinksCreated: result.SymlinksCreated,
 					SymlinksUpdated: result.SymlinksUpdated,
 					OrphansRemoved:  result.OrphansRemoved,
+
+					SnapshotEntriesRepaired: result.SnapshotEntriesRepaired,
 				}
 				for _, e := range result.Errors {
 					out.Errors = append(out.Errors, e.Error())
@@ -111,6 +121,9 @@ during downloads. Use --write-script to manually update this script.`,
 				fmt.Printf("  Repos scanned:     %d\n", result.ReposScanned)
 				fmt.Printf("  Symlinks created:  %d\n", result.SymlinksCreated)
 				fmt.Printf("  Symlinks updated:  %d\n", result.SymlinksUpdated)
+				if result.SnapshotEntriesRepaired > 0 {
+					fmt.Printf("  Snapshot entries repaired: %d\n", result.SnapshotEntriesRepaired)
+				}
 				if clean {
 					fmt.Printf("  Orphans removed:   %d\n", result.OrphansRemoved)
 				}

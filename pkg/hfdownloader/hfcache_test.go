@@ -6,7 +6,6 @@ package hfdownloader
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -428,14 +427,6 @@ func TestIsProcessAlive(t *testing.T) {
 		// This should return false without panicking
 		_ = isProcessAlive(99999999)
 	})
-}
-
-func TestIsWindows(t *testing.T) {
-	result := isWindows()
-	expected := runtime.GOOS == "windows"
-	if result != expected {
-		t.Errorf("isWindows() = %v, want %v", result, expected)
-	}
 }
 
 func TestRepoDir_EnsureFriendlyDir(t *testing.T) {

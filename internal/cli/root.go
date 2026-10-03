@@ -16,8 +16,10 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 
+	"github.com/bodaay/HuggingFaceModelDownloader/internal/server"
 	"github.com/bodaay/HuggingFaceModelDownloader/internal/tui"
 	"github.com/bodaay/HuggingFaceModelDownloader/pkg/hfdownloader"
 )
@@ -66,6 +68,7 @@ func Execute(version string) error {
 	root.AddCommand(newListCmd(ro))
 	root.AddCommand(newInfoCmd(ro))
 	root.AddCommand(newMirrorCmd(ro))
+	root.AddCommand(newExportCmd(ro))
 	root.AddCommand(newAnalyzeCmd(ctx, ro))
 	root.AddCommand(newProxyCmd(ro))
 
@@ -142,6 +145,10 @@ func newDownloadCmd(ctx context.Context, ro *RootOpts) *cobra.Command {
 				return nil
 			}
 
+			if err := confirmCopyOnlyCache(cmd, ro, &finalCfg); err != nil {
+				return err
+			}
+
 			// Progress mode selection
 			var progress hfdownloader.ProgressFunc
 			if ro.JSONOut {
@@ -179,6 +186,7 @@ func newDownloadCmd(ctx context.Context, ro *RootOpts) *cobra.Command {
 	cmd.Flags().StringVar(&cfg.BackoffInitial, "backoff-initial", "400ms", "Initial retry backoff duration")
 	cmd.Flags().StringVar(&cfg.BackoffMax, "backoff-max", "10s", "Maximum retry backoff duration")
 	cmd.Flags().StringVar(&cfg.StallTimeout, "stall-timeout", "60s", "Retry a transfer that receives no data for this long (0 disables)")
+	cmd.Flags().StringVar(&cfg.LinkMode, "link-mode", "auto", "How cache entries refer to downloaded data: auto (symlink, else hardlink, else copy), symlink, hardlink, copy")
 	cmd.Flags().StringVar(&cfg.Endpoint, "endpoint", "", "Custom HuggingFace endpoint URL (e.g. https://hf-mirror.com)")
 	cmd.Flags().BoolVar(&cfg.NoManifest, "no-manifest", false, "Do not write hfd.yaml manifest file after download")
 	cmd.Flags().BoolVar(&cfg.NoFriendlyView, "no-friendly", false, "Do not create friendly view symlinks (models/, datasets/)")
@@ -455,6 +463,7 @@ func applySettingsDefaults(cmd *cobra.Command, ro *RootOpts, dst *hfdownloader.S
 	setStr("backoff-initial", func(v string) { dst.BackoffInitial = v })
 	setStr("backoff-max", func(v string) { dst.BackoffMax = v })
 	setStr("stall-timeout", func(v string) { dst.StallTimeout = v })
+	setStr("link-mode", func(v string) { dst.LinkMode = v })
 	setStr("endpoint", func(v string) { dst.Endpoint = v })
 
 	if !cmd.Flags().Changed("token") && os.Getenv("HF_TOKEN") == "" {
@@ -575,3 +584,43 @@ func jsonProgress(w io.Writer) hfdownloader.ProgressFunc {
 	}
 }
 
+
+// confirmCopyOnlyCache asks, once, what to do when the cache drive supports
+// neither symlinks nor hardlinks (e.g. FAT/exFAT): every cache entry would be
+// a copy, doubling disk use. Only in an interactive terminal with link-mode
+// left on auto; the answer is saved to the config file. Scripts, JSON output
+// and the web server never block — they proceed with copies.
+func confirmCopyOnlyCache(cmd *cobra.Command, ro *RootOpts, cfg *hfdownloader.Settings) error {
+	if cfg.OutputDir != "" || ro.JSONOut || ro.Quiet || cmd.Flags().Changed("link-mode") {
+		return nil // flat output, non-interactive output, or an explicit choice
+	}
+	if mode, _ := hfdownloader.ParseLinkMode(cfg.LinkMode); mode != hfdownloader.LinkAuto {
+		return nil
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+		return nil
+	}
+	root := cfg.CacheDir
+	if root == "" {
+		root = hfdownloader.DefaultCacheDir()
+	}
+	if sym, hard := hfdownloader.LinkSupport(root); sym || hard {
+		return nil
+	}
+
+	fmt.Printf("The cache drive (%s) supports neither symlinks nor hardlinks,\n", root)
+	fmt.Println("so every file would be stored twice (blob + copy).")
+	fmt.Println("  [c] Copy into the HF cache anyway (Python/HF tools find the files)")
+	fmt.Println("  [l] Cancel, and use --local-dir <folder> for plain files instead")
+	fmt.Print("Choose [c/l]: ")
+	var answer string
+	fmt.Scanln(&answer)
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(answer)), "c") {
+		return fmt.Errorf("cancelled: re-run with --local-dir <folder> to save plain files, or --link-mode copy")
+	}
+	cfg.LinkMode = string(hfdownloader.LinkCopy)
+	if err := server.UpdateConfigFile(map[string]any{"link-mode": "copy"}); err == nil {
+		fmt.Printf("Saved link-mode: copy to %s\n", server.ConfigPath())
+	}
+	return nil
+}

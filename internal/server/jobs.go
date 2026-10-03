@@ -592,6 +592,7 @@ func (m *JobManager) runJob(job *Job) {
 		BackoffMax:         "10s",
 		Endpoint:           cfg.Endpoint,
 		Proxy:              cfg.Proxy,
+		LinkMode:           cfg.LinkMode,
 	}
 
 	// Local mode: write real files into LocalDir instead of the HF cache

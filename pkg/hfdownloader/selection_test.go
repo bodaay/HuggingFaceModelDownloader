@@ -150,7 +150,7 @@ func TestApplyFilters_MoreFormats(t *testing.T) {
 	}{
 		{"old-style gguf split parts and other weight formats are filtered", items(
 			"falcon-180b.Q4_K_M.gguf-split-a", "falcon-180b.Q4_K_M.gguf-split-b", "falcon-180b.Q8_0.gguf-split-a",
-			"model.llamafile", "model.nemo", "README.md|small"), []string{"q4_k_m"}, false,
+			"model.llamafile", "model.nemo", "SmolLM2-135M-Instruct.imatrix", "README.md|small"), []string{"q4_k_m"}, false,
 			[]string{"README.md", "falcon-180b.Q4_K_M.gguf-split-a", "falcon-180b.Q4_K_M.gguf-split-b"}},
 		{"dataset .txt/.json are data", items("train.txt", "valid.txt", "data/train.json"), []string{"valid"}, true,
 			[]string{"valid.txt"}},

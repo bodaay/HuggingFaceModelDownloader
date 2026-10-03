@@ -63,6 +63,10 @@ type SettingsResponse struct {
 	// or "cache" when it uses the HF cache layout. Set at startup, read-only.
 	StorageMode string `json:"storageMode"`
 	LocalDir    string `json:"localDir,omitempty"`
+	// ExportDir is where "Export as real files" writes; empty = disabled.
+	ExportDir string `json:"exportDir,omitempty"`
+	// LinkMode is how cache entries refer to downloaded data.
+	LinkMode string `json:"linkMode,omitempty"`
 	// Proxy settings
 	Proxy *ProxySettingsResponse `json:"proxy,omitempty"`
 	// Config file paths
@@ -396,6 +400,8 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		Endpoint:           cfg.Endpoint,
 		StorageMode:        storageMode,
 		LocalDir:           cfg.LocalDir,
+		ExportDir:          cfg.ExportDir,
+		LinkMode:           cfg.LinkMode,
 		ConfigFile:         ConfigPath(),
 		TargetsFile:        hfdownloader.DefaultTargetsPath(),
 	}
@@ -509,18 +515,26 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	s.jobs.UpdateConfig(updated)
 
 	// Persist settings to config file
-	fileCfg := &ConfigFile{
-		Token:              updated.Token,
-		Connections:        updated.Concurrency,
-		MaxActive:          updated.MaxActive,
-		MultipartThreshold: updated.MultipartThreshold,
-		Verify:             updated.Verify,
-		Retries:            updated.Retries,
-		Endpoint:           updated.Endpoint,
+	// Update only the web-managed keys; everything else in the file
+	// (cache-dir, backoff, link-mode, ...) is kept.
+	orNil := func(v any, empty bool) any {
+		if empty {
+			return nil
+		}
+		return v
 	}
-	// Add proxy to config file if set
+	updates := map[string]any{
+		"token":               orNil(updated.Token, updated.Token == ""),
+		"connections":         orNil(updated.Concurrency, updated.Concurrency == 0),
+		"max-active":          orNil(updated.MaxActive, updated.MaxActive == 0),
+		"multipart-threshold": orNil(updated.MultipartThreshold, updated.MultipartThreshold == ""),
+		"verify":              orNil(updated.Verify, updated.Verify == ""),
+		"retries":             orNil(updated.Retries, updated.Retries == 0),
+		"endpoint":            orNil(updated.Endpoint, updated.Endpoint == ""),
+		"proxy":               nil,
+	}
 	if updated.Proxy != nil {
-		fileCfg.Proxy = &ProxyConfig{
+		updates["proxy"] = &ProxyConfig{
 			URL:                updated.Proxy.URL,
 			Username:           updated.Proxy.Username,
 			Password:           updated.Proxy.Password,
@@ -529,7 +543,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			InsecureSkipVerify: updated.Proxy.InsecureSkipVerify,
 		}
 	}
-	if err := SaveConfigFile(fileCfg); err != nil {
+	if err := UpdateConfigFile(updates); err != nil {
 		// Log error but don't fail the request - settings are still applied in-memory
 		writeJSON(w, http.StatusOK, SuccessResponse{
 			Success: true,
@@ -1031,6 +1045,57 @@ func (s *Server) handleCacheRebuild(w http.ResponseWriter, r *http.Request) {
 // - Symlink attacks (symlinks pointing outside cache)
 // - TOCTOU race conditions
 // - Directory escape via prefix manipulation
+// CacheExportRequest asks to export a cached repo as plain files.
+type CacheExportRequest struct {
+	Repo     string   `json:"repo"`
+	Type     string   `json:"type,omitempty"` // "model" (default) or "dataset"
+	Revision string   `json:"revision,omitempty"`
+	Filters  []string `json:"filters,omitempty"`
+}
+
+// handleCacheExport writes a cached repo as plain files (hardlinked from the
+// cache when possible) into <ExportDir>/<owner>/<name> — github issues #83,
+// #91. It is disabled unless the server was started with --export-dir, so the
+// API can't be used to write files anywhere else on disk.
+func (s *Server) handleCacheExport(w http.ResponseWriter, r *http.Request) {
+	cfg := s.settingsConfig()
+	if cfg.ExportDir == "" {
+		writeError(w, http.StatusBadRequest, "Export is disabled",
+			"start the server with --export-dir PATH (or set export-dir in the config file) to export repos as real files")
+		return
+	}
+	var req CacheExportRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request", err.Error())
+		return
+	}
+	repoType := hfdownloader.RepoTypeModel
+	if req.Type == "dataset" {
+		repoType = hfdownloader.RepoTypeDataset
+	}
+	cacheDir := cfg.CacheDir
+	if cacheDir == "" {
+		cacheDir = hfdownloader.DefaultCacheDir()
+	}
+	cache := hfdownloader.NewHFCache(cacheDir, 0)
+	repoDir, err := cache.Repo(req.Repo, repoType)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid repository", err.Error())
+		return
+	}
+	dest := filepath.Join(cfg.ExportDir, repoDir.Owner(), repoDir.Name())
+	res, err := repoDir.Export(dest, hfdownloader.ExportOptions{Revision: req.Revision, Filters: req.Filters})
+	if err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not in the cache") || strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, "Export failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
 func (s *Server) handleCacheDelete(w http.ResponseWriter, r *http.Request) {
 	repo := r.PathValue("repo")
 	if repo == "" {

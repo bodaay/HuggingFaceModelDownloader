@@ -11,6 +11,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
+
+	"github.com/bodaay/HuggingFaceModelDownloader/pkg/hfdownloader"
 )
 
 // DefaultConfig returns the default configuration.
@@ -25,6 +27,7 @@ func DefaultConfig() map[string]any {
 		"backoff-initial":     "400ms",
 		"backoff-max":         "10s",
 		"stall-timeout":       "60s",
+		"link-mode":           "auto",
 		"token":               "",
 	}
 }
@@ -150,3 +153,13 @@ func newConfigPathCmd() *cobra.Command {
 	}
 }
 
+
+// configLinkMode returns the link-mode from the config file (auto if unset).
+func configLinkMode() (hfdownloader.LinkMode, error) {
+	if cfg := loadConfigMap(); cfg != nil {
+		if v, ok := cfg["link-mode"].(string); ok {
+			return hfdownloader.ParseLinkMode(v)
+		}
+	}
+	return hfdownloader.LinkAuto, nil
+}
