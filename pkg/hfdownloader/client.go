@@ -44,13 +44,6 @@ type hfLfsInfo struct {
 	Sha256 string `json:"sha256,omitempty"`
 }
 
-// buildHTTPClient creates an HTTP client with sensible defaults.
-// Deprecated: Use BuildHTTPClient(proxy) for proxy support.
-func buildHTTPClient() *http.Client {
-	client, _ := BuildHTTPClient(nil)
-	return client
-}
-
 // buildHTTPClientWithProxy creates an HTTP client with proxy support.
 func buildHTTPClientWithProxy(proxy *ProxyConfig) *http.Client {
 	client, err := BuildHTTPClient(proxy)
@@ -67,20 +60,6 @@ func addAuth(req *http.Request, token string) {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	req.Header.Set("User-Agent", "hfdownloader/2")
-}
-
-// quickHeadAcceptRanges checks if a URL supports range requests.
-func quickHeadAcceptRanges(ctx context.Context, httpc *http.Client, token string, urlStr string) (bool, bool) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, "HEAD", urlStr, nil)
-	addAuth(req, token)
-	resp, err := httpc.Do(req)
-	if err != nil {
-		return false, false
-	}
-	defer resp.Body.Close()
-	return true, strings.Contains(strings.ToLower(resp.Header.Get("Accept-Ranges")), "bytes")
 }
 
 // headForETag fetches ETag and SHA256 headers for a file.
@@ -184,8 +163,8 @@ func pathEscapeAll(p string) string {
 
 // RepoInfo contains metadata about a HuggingFace repository.
 type RepoInfo struct {
-	SHA          string `json:"sha"`           // Commit hash
-	LastModified string `json:"lastModified"`  // ISO timestamp
+	SHA          string `json:"sha"`          // Commit hash
+	LastModified string `json:"lastModified"` // ISO timestamp
 }
 
 // fetchRepoInfo fetches repository metadata including the commit SHA for a given revision.
@@ -216,5 +195,3 @@ func fetchRepoInfo(ctx context.Context, httpc *http.Client, token, endpoint stri
 	}
 	return &info, nil
 }
-
-

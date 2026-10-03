@@ -321,7 +321,7 @@ func printSelectableItems(info *smartdl.RepoInfo) {
 	for cat, items := range categories {
 		title := categoryTitles[cat]
 		if title == "" {
-			title = "Available " + strings.Title(cat)
+			title = "Available " + strings.ToUpper(cat[:1]) + cat[1:]
 		}
 
 		fmt.Println()

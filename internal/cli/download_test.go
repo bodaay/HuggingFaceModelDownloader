@@ -5,9 +5,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,7 +25,7 @@ func TestNewDownloadCmd(t *testing.T) {
 	expectedFlags := []string{
 		"dataset",
 		"revision",
-		"filters",     // Not "filter"
+		"filters", // Not "filter"
 		"exclude",
 		"connections", // Not "concurrency"
 		"cache-dir",
@@ -68,47 +65,6 @@ func TestDownloadCmd_InvalidRepo(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for invalid repo name")
 	}
-}
-
-// mockHFServer creates a mock HuggingFace API server
-func mockHFServer(t *testing.T) *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/models/test/model" || r.URL.Path == "/api/models/test/model/revision/main":
-			// Return minimal model info
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"id":        "test/model",
-				"modelId":   "test/model",
-				"sha":       "abc123def456",
-				"siblings": []map[string]interface{}{
-					{"rfilename": "config.json"},
-					{"rfilename": "README.md"},
-				},
-			})
-
-		case r.URL.Path == "/api/datasets/test/dataset" || r.URL.Path == "/api/datasets/test/dataset/revision/main":
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"id":  "test/dataset",
-				"sha": "abc123def456",
-				"siblings": []map[string]interface{}{
-					{"rfilename": "data.json"},
-				},
-			})
-
-		case r.URL.Path == "/test/model/resolve/main/config.json":
-			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"model_type": "test"}`))
-
-		case r.URL.Path == "/test/model/resolve/main/README.md":
-			w.Write([]byte(`# Test Model`))
-
-		default:
-			t.Logf("Unhandled path: %s", r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
 }
 
 func TestDownloadSettings_Defaults(t *testing.T) {

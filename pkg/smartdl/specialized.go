@@ -4,7 +4,6 @@
 package smartdl
 
 import (
-	"path/filepath"
 	"strings"
 )
 
@@ -20,26 +19,26 @@ var audioTaskDescriptions = map[string]string{
 
 // Vision task descriptions.
 var visionTaskDescriptions = map[string]string{
-	"image-classification":     "Image Classification - categorizes images into classes",
-	"object-detection":         "Object Detection - locates and identifies objects in images",
-	"image-segmentation":       "Image Segmentation - segments images into regions",
-	"semantic-segmentation":    "Semantic Segmentation - classifies each pixel",
-	"instance-segmentation":    "Instance Segmentation - identifies individual object instances",
-	"panoptic-segmentation":    "Panoptic Segmentation - combines semantic and instance segmentation",
-	"depth-estimation":         "Depth Estimation - estimates depth from images",
-	"image-to-image":           "Image-to-Image - transforms images",
+	"image-classification":           "Image Classification - categorizes images into classes",
+	"object-detection":               "Object Detection - locates and identifies objects in images",
+	"image-segmentation":             "Image Segmentation - segments images into regions",
+	"semantic-segmentation":          "Semantic Segmentation - classifies each pixel",
+	"instance-segmentation":          "Instance Segmentation - identifies individual object instances",
+	"panoptic-segmentation":          "Panoptic Segmentation - combines semantic and instance segmentation",
+	"depth-estimation":               "Depth Estimation - estimates depth from images",
+	"image-to-image":                 "Image-to-Image - transforms images",
 	"unconditional-image-generation": "Unconditional Image Generation - generates images without prompts",
 	"zero-shot-image-classification": "Zero-Shot Classification - classifies without training",
 }
 
 // Multimodal task descriptions.
 var multimodalTaskDescriptions = map[string]string{
-	"visual-question-answering": "Visual Question Answering (VQA) - answers questions about images",
-	"image-to-text":             "Image-to-Text - generates text descriptions of images",
-	"image-text-to-text":        "Image-Text-to-Text - generates text from image and text input",
+	"visual-question-answering":   "Visual Question Answering (VQA) - answers questions about images",
+	"image-to-text":               "Image-to-Text - generates text descriptions of images",
+	"image-text-to-text":          "Image-Text-to-Text - generates text from image and text input",
 	"document-question-answering": "Document QA - answers questions about documents",
-	"video-text-to-text":        "Video-Text-to-Text - generates text from video and text input",
-	"any-to-any":                "Any-to-Any - handles multiple modalities",
+	"video-text-to-text":          "Video-Text-to-Text - generates text from video and text input",
+	"any-to-any":                  "Any-to-Any - handles multiple modalities",
 }
 
 // analyzeAudio analyzes audio model metadata.
@@ -518,16 +517,6 @@ func isMultimodalModel(files []FileInfo, metadata map[string]interface{}) bool {
 	return false
 }
 
-// hasONNXFiles checks if the repository contains ONNX files.
-func hasONNXFiles(files []FileInfo) bool {
-	for _, f := range files {
-		if strings.HasSuffix(strings.ToLower(f.Name), ".onnx") {
-			return true
-		}
-	}
-	return false
-}
-
 // detectSpecializedType determines if a model is audio, vision, or multimodal.
 // Returns the detected type or empty string if not a specialized model.
 func detectSpecializedType(files []FileInfo, metadata map[string]interface{}) RepoType {
@@ -544,15 +533,5 @@ func detectSpecializedType(files []FileInfo, metadata map[string]interface{}) Re
 	// ONNX is not a specialization: a repo with PyTorch weights that also
 	// ships an onnx/ export stays a transformers model (detectType already
 	// labels ONNX-only repos).
-	return ""
-}
-
-// getONNXModelDir returns the directory containing ONNX files.
-func getONNXModelDir(files []FileInfo) string {
-	for _, f := range files {
-		if strings.HasSuffix(strings.ToLower(f.Name), ".onnx") {
-			return filepath.Dir(f.Path)
-		}
-	}
 	return ""
 }

@@ -34,7 +34,6 @@ type LiveRenderer struct {
 	hideCur    bool
 	supports   bool // ANSI + interactive
 	noColor    bool
-	lastRedraw time.Time
 
 	// aggregate
 	totalFiles int
@@ -604,11 +603,7 @@ func ansiOkay() bool {
 		// On modern Windows 10+ terminals this is typically fine.
 		// Fall back to plain output when TERM=dumb or NO_COLOR set.
 	}
-	termEnv := strings.ToLower(os.Getenv("TERM"))
-	if termEnv == "dumb" {
-		return false
-	}
-	return true
+	return strings.ToLower(os.Getenv("TERM")) != "dumb"
 }
 
 func colorize(s, style string, lr *LiveRenderer) string {
