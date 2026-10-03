@@ -32,6 +32,7 @@ func newServeCmd(ro *RootOpts) *cobra.Command {
 		endpoint           string
 		authUser           string
 		authPass           string
+		allowOrigins       []string
 	)
 
 	cmd := &cobra.Command{
@@ -50,19 +51,25 @@ Examples:
   hfdownloader serve                              # Start on port 8080
   hfdownloader serve --port 3000                  # Custom port
   hfdownloader serve --auth-user admin --auth-pass secret  # With authentication
-  hfdownloader serve --endpoint https://hf-mirror.com      # Use mirror`,
+  hfdownloader serve --endpoint https://hf-mirror.com      # Use mirror
+  hfdownloader serve --allow-origin https://hfd.example.com # Behind a reverse proxy
+
+Browser requests from other origins (other websites) are rejected; the web UI
+itself is always allowed. Use --allow-origin when a reverse proxy or another
+web app on a different origin needs to call the API.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Build server config from CLI flags
 			cfg := server.Config{
-				Addr:        addr,
-				Port:        port,
-				ModelsDir:   modelsDir,
-				DatasetsDir: datasetsDir,
-				CacheDir:    cacheDir,
-				LocalDir:    localDir,
-				AuthUser:    authUser,
-				AuthPass:    authPass,
-				Version:     cmd.Root().Version, // injected build version (ldflags)
+				Addr:           addr,
+				Port:           port,
+				ModelsDir:      modelsDir,
+				DatasetsDir:    datasetsDir,
+				CacheDir:       cacheDir,
+				LocalDir:       localDir,
+				AuthUser:       authUser,
+				AuthPass:       authPass,
+				AllowedOrigins: allowOrigins,
+				Version:        cmd.Root().Version, // injected build version (ldflags)
 			}
 
 			// Apply config file settings first (for values not set by CLI)
@@ -143,6 +150,9 @@ Examples:
 	// Authentication
 	cmd.Flags().StringVar(&authUser, "auth-user", "", "Username for basic auth (enables auth when set)")
 	cmd.Flags().StringVar(&authPass, "auth-pass", "", "Password for basic auth")
+
+	// Cross-origin access
+	cmd.Flags().StringSliceVar(&allowOrigins, "allow-origin", nil, "Extra browser origin allowed to call the API, e.g. https://hfd.example.com (repeatable; \"*\" allows any)")
 
 	return cmd
 }

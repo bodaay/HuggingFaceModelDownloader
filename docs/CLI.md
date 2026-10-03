@@ -249,6 +249,7 @@ hfdownloader serve [flags]
 | `--endpoint` | | string | | Custom HF endpoint |
 | `--auth-user` | | string | | Basic auth username |
 | `--auth-pass` | | string | | Basic auth password |
+| `--allow-origin` | | strings | | Extra browser origin allowed to call the API (repeatable; `*` allows any). Other origins get 403 |
 | `--models-dir` | | string | `./Models` | Legacy models directory |
 | `--datasets-dir` | | string | `./Datasets` | Legacy datasets directory |
 
