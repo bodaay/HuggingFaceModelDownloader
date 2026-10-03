@@ -123,6 +123,9 @@ func newDownloadCmd(ctx context.Context, ro *RootOpts) *cobra.Command {
 				if err != nil {
 					return err
 				}
+				if w := hfdownloader.UnmatchedFiltersWarning(finalJob, p); w != "" {
+					fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+				}
 				if strings.ToLower(planFmt) == "json" || ro.JSONOut {
 					enc := json.NewEncoder(os.Stdout)
 					enc.SetIndent("", "  ")
@@ -552,6 +555,8 @@ func cliProgress(ro *RootOpts, job hfdownloader.Job) hfdownloader.ProgressFunc {
 			}
 		case "error":
 			fmt.Fprintf(os.Stderr, "error: %s\n", ev.Message)
+		case "warning":
+			fmt.Fprintf(os.Stderr, "warning: %s\n", ev.Message)
 		case "done":
 			fmt.Println(ev.Message)
 		}

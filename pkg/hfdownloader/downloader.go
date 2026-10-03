@@ -151,6 +151,10 @@ func Download(ctx context.Context, job Job, cfg Settings, progress ProgressFunc)
 		return err
 	}
 
+	if w := UnmatchedFiltersWarning(job, plan); w != "" {
+		emit(ProgressEvent{Level: "warn", Event: "warning", Message: w})
+	}
+
 	// Emit ALL plan_item events upfront so TUI knows total size immediately
 	for _, item := range plan.Items {
 		displayRel := item.RelativePath

@@ -125,28 +125,6 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 			}
 		}
 
-		// Determine which filter (if any) matches this file name, prefer the longest match
-		// Filter matching is case-insensitive (e.g., q4_0 matches Q4_0)
-		matchedFilter := ""
-		if isLFS && len(job.Filters) > 0 {
-			for _, f := range job.Filters {
-				fLower := strings.ToLower(f)
-				if filterMatches(nameLower, fLower, job.ExactMatch) {
-					if len(f) > len(matchedFilter) {
-						matchedFilter = f
-					}
-				}
-			}
-			// If filters provided and none matched, skip typical large LFS blobs
-			if matchedFilter == "" {
-				ln := strings.ToLower(name)
-				ext := strings.ToLower(filepath.Ext(name))
-				if ext == ".bin" || ext == ".act" || ext == ".safetensors" || ext == ".zip" || strings.HasSuffix(ln, ".gguf") || strings.HasSuffix(ln, ".ggml") {
-					return nil
-				}
-			}
-		}
-
 		// Build URL and file size
 		var urlStr string
 		if isLFS {
@@ -182,7 +160,6 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 			SHA256:       sha,
 			Size:         size,
 			AcceptRanges: acceptRanges,
-			Subdir:       matchedFilter, // empty when no filter matched
 		})
 		return nil
 	}
@@ -210,7 +187,84 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 			}
 		}
 	}
-	return &Plan{Items: items, Commit: commitSHA}, nil
+	return &Plan{Items: applyFilters(items, job.Filters, job.ExactMatch), Commit: commitSHA}, nil
+}
+
+// applyFilters keeps the items a filtered job should download and records
+// the filter each matched (in Subdir, used by AppendFilterSubdir). Filters
+// are case-insensitive and matched against the full repo path, so folder
+// names select too (diffusers components like "unet", per-quant folders like
+// "Q4_K_M/", dataset splits like "validation"). With filters set:
+//   - a file matching any filter is kept (the longest matching filter wins);
+//   - any other LFS file is dropped, whatever its type (previously only six
+//     weight extensions were dropped, so ONNX/TF/Flax weights, parquet
+//     splits and imatrix files came along with every filter);
+//   - any other small (non-LFS) file is kept only in the repo root or in a
+//     folder holding a matched file, so a chosen component keeps its
+//     config.json while unchosen folders' metadata is skipped.
+func applyFilters(items []PlanItem, filters []string, exact bool) []PlanItem {
+	var fs, orig []string // lowercased for matching; as given, for Subdir
+	for _, f := range filters {
+		if f = strings.TrimSpace(f); f != "" {
+			fs = append(fs, strings.ToLower(f))
+			orig = append(orig, f)
+		}
+	}
+	if len(fs) == 0 {
+		return items
+	}
+
+	matched := make([]string, len(items))
+	matchedDirs := map[string]bool{} // folders (and their ancestors) holding a match
+	for i, it := range items {
+		relLower := strings.ToLower(it.RelativePath)
+		for j, f := range fs {
+			if filterMatches(relLower, f, exact) && len(f) > len(matched[i]) {
+				matched[i] = orig[j]
+			}
+		}
+		if matched[i] != "" {
+			for d := path.Dir(it.RelativePath); d != "." && !matchedDirs[d]; d = path.Dir(d) {
+				matchedDirs[d] = true
+			}
+		}
+	}
+
+	var out []PlanItem
+	for i, it := range items {
+		switch {
+		case matched[i] != "":
+			it.Subdir = matched[i]
+		case it.LFS:
+			continue
+		case path.Dir(it.RelativePath) != "." && !matchedDirs[path.Dir(it.RelativePath)]:
+			continue
+		}
+		out = append(out, it)
+	}
+	return out
+}
+
+// UnmatchedFiltersWarning returns a warning when a filtered job matched no
+// file at all — usually a typo or a quant the repo doesn't have — since the
+// download would otherwise quietly fetch only metadata.
+func UnmatchedFiltersWarning(job Job, plan *Plan) string {
+	var given []string
+	for _, f := range job.Filters {
+		if f = strings.TrimSpace(f); f != "" {
+			given = append(given, f)
+		}
+	}
+	if len(given) == 0 {
+		return ""
+	}
+	for _, it := range plan.Items {
+		if it.Subdir != "" {
+			return ""
+		}
+	}
+	return fmt.Sprintf("no files matched filter(s) %s; only repo metadata will be downloaded (run `hfdownloader analyze %s` to see what is available)",
+		strings.Join(given, ","), job.Repo)
 }
 
 // revisionRejected reports whether err is an API response meaning the
@@ -236,23 +290,30 @@ func resolveAcceptsURL(ctx context.Context, httpc *http.Client, token, u string)
 	return resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusBadRequest
 }
 
-// filterMatches reports whether filter fLower matches the file name nameLower
-// (both already lowercased). In substring mode (the default) it uses a plain
-// substring check. In exact mode it matches when fLower equals either the whole
-// file name (with or without its extension) or a single delimiter-bounded
-// segment of the name. So "q6_k" matches "...-Q6_K.gguf" but not
-// "...-Q6_K_XL.gguf" (github issue #78), while a full-name filter such as a
-// vision encoder's "...-mmproj-bf16" still matches its file (github issue #84).
-func filterMatches(nameLower, fLower string, exact bool) bool {
+// filterMatches reports whether filter fLower matches the repo path relLower
+// (both already lowercased). In substring mode (the default) it is a plain
+// substring check on the full path. In exact mode it matches when fLower
+// equals the whole path or file name (with or without extension), a
+// delimiter-bounded segment of the path, or — for filters containing "/" — a
+// run of whole path elements. So "q6_k" matches "...-Q6_K.gguf" and the
+// folder "Q6_K/" but not "...-Q6_K_XL.gguf" (github issue #78), and a
+// full-name filter such as a vision encoder's "...-mmproj-bf16" still
+// matches its file (github issue #84).
+func filterMatches(relLower, fLower string, exact bool) bool {
 	if !exact {
-		return strings.Contains(nameLower, fLower)
+		return strings.Contains(relLower, fLower)
 	}
-	// Whole-name match: handles filters that are a full file name, e.g. the
-	// mmproj/vision-encoder companion whose filter is the name minus ".gguf".
-	if fLower == nameLower || fLower == strings.TrimSuffix(nameLower, filepath.Ext(nameLower)) {
-		return true
+	nameLower := path.Base(relLower)
+	for _, whole := range []string{relLower, nameLower} {
+		if fLower == whole || fLower == strings.TrimSuffix(whole, path.Ext(whole)) {
+			return true
+		}
 	}
-	for _, seg := range strings.FieldsFunc(nameLower, isFilterDelimiter) {
+	if strings.Contains(fLower, "/") {
+		p := strings.Trim(fLower, "/")
+		return relLower == p || strings.HasPrefix(relLower, p+"/") || strings.Contains(relLower, "/"+p+"/")
+	}
+	for _, seg := range strings.FieldsFunc(relLower, isFilterDelimiter) {
 		if seg == fLower {
 			return true
 		}
@@ -264,7 +325,7 @@ func filterMatches(nameLower, fLower string, exact bool) bool {
 // filtering. Underscores are intentionally NOT delimiters because quantization
 // names contain them (e.g. Q6_K, Q4_K_M).
 func isFilterDelimiter(r rune) bool {
-	return r == '-' || r == '.' || r == ' '
+	return r == '/' || r == '-' || r == '.' || r == ' '
 }
 
 // destinationBase returns the base output directory for a job.
