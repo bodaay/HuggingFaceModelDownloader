@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -400,11 +401,15 @@ func (a *Analyzer) detectType(files []FileInfo, isDataset bool) RepoType {
 	}
 
 	// Build file index for quick lookups
-	hasFile := make(map[string]bool)
+	hasFile := make(map[string]bool)  // by path or base name (any folder)
+	rootFile := make(map[string]bool) // files in the repo root
 	var extensions []string
 	for _, f := range files {
 		hasFile[f.Path] = true
 		hasFile[f.Name] = true
+		if !strings.Contains(f.Path, "/") {
+			rootFile[f.Path] = true
+		}
 		ext := strings.ToLower(filepath.Ext(f.Name))
 		extensions = append(extensions, ext)
 	}
@@ -428,21 +433,18 @@ func (a *Analyzer) detectType(files []FileInfo, isDataset bool) RepoType {
 		return TypeLoRA
 	}
 
-	// 4. GPTQ/AWQ - quantize_config.json
-	if hasFile["quantize_config.json"] {
+	// 4. GPTQ/AWQ - quantize_config.json next to root PyTorch weights.
+	// transformers.js repos (Xenova/*, onnx-community/*) carry an ONNX
+	// runtime quantize_config.json with only onnx/ weights.
+	if rootFile["quantize_config.json"] && hasRootWeights(files) {
 		// Will refine to GPTQ vs AWQ when we parse the config
 		return TypeGPTQ
 	}
 
-	// 5. ONNX - presence of .onnx files
-	for _, ext := range extensions {
-		if ext == ".onnx" {
-			return TypeONNX
-		}
-	}
-
-	// 6. Transformers - config.json + safetensors/bin
-	if hasFile["config.json"] {
+	// 5. Transformers - root config.json + safetensors/bin. Checked before
+	// ONNX: many PyTorch repos also ship an onnx/ export (gpt2,
+	// sentence-transformers, SmolVLM) and must not be labeled ONNX-only.
+	if rootFile["config.json"] {
 		hasSafetensors := false
 		hasBin := false
 		for _, ext := range extensions {
@@ -458,7 +460,7 @@ func (a *Analyzer) detectType(files []FileInfo, isDataset bool) RepoType {
 		}
 	}
 
-	// 7. ONNX - presence of .onnx files (if not already detected as other type)
+	// 6. ONNX - presence of .onnx files (if not already detected as other type)
 	for _, ext := range extensions {
 		if ext == ".onnx" {
 			return TypeONNX
@@ -466,6 +468,30 @@ func (a *Analyzer) detectType(files []FileInfo, isDataset bool) RepoType {
 	}
 
 	return TypeGeneric
+}
+
+// fileSize returns the size of the file at path in files, or 0.
+func fileSize(files []FileInfo, path string) int64 {
+	for _, f := range files {
+		if f.Path == path {
+			return f.Size
+		}
+	}
+	return 0
+}
+
+// hasRootWeights reports whether the repo root holds PyTorch weights.
+func hasRootWeights(files []FileInfo) bool {
+	for _, f := range files {
+		if strings.Contains(f.Path, "/") {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(f.Path))
+		if ext == ".safetensors" || ext == ".bin" {
+			return true
+		}
+	}
+	return false
 }
 
 // fetchMetadata fetches and parses relevant config files.
@@ -479,15 +505,15 @@ func (a *Analyzer) fetchMetadata(ctx context.Context, repo string, isDataset boo
 		filesToFetch = []string{"model_index.json"}
 	case TypeLoRA:
 		filesToFetch = []string{"adapter_config.json"}
-	case TypeGPTQ, TypeAWQ:
+	case TypeGPTQ, TypeAWQ, TypeQuantized:
 		filesToFetch = []string{"quantize_config.json", "config.json"}
 	case TypeTransformers:
-		filesToFetch = []string{"config.json", "tokenizer_config.json", "generation_config.json", "preprocessor_config.json", "processor_config.json"}
+		filesToFetch = []string{"config.json", "quantization_config.json", "tokenizer_config.json", "generation_config.json", "preprocessor_config.json", "processor_config.json"}
 	case TypeONNX:
 		filesToFetch = []string{"config.json"}
 	default:
 		// For generic/undetected types, fetch all possible config files to help refine detection
-		filesToFetch = []string{"config.json", "preprocessor_config.json", "processor_config.json"}
+		filesToFetch = []string{"config.json", "quantization_config.json", "preprocessor_config.json", "processor_config.json"}
 	}
 
 	for _, path := range filesToFetch {
@@ -500,6 +526,13 @@ func (a *Analyzer) fetchMetadata(ctx context.Context, repo string, isDataset boo
 			}
 		}
 		if !found {
+			continue
+		}
+
+		if size := fileSize(info.Files, path); size > maxMetadataSize {
+			if head, err := a.fetchJSONHead(ctx, repo, isDataset, info.Branch, path); err == nil && len(head) > 0 {
+				info.Metadata[path] = head
+			}
 			continue
 		}
 
@@ -539,11 +572,73 @@ func (a *Analyzer) fetchFile(ctx context.Context, repo string, isDataset bool, r
 		return nil, fmt.Errorf("fetch %s: %s", path, resp.Status)
 	}
 
-	// Limit to 10MB for config files
-	const maxSize = 10 * 1024 * 1024
-	buf := make([]byte, maxSize)
-	n, _ := resp.Body.Read(buf)
-	return buf[:n], nil
+	// Read the whole file, up to maxMetadataSize. (A single Body.Read used
+	// to return only the first network chunk, so any config over ~16-32 KB —
+	// common for vision-language models — was truncated and then dropped as
+	// invalid JSON.)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxMetadataSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("fetch %s: %w", path, err)
+	}
+	if len(data) > maxMetadataSize {
+		return nil, fmt.Errorf("fetch %s: larger than %d bytes", path, maxMetadataSize)
+	}
+	return data, nil
+}
+
+// maxMetadataSize caps metadata files read whole.
+const maxMetadataSize = 10 << 20
+
+// metadataHeadSize is how much of an oversized JSON file is read to recover
+// its leading top-level settings.
+const metadataHeadSize = 64 << 10
+
+// fetchJSONHead reads the first metadataHeadSize bytes of a JSON object and
+// decodes the top-level members that fit, stopping at the first one that
+// doesn't. EXL3's quantization_config.json is tens of MB of per-tensor
+// settings, but quant_method/bits/head_bits come first.
+func (a *Analyzer) fetchJSONHead(ctx context.Context, repo string, isDataset bool, revision, path string) (map[string]interface{}, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", a.rawURL(repo, isDataset, revision, path), nil)
+	if err != nil {
+		return nil, err
+	}
+	a.addAuth(req)
+	req.Header.Set("Range", fmt.Sprintf("bytes=0-%d", metadataHeadSize-1))
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		return nil, fmt.Errorf("fetch %s: %s", path, resp.Status)
+	}
+	return decodeJSONHead(io.LimitReader(resp.Body, metadataHeadSize))
+}
+
+// decodeJSONHead decodes the top-level members of a (possibly truncated)
+// JSON object, returning those decoded before the data ran out.
+func decodeJSONHead(r io.Reader) (map[string]interface{}, error) {
+	dec := json.NewDecoder(r)
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return nil, fmt.Errorf("not a JSON object")
+	}
+	out := map[string]interface{}{}
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			break
+		}
+		key, ok := tok.(string)
+		if !ok {
+			break
+		}
+		var v interface{}
+		if err := dec.Decode(&v); err != nil {
+			break
+		}
+		out[key] = v
+	}
+	return out, nil
 }
 
 // analyzeTypeSpecific runs type-specific analysis.
@@ -555,18 +650,26 @@ func (a *Analyzer) analyzeTypeSpecific(info *RepoInfo) {
 		info.Diffusers = analyzeDiffusers(info.Files, info.Metadata)
 	case TypeLoRA:
 		info.LoRA = analyzeLoRA(info.Metadata)
-	case TypeGPTQ, TypeAWQ:
+	case TypeGPTQ, TypeAWQ, TypeQuantized:
 		info.Quantized = analyzeQuantized(info.Metadata)
 		// Refine type based on actual method
-		if info.Quantized != nil && info.Quantized.Method == "awq" {
-			info.Type = TypeAWQ
-			info.TypeDescription = info.Type.Description()
+		if info.Quantized != nil {
+			info.Type = quantizedRepoType(info.Quantized.Method)
+			info.TypeDescription = quantizedTypeDescription(info.Quantized)
 		}
 	case TypeDataset:
 		info.Dataset = analyzeDataset(info.Files)
 	case TypeONNX:
 		info.ONNX = analyzeONNX(info.Files)
 	case TypeTransformers:
+		// A quantization method declared in config.json (GPTQ, AWQ,
+		// bitsandbytes, FP8, MLX, EXL3, ...) matters most for what to
+		// download and run, so it takes precedence over the model family.
+		if q := analyzeQuantized(info.Metadata); q != nil && q.Method != "" {
+			info.Type = TypeQuantized
+			a.analyzeTypeSpecific(info)
+			return
+		}
 		// For transformers, first try to detect specialized types from metadata
 		specializedType := detectSpecializedType(info.Files, info.Metadata)
 		if specializedType != "" {
@@ -579,6 +682,11 @@ func (a *Analyzer) analyzeTypeSpecific(info *RepoInfo) {
 		// Standard transformers analysis
 		info.Transformers = analyzeTransformers(info.Files, info.Metadata)
 	case TypeGeneric:
+		if q := analyzeQuantized(info.Metadata); q != nil && q.Method != "" {
+			info.Type = TypeQuantized
+			a.analyzeTypeSpecific(info)
+			return
+		}
 		// For generic, try to detect specialized types from metadata
 		specializedType := detectSpecializedType(info.Files, info.Metadata)
 		if specializedType != "" {
@@ -628,7 +736,7 @@ func populateSelectableItems(info *RepoInfo) {
 		info.SelectableItems = DatasetToSelectableItems(info.Dataset)
 	case TypeLoRA:
 		info.RelatedDownloads = LoRAToRelatedDownloads(info.LoRA)
-	case TypeGPTQ, TypeAWQ:
+	case TypeGPTQ, TypeAWQ, TypeQuantized:
 		info.SelectableItems = QuantizedToSelectableItems(info.Quantized, info.Files)
 	}
 }

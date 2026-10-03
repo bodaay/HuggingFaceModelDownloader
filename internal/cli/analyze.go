@@ -254,7 +254,7 @@ func printAnalysis(info *smartdl.RepoInfo) {
 		printDiffusersAnalysis(info)
 	case smartdl.TypeLoRA:
 		printLoRAAnalysis(info)
-	case smartdl.TypeGPTQ, smartdl.TypeAWQ:
+	case smartdl.TypeGPTQ, smartdl.TypeAWQ, smartdl.TypeQuantized:
 		printQuantizedAnalysis(info)
 	case smartdl.TypeDataset:
 		printDatasetAnalysis(info)

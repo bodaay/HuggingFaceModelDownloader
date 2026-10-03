@@ -541,9 +541,9 @@ func detectSpecializedType(files []FileInfo, metadata map[string]interface{}) Re
 	if isVisionModel(files, metadata) {
 		return TypeVision
 	}
-	if hasONNXFiles(files) {
-		return TypeONNX
-	}
+	// ONNX is not a specialization: a repo with PyTorch weights that also
+	// ships an onnx/ export stays a transformers model (detectType already
+	// labels ONNX-only repos).
 	return ""
 }
 

@@ -56,6 +56,11 @@ const (
 	// TypeAWQ indicates an AWQ quantized model.
 	TypeAWQ RepoType = "awq"
 
+	// TypeQuantized is a model quantized with another method declared in
+	// config.json (bitsandbytes, FP8, compressed-tensors, HQQ, EXL2/EXL3,
+	// MLX, ...); QuantizedInfo.Method names it.
+	TypeQuantized RepoType = "quantized"
+
 	// TypeONNX indicates an ONNX model.
 	TypeONNX RepoType = "onnx"
 
@@ -95,6 +100,8 @@ func (t RepoType) Description() string {
 		return "GPTQ quantized model"
 	case TypeAWQ:
 		return "AWQ quantized model"
+	case TypeQuantized:
+		return "Quantized model"
 	case TypeONNX:
 		return "ONNX model"
 	case TypeDataset:
@@ -385,8 +392,11 @@ type QuantizedInfo struct {
 	// Version is the quantization format version.
 	Version string `json:"version,omitempty"`
 
-	// BitsPerWeight is the EXL2 bits per weight.
+	// BitsPerWeight is the EXL2/EXL3 bits per weight.
 	BitsPerWeight float64 `json:"bits_per_weight,omitempty"`
+
+	// HeadBits is the EXL3 output-head bit width.
+	HeadBits int `json:"head_bits,omitempty"`
 
 	// ExcludedModules is the list of modules not quantized.
 	ExcludedModules []string `json:"excluded_modules,omitempty"`
