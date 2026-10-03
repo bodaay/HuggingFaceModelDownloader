@@ -56,6 +56,9 @@ func newStallGuard(r io.Reader, timeout time.Duration, cancel context.CancelFunc
 	if tick > time.Second {
 		tick = time.Second
 	}
+	if tick < time.Millisecond {
+		tick = time.Millisecond // NewTicker panics on a non-positive period
+	}
 	go func() {
 		t := time.NewTicker(tick)
 		defer t.Stop()

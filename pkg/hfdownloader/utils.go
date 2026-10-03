@@ -28,6 +28,15 @@ func validate(job Job, cfg Settings) error {
 	if !IsValidModelName(job.Repo) {
 		return fmt.Errorf("invalid repo id %q (expected owner/name)", job.Repo)
 	}
+	if cfg.StallTimeout != "" {
+		d, err := time.ParseDuration(cfg.StallTimeout)
+		if err != nil {
+			return fmt.Errorf("invalid stall-timeout %q: %w", cfg.StallTimeout, err)
+		}
+		if d < 0 || (d > 0 && d < time.Second) {
+			return fmt.Errorf("stall-timeout must be 0 (disabled) or at least 1s, got %s", cfg.StallTimeout)
+		}
+	}
 	return nil
 }
 
