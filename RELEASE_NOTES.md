@@ -1,3 +1,98 @@
+# Release Notes - v3.3.0
+
+> **Release Date:** October 2026
+> **Download Reliability, Security & Smarter Selection**
+
+## Highlights
+
+Downloads no longer hang on stalled connections, every file of large repos is
+listed, the web server rejects requests from other websites, and the analyzer
+picks the right files for GGUF, diffusers, quantized and dataset repos.
+
+## Download Reliability (#87, #88)
+
+- **Stalled transfers recover.** A connection that stays open but stops sending
+  data is abandoned and retried from where it stopped after `--stall-timeout`
+  (default 60s; `0` disables). Previously such a download hung forever at ~90%.
+- **Timeouts everywhere.** Dial, response-header and HTTP/2 health-check
+  timeouts; SOCKS5 dials can no longer hang.
+- **Smarter retries.** The retry budget resets whenever a retry makes progress;
+  401/403/404 fail immediately with a clear "gated or private repo" message
+  instead of being retried per file and per part; `Retry-After` and the Hub's
+  rate-limit header are honored.
+- **No more silent 100%.** Joining parts and SHA256 verification report
+  progress (CLI, TUI, and a new activity line in the web UI) and can be
+  cancelled.
+- **Complete file listings.** Repo trees are listed recursively with
+  pagination: folders with more than 1,000 files were silently truncated
+  (`allenai/c4` planned 4,515 of 69,221 files). Also far fewer API calls.
+- **Safer resumes and storage.** Parts written with a different connection
+  count are discarded instead of corrupting the file; files that fail
+  verification are removed; byte-identical files (e.g. Q2_K and Q2_K_L) are
+  downloaded once; downloads are pinned to the resolved commit (with a
+  fallback for mirrors that only accept branch names).
+- **Web UI updates no longer dropped.** The WebSocket sent several messages in
+  one frame, which the browser failed to parse, so jobs could look stuck.
+- Pausing and quickly resuming a job no longer cancels it.
+
+## Security
+
+- **Cross-origin requests are rejected.** With no allowed origins configured,
+  the server accepted every website's origin, so any page you visited could
+  drive a running `hfdownloader serve`. Requests from other origins now get
+  403; the web UI and curl/CLI clients are unaffected. New
+  `serve --allow-origin` for reverse proxies.
+- **Path traversal fixed.** `GET /api/cache/x/..%2F..%2F...` could read file
+  names and refs outside the cache. Repo IDs are now validated wherever they
+  become paths (CLI and server).
+
+## Smarter Selection
+
+- **Filters match full paths**, so folder names work (`-F unet`, `-F Q4_K_M/`,
+  `-F cola/`). As always, only LFS files go through filters; tokenizers,
+  configs and other small files are always downloaded.
+- **Unmatched weight/data files of every format are skipped.** Previously only
+  six extensions were, so `gpt2 -F safetensors` also pulled ONNX, TF, Flax,
+  TFLite and Rust weights (4.74 GiB → 0.52 GiB), and `-F train` on datasets
+  pulled every split.
+- **Exact matching for selections (#96).** `analyze -i` and every command the
+  analyzer prints use `--exact`, so picking Q6_K no longer also downloads
+  Q6_K_L / Q6_K_XL. A filter that matches nothing now warns.
+- **GGUF (#86, #89).** Split shards are one quantization with their combined
+  size (Qwen3-Coder-480B: 159 rows → 23); folder-named and custom quants get
+  real names instead of "Unknown"; MTP draft models are optional companions
+  like mmproj; `UD-`, TQ1_0/TQ2_0, MXFP4 and ARM `Q4_0_4_4` quants are
+  recognized; one quant is recommended.
+- **Diffusers.** One weight format per component (fp16 safetensors preferred;
+  never Flax/ONNX/OpenVINO): SDXL base recommended 38.96 GiB → 6.46 GiB;
+  repos that got no weights (segmind/tiny-sd) now work.
+- **Model types.** Transformers repos that also ship ONNX exports are no longer
+  labeled ONNX; GPTQ, AWQ, bitsandbytes, FP8, MLX (#81) and EXL3 (#94,
+  single-repo layout) are detected from the repo's config. Large config files
+  are now read completely (they were silently truncated).
+- **Datasets.** Splits are recognized inside file names (`c4-train.00000`),
+  configs are selectable, and the useless `-F default` is gone.
+- **Web UI command fix.** The download wizard's copyable command used flags
+  that don't exist (`-r`, `-d`, `-f`, `-e`); it now matches the CLI.
+
+## Behavior Changes
+
+- Filtered downloads no longer include unmatched weight/data files in other
+  formats (ONNX, TF, Flax, TFLite, parquet of other splits, imatrix). Small
+  files and tokenizers are unaffected; unfiltered downloads are unchanged.
+- Web server requests from other origins are rejected (use `--allow-origin`).
+- Repo IDs must be `owner/name` with letters, digits, `-`, `_`, `.`.
+
+## Internal
+
+- New `--stall-timeout` flag and config key; `progress.activity` in the jobs
+  API; tests no longer touch the developer's real config; ~60 new tests,
+  including fake-Hub end-to-end tests.
+
+**Full Changelog**: https://github.com/bodaay/HuggingFaceModelDownloader/compare/v3.2.0...v3.3.0
+
+---
+
 # Release Notes - v3.2.0
 
 > **Release Date:** June 2026
