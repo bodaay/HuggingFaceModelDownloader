@@ -47,8 +47,8 @@ func newConfigCmd() *cobra.Command {
 
 func newConfigInitCmd() *cobra.Command {
 	var (
-		force      bool
-		useYAML    bool
+		force   bool
+		useYAML bool
 	)
 
 	cmd := &cobra.Command{
@@ -152,7 +152,6 @@ func newConfigPathCmd() *cobra.Command {
 		},
 	}
 }
-
 
 // configLinkMode returns the link-mode from the config file (auto if unset).
 func configLinkMode() (hfdownloader.LinkMode, error) {

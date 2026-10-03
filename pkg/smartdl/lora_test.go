@@ -38,7 +38,7 @@ func TestAnalyzeLoRA(t *testing.T) {
 	t.Run("standard LoRA config", func(t *testing.T) {
 		metadata := map[string]interface{}{
 			"adapter_config.json": map[string]interface{}{
-				"peft_type":              "lora",
+				"peft_type":               "lora",
 				"base_model_name_or_path": "meta-llama/Llama-2-7b-hf",
 				"r":                       float64(16),
 				"lora_alpha":              float64(32),

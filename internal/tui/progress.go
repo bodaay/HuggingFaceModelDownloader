@@ -26,14 +26,14 @@ type LiveRenderer struct {
 	job hfdownloader.Job
 	cfg hfdownloader.Settings
 
-	mu         sync.Mutex
-	start      time.Time
-	events     chan hfdownloader.ProgressEvent
-	done       chan struct{}
-	stopped    bool
-	hideCur    bool
-	supports   bool // ANSI + interactive
-	noColor    bool
+	mu       sync.Mutex
+	start    time.Time
+	events   chan hfdownloader.ProgressEvent
+	done     chan struct{}
+	stopped  bool
+	hideCur  bool
+	supports bool // ANSI + interactive
+	noColor  bool
 
 	// aggregate
 	totalFiles int
@@ -630,4 +630,3 @@ func colorize(s, style string, lr *LiveRenderer) string {
 
 func bold(s string) string { return "\x1b[1m" + s + "\x1b[0m" }
 func dim(s string) string  { return "\x1b[2m" + s + "\x1b[0m" }
-

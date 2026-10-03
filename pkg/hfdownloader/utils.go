@@ -146,4 +146,3 @@ func defaultString(s string, def string) string {
 	}
 	return s
 }
-

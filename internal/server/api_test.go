@@ -596,4 +596,3 @@ func TestIsValidRepoComponent(t *testing.T) {
 		})
 	}
 }
-

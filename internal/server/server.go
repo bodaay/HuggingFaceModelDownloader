@@ -21,22 +21,22 @@ import (
 
 // Config holds server configuration.
 type Config struct {
-	Addr               string
-	Port               int
-	Token              string // HuggingFace token
-	ModelsDir          string // Output directory for models (not configurable via API)
-	DatasetsDir        string // Output directory for datasets (not configurable via API)
-	CacheDir           string // HuggingFace cache directory for v3 mode
+	Addr        string
+	Port        int
+	Token       string // HuggingFace token
+	ModelsDir   string // Output directory for models (not configurable via API)
+	DatasetsDir string // Output directory for datasets (not configurable via API)
+	CacheDir    string // HuggingFace cache directory for v3 mode
 	// LocalDir, when set, puts the whole server in flat/local-file mode: every
 	// download writes real files into <LocalDir>/<owner>/<repo> instead of the
 	// HF cache layout. Set once at startup (serve --local-dir); not changeable
 	// per request. Empty = HF cache mode.
-	LocalDir string
+	LocalDir           string
 	Concurrency        int
 	MaxActive          int
-	MultipartThreshold string // Minimum size for multipart download
-	Verify             string // Verification mode: none, size, sha256
-	Retries            int    // Number of retry attempts
+	MultipartThreshold string   // Minimum size for multipart download
+	Verify             string   // Verification mode: none, size, sha256
+	Retries            int      // Number of retry attempts
 	AllowedOrigins     []string // CORS origins
 	// LinkMode is how HF cache entries refer to downloaded data (see
 	// hfdownloader.LinkMode); empty = auto.
@@ -44,8 +44,8 @@ type Config struct {
 	// ExportDir enables "Export as real files" in the web UI: exports are
 	// written to <ExportDir>/<owner>/<name>. Empty disables exporting from
 	// the web, so the API can't be used to write files anywhere else.
-	ExportDir          string
-	Endpoint           string   // Custom HuggingFace endpoint (e.g., for mirrors)
+	ExportDir string
+	Endpoint  string // Custom HuggingFace endpoint (e.g., for mirrors)
 
 	// Authentication
 	AuthUser string // Basic auth username (empty = no auth)
@@ -329,4 +329,3 @@ func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
-

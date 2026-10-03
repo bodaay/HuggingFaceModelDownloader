@@ -350,8 +350,8 @@ type hfRefsResponse struct {
 }
 
 type hfRef struct {
-	Name      string `json:"name"`
-	Ref       string `json:"ref"`
+	Name         string `json:"name"`
+	Ref          string `json:"ref"`
 	TargetCommit string `json:"targetCommit"`
 }
 

@@ -104,9 +104,9 @@ func ExamplePlanRepo() {
 
 func ExampleIsValidModelName() {
 	// Valid names
-	fmt.Println(hfdownloader.IsValidModelName("TheBloke/Mistral-7B-Instruct-v0.2-GGUF"))     // true
-	fmt.Println(hfdownloader.IsValidModelName("facebook/opt-1.3b"))            // true
-	fmt.Println(hfdownloader.IsValidModelName("hf-internal-testing/tiny-gpt")) // true
+	fmt.Println(hfdownloader.IsValidModelName("TheBloke/Mistral-7B-Instruct-v0.2-GGUF")) // true
+	fmt.Println(hfdownloader.IsValidModelName("facebook/opt-1.3b"))                      // true
+	fmt.Println(hfdownloader.IsValidModelName("hf-internal-testing/tiny-gpt"))           // true
 
 	// Invalid names
 	fmt.Println(hfdownloader.IsValidModelName("Mistral-7B-GGUF")) // false (no owner)
@@ -162,15 +162,14 @@ func ExampleSettings_performance() {
 	// High-performance settings for fast networks
 	cfg := hfdownloader.Settings{
 		OutputDir:          "./Models",
-		Concurrency:        16,                // 16 parallel connections per file
-		MaxActiveDownloads: 4,                 // 4 files at once
-		MultipartThreshold: "16MiB",           // Use multipart for files >= 16MiB
-		Retries:            6,                 // More retries for unstable connections
-		BackoffInitial:     "200ms",           // Faster retry
-		BackoffMax:         "30s",             // Longer max for rate limiting
-		Verify:             "sha256",          // Full verification
+		Concurrency:        16,       // 16 parallel connections per file
+		MaxActiveDownloads: 4,        // 4 files at once
+		MultipartThreshold: "16MiB",  // Use multipart for files >= 16MiB
+		Retries:            6,        // More retries for unstable connections
+		BackoffInitial:     "200ms",  // Faster retry
+		BackoffMax:         "30s",    // Longer max for rate limiting
+		Verify:             "sha256", // Full verification
 	}
 
 	_ = cfg // Use in Download()
 }
-

@@ -424,4 +424,3 @@ func ScanPlan(ctx context.Context, job Job, cfg Settings, progress ProgressFunc)
 func Run(ctx context.Context, job Job, cfg Settings, progress ProgressFunc) error {
 	return Download(ctx, job, cfg, progress)
 }
-

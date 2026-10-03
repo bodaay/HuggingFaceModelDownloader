@@ -33,9 +33,9 @@ var pipelineDescriptions = map[string]string{
 
 // Component requirements for known pipelines.
 var requiredComponents = map[string][]string{
-	"StableDiffusionPipeline": {"unet", "vae", "text_encoder", "tokenizer", "scheduler"},
+	"StableDiffusionPipeline":   {"unet", "vae", "text_encoder", "tokenizer", "scheduler"},
 	"StableDiffusionXLPipeline": {"unet", "vae", "text_encoder", "text_encoder_2", "tokenizer", "tokenizer_2", "scheduler"},
-	"FluxPipeline": {"transformer", "vae", "text_encoder", "text_encoder_2", "tokenizer", "tokenizer_2", "scheduler"},
+	"FluxPipeline":              {"transformer", "vae", "text_encoder", "text_encoder_2", "tokenizer", "tokenizer_2", "scheduler"},
 }
 
 // analyzeDiffusers analyzes a diffusers repository.

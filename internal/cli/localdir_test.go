@@ -81,9 +81,9 @@ func TestFinalize_LocalDirConflictsWithOutput(t *testing.T) {
 	_, _, err := finalize(nil, ro, nil,
 		&hfdownloader.Job{Repo: "owner/repo"},
 		&hfdownloader.Settings{},
-		true,        // legacy
-		"/tmp/a",    // legacyOutput
-		"/tmp/b",    // localDir
+		true,     // legacy
+		"/tmp/a", // legacyOutput
+		"/tmp/b", // localDir
 		"", "", "", false,
 	)
 	if err == nil {

@@ -294,12 +294,12 @@ func (s *Server) handleMirrorDiff(w http.ResponseWriter, r *http.Request) {
 		"localPath":  cacheDir,
 		"targetPath": targetPath,
 		"summary": map[string]any{
-			"missing":       missingCount,
+			"missing":          missingCount,
 			"missingSizeHuman": humanSizeBytes(missingSize),
-			"extra":         extraCount,
+			"extra":            extraCount,
 			"extraSizeHuman":   humanSizeBytes(extraSize),
-			"outdated":      outdatedCount,
-			"inSync":        len(diffs) == 0,
+			"outdated":         outdatedCount,
+			"inSync":           len(diffs) == 0,
 		},
 	})
 }
@@ -464,17 +464,17 @@ func scanCacheForMirror(cacheDir string) ([]mirrorEntry, error) {
 
 // MirrorSyncResult represents the result of a sync operation.
 type MirrorSyncResult struct {
-	Success     bool     `json:"success"`
-	DryRun      bool     `json:"dryRun"`
-	Copied      int      `json:"copied"`
-	CopiedSize  int64    `json:"copiedSize"`
-	CopiedSizeHuman string `json:"copiedSizeHuman"`
-	Deleted     int      `json:"deleted"`
-	DeletedSize int64    `json:"deletedSize"`
-	DeletedSizeHuman string `json:"deletedSizeHuman"`
-	Repos       []string `json:"repos,omitempty"`
-	Errors      []string `json:"errors,omitempty"`
-	Message     string   `json:"message"`
+	Success          bool     `json:"success"`
+	DryRun           bool     `json:"dryRun"`
+	Copied           int      `json:"copied"`
+	CopiedSize       int64    `json:"copiedSize"`
+	CopiedSizeHuman  string   `json:"copiedSizeHuman"`
+	Deleted          int      `json:"deleted"`
+	DeletedSize      int64    `json:"deletedSize"`
+	DeletedSizeHuman string   `json:"deletedSizeHuman"`
+	Repos            []string `json:"repos,omitempty"`
+	Errors           []string `json:"errors,omitempty"`
+	Message          string   `json:"message"`
 }
 
 // mirrorSync copies repos from source to destination.

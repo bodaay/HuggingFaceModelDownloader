@@ -24,7 +24,7 @@ func TestNewServeCmd(t *testing.T) {
 	// Check all expected flags exist (actual flags from serve.go)
 	expectedFlags := []string{
 		"port",
-		"addr",        // Not "host"
+		"addr", // Not "host"
 		"cache-dir",
 		"connections", // Not "concurrency"
 		"endpoint",

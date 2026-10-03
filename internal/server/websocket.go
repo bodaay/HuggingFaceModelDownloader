@@ -142,7 +142,7 @@ func (h *WSHub) Broadcast(msgType string, data any) {
 		Type: msgType,
 		Data: data,
 	}
-	
+
 	jsonData, err := json.Marshal(msg)
 	if err != nil {
 		log.Printf("[WS] Failed to marshal message: %v", err)
@@ -200,7 +200,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 // sendInitialState sends current job state to newly connected client.
 func (s *Server) sendInitialState(client *WSClient) {
 	jobs := s.jobs.ListJobs()
-	
+
 	msg := WSMessage{
 		Type: "init",
 		Data: map[string]any{
@@ -208,7 +208,7 @@ func (s *Server) sendInitialState(client *WSClient) {
 			"version": s.version(),
 		},
 	}
-	
+
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return
@@ -289,4 +289,3 @@ func (c *WSClient) readPump() {
 		_ = message
 	}
 }
-
