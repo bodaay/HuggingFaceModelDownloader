@@ -206,6 +206,39 @@
   // Store current analysis for wizard
   let currentAnalysis = null;
   let hasShownRevisionPicker = false; // Track if we've shown picker for this repo
+  let analysisFilesExpanded = false; // Toggle for the >20-file truncation on the Analyze card
+
+  function renderFileListRows(files, expanded) {
+    const visible = expanded ? files : files.slice(0, 20);
+    const rowsHtml = visible.map(f => `
+      <div class="analysis-file">
+        <span class="analysis-file-name">${escapeHtml(f.path || f.name)}</span>
+        <span class="analysis-file-size">${f.size_human || formatBytes(f.size)}</span>
+      </div>
+    `).join('');
+
+    const remaining = files.length - 20;
+    const moreFiles = remaining > 0
+      ? `<button type="button" class="analysis-file analysis-files-toggle" onclick="toggleAnalysisFilesExpanded()">
+           ${expanded ? 'Show fewer files' : `... and ${remaining} more files (click to show all)`}
+         </button>`
+      : '';
+
+    return rowsHtml + moreFiles;
+  }
+
+  // Toggle the full file list on the Analyze card and re-render in place.
+  // Selection filters (quant checkboxes) still apply; updateCLICommandFromSelections
+  // is the single source of truth for what's currently visible.
+  window.toggleAnalysisFilesExpanded = function() {
+    analysisFilesExpanded = !analysisFilesExpanded;
+    if (typeof updateCLICommandFromSelections === 'function' && currentAnalysis?.selectable_items?.length) {
+      updateCLICommandFromSelections();
+    } else if (currentAnalysis?.files) {
+      const container = $('#analysisFilesList');
+      if (container) container.innerHTML = renderFileListRows(currentAnalysis.files, analysisFilesExpanded);
+    }
+  };
 
   async function analyzeRepo(forceType = null, revision = null) {
     const input = $('#analyzeInput');
@@ -380,18 +413,9 @@
     const resultDiv = $('#analyzeResult');
     if (!resultDiv) return;
 
-    const filesHtml = data.files?.slice(0, 20).map(f => `
-      <div class="analysis-file">
-        <span class="analysis-file-name">${escapeHtml(f.path || f.name)}</span>
-        <span class="analysis-file-size">${f.size_human || formatBytes(f.size)}</span>
-      </div>
-    `).join('') || '';
-
-    const moreFiles = (data.files?.length || 0) > 20
-      ? `<div class="analysis-file" style="justify-content: center; color: var(--color-text-muted);">
-           ... and ${data.files.length - 20} more files
-         </div>`
-      : '';
+    analysisFilesExpanded = false; // Fresh analysis always starts collapsed
+    const filesHtml = renderFileListRows(data.files || [], analysisFilesExpanded);
+    const moreFiles = ''; // folded into renderFileListRows above
 
     // Build type-specific info
     let typeInfoHtml = '';
@@ -1388,10 +1412,44 @@
     `;
   }
 
+  // Cache-detail modal file list state (module-level so the toggle handler can reach it)
+  let cacheDetailFiles = null;
+  let cacheDetailFilesExpanded = false;
+
+  function renderCacheFileRows(files, expanded) {
+    const visible = expanded ? files : files.slice(0, 20);
+    const rowsHtml = visible.map(f => `
+      <div class="cache-file-row">
+        <span class="cache-file-name" title="${escapeHtml(f.name)}">
+          ${f.isLfs ? '<span class="lfs-badge">LFS</span>' : ''}
+          ${escapeHtml(f.name)}
+        </span>
+        <span class="cache-file-size">${escapeHtml(f.sizeHuman)}</span>
+      </div>
+    `).join('');
+
+    const remaining = files.length - 20;
+    const moreFiles = remaining > 0
+      ? `<button type="button" class="cache-files-more" onclick="toggleCacheDetailFilesExpanded()">
+           ${expanded ? 'Show fewer files' : `... and ${remaining} more files (click to show all)`}
+         </button>`
+      : '';
+
+    return rowsHtml + moreFiles;
+  }
+
+  window.toggleCacheDetailFilesExpanded = function() {
+    cacheDetailFilesExpanded = !cacheDetailFilesExpanded;
+    const list = $('.cache-files-list');
+    if (list && cacheDetailFiles) list.innerHTML = renderCacheFileRows(cacheDetailFiles, cacheDetailFilesExpanded);
+  };
+
   window.showCacheDetails = async function(repo, type) {
     try {
       showModal('Repository Details', '<div class="loading-state"><div class="spinner"></div></div>');
       const data = await api('GET', `/cache/${repo}`);
+      cacheDetailFiles = data.files || null;
+      cacheDetailFilesExpanded = false;
 
       const typeIcon = data.type === 'model'
         ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
@@ -1407,16 +1465,7 @@
         ? `<div class="cache-detail-files">
              <h4>Files (${data.files.length})</h4>
              <div class="cache-files-list">
-               ${data.files.slice(0, 20).map(f => `
-                 <div class="cache-file-row">
-                   <span class="cache-file-name" title="${escapeHtml(f.name)}">
-                     ${f.isLfs ? '<span class="lfs-badge">LFS</span>' : ''}
-                     ${escapeHtml(f.name)}
-                   </span>
-                   <span class="cache-file-size">${escapeHtml(f.sizeHuman)}</span>
-                 </div>
-               `).join('')}
-               ${data.files.length > 20 ? `<div class="cache-files-more">... and ${data.files.length - 20} more files</div>` : ''}
+               ${renderCacheFileRows(data.files, cacheDetailFilesExpanded)}
              </div>
            </div>`
         : '';
@@ -2636,21 +2685,9 @@
       selectedSize = currentAnalysis.files.reduce((sum, f) => sum + (f.size || 0), 0);
     }
 
-    // Render the filtered file list
-    const filesHtml = filteredFiles.slice(0, 20).map(f => `
-      <div class="analysis-file">
-        <span class="analysis-file-name">${escapeHtml(f.path || f.name)}</span>
-        <span class="analysis-file-size">${f.size_human || formatBytes(f.size)}</span>
-      </div>
-    `).join('');
-
-    const moreFiles = filteredFiles.length > 20
-      ? `<div class="analysis-file" style="justify-content: center; color: var(--color-text-muted);">
-           ... and ${filteredFiles.length - 20} more files
-         </div>`
-      : '';
-
-    filesContainer.innerHTML = filesHtml + moreFiles;
+    // Render the filtered file list (respects the same expand/collapse toggle as the
+    // unfiltered view, so switching quant selections doesn't silently re-collapse it)
+    filesContainer.innerHTML = renderFileListRows(filteredFiles, analysisFilesExpanded);
 
     // Update the count display
     if (countEl) {
@@ -2682,7 +2719,7 @@
   function formatBytes(bytes) {
     if (!bytes || bytes === 0) return '0 B';
     const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const sizes = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   }
