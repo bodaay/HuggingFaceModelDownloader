@@ -71,6 +71,9 @@ func TestApplyFilters_RealLayouts(t *testing.T) {
 			[]string{"README.md", "config.json", "model.safetensors", "onnx/config.json", "tokenizer.json"}},
 		{"LFS tokenizer and docs survive a weight filter (Llama/Mistral/Gemma)", tinyllama, []string{"safetensors"}, false,
 			[]string{"Responsible-Use-Guide.pdf", "config.json", "model.safetensors", "tokenizer.json", "tokenizer.model"}},
+		{"small (non-LFS) files never go through filters", items(
+			"model.safetensors", "Iris.csv|small", "train.csv|small", "pytorch_model.bin"), []string{"safetensors"}, false,
+			[]string{"Iris.csv", "model.safetensors", "train.csv"}},
 		{"variant filter keeps weightless components (sd-turbo -F fp16)", items(
 			"unet/diffusion_pytorch_model.safetensors", "unet/diffusion_pytorch_model.fp16.safetensors",
 			"tokenizer/vocab.json|small", "tokenizer/merges.txt|small", "scheduler/scheduler_config.json|small",

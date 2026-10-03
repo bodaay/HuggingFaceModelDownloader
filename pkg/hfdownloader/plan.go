@@ -197,15 +197,16 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 // are case-insensitive and matched against the full repo path, so folder
 // names select too (diffusers components like "unet", per-quant folders like
 // "Q4_K_M/", dataset splits like "validation"). With filters set:
-//   - a file matching any filter is kept (the longest matching filter wins);
-//   - any other weight or data file (isPayloadFile) is dropped, whatever its
-//     format (previously only six weight extensions were, so ONNX/TF/Flax
-//     weights, parquet splits and imatrix files came along with every
-//     filter);
-//   - every other file — configs, tokenizers (tokenizer.model is LFS in
-//     Llama/Mistral/Gemma repos), schedulers, docs, images — is kept, in
-//     any folder: models need them to load (a diffusers pipeline filtered
-//     by "fp16" still needs tokenizer/ and scheduler/).
+//   - only LFS files go through filters: small (non-LFS) files are always
+//     kept, as they always have been;
+//   - an LFS file matching any filter is kept (the longest filter wins);
+//   - an unmatched LFS weight or data file (isPayloadFile) is dropped,
+//     whatever its format (previously only six weight extensions were, so
+//     ONNX/TF/Flax weights, parquet splits and imatrix files came along with
+//     every filter);
+//   - other unmatched LFS files — tokenizers (tokenizer.model is LFS in
+//     Llama/Mistral/Gemma repos), docs, images — are kept: models need
+//     them to load.
 func applyFilters(items []PlanItem, filters []string, exact bool) []PlanItem {
 	var fs, orig []string // lowercased for matching; as given, for Subdir
 	for _, list := range filters {
@@ -234,7 +235,7 @@ func applyFilters(items []PlanItem, filters []string, exact bool) []PlanItem {
 		switch {
 		case matched != "":
 			it.Subdir = matched
-		case isPayloadFile(it.RelativePath):
+		case it.LFS && isPayloadFile(it.RelativePath):
 			continue
 		}
 		out = append(out, it)
