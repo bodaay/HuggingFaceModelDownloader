@@ -574,7 +574,10 @@ func (r *RepoInfo) GenerateCLICommand(selectedFilters []string) string {
 	}
 
 	if len(selectedFilters) > 0 {
-		cmd += " -F " + strings.Join(selectedFilters, ",")
+		// Selectable items name specific quants/components/splits, so match
+		// them exactly: "-F q6_k" alone would also pull Q6_K_L and Q6_K_XL
+		// (github issues #78, #96).
+		cmd += " -F " + strings.Join(selectedFilters, ",") + " --exact"
 	}
 
 	return cmd

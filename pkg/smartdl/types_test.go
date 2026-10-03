@@ -101,7 +101,7 @@ func TestRepoInfo_GenerateCLICommand(t *testing.T) {
 	t.Run("with filters", func(t *testing.T) {
 		info := &RepoInfo{Repo: "owner/repo"}
 		cmd := info.GenerateCLICommand([]string{"q4_k_m"})
-		if cmd != "hfdownloader download owner/repo -F q4_k_m" {
+		if cmd != "hfdownloader download owner/repo -F q4_k_m --exact" {
 			t.Errorf("cmd = %q", cmd)
 		}
 	})
@@ -109,7 +109,7 @@ func TestRepoInfo_GenerateCLICommand(t *testing.T) {
 	t.Run("with multiple filters", func(t *testing.T) {
 		info := &RepoInfo{Repo: "owner/repo"}
 		cmd := info.GenerateCLICommand([]string{"q4_k_m", "q5_k_m"})
-		if cmd != "hfdownloader download owner/repo -F q4_k_m,q5_k_m" {
+		if cmd != "hfdownloader download owner/repo -F q4_k_m,q5_k_m --exact" {
 			t.Errorf("cmd = %q", cmd)
 		}
 	})
@@ -117,7 +117,7 @@ func TestRepoInfo_GenerateCLICommand(t *testing.T) {
 	t.Run("dataset with branch and filters", func(t *testing.T) {
 		info := &RepoInfo{Repo: "owner/dataset", IsDataset: true, Branch: "v2"}
 		cmd := info.GenerateCLICommand([]string{"train"})
-		if cmd != "hfdownloader download owner/dataset --dataset -b v2 -F train" {
+		if cmd != "hfdownloader download owner/dataset --dataset -b v2 -F train --exact" {
 			t.Errorf("cmd = %q", cmd)
 		}
 	})
@@ -135,7 +135,7 @@ func TestRepoInfo_GenerateRecommendedCommand(t *testing.T) {
 
 	cmd := info.GenerateRecommendedCommand()
 	// Should include both recommended filters
-	if cmd != "hfdownloader download owner/repo -F q4_k_m,q5_k_m" {
+	if cmd != "hfdownloader download owner/repo -F q4_k_m,q5_k_m --exact" {
 		t.Errorf("cmd = %q", cmd)
 	}
 }
@@ -153,7 +153,7 @@ func TestRepoInfo_PopulateCLICommands(t *testing.T) {
 		if info.CLICommand != "hfdownloader download owner/repo" {
 			t.Errorf("CLICommand = %q", info.CLICommand)
 		}
-		if info.CLICommandFull != "hfdownloader download owner/repo -F q4_k_m" {
+		if info.CLICommandFull != "hfdownloader download owner/repo -F q4_k_m --exact" {
 			t.Errorf("CLICommandFull = %q", info.CLICommandFull)
 		}
 	})

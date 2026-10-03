@@ -295,13 +295,18 @@ func resolveAcceptsURL(ctx context.Context, httpc *http.Client, token, u string)
 // substring check on the full path. In exact mode it matches when fLower
 // equals the whole path or file name (with or without extension), a
 // delimiter-bounded segment of the path, or — for filters containing "/" — a
-// run of whole path elements. So "q6_k" matches "...-Q6_K.gguf" and the
+// run of whole path elements; a filter starting with "." matches a file
+// extension. So "q6_k" matches "...-Q6_K.gguf" and the
 // folder "Q6_K/" but not "...-Q6_K_XL.gguf" (github issue #78), and a
 // full-name filter such as a vision encoder's "...-mmproj-bf16" still
 // matches its file (github issue #84).
 func filterMatches(relLower, fLower string, exact bool) bool {
 	if !exact {
 		return strings.Contains(relLower, fLower)
+	}
+	if strings.HasPrefix(fLower, ".") && !strings.Contains(fLower, "/") {
+		// Extension filter, e.g. ".bin" or ".fp16.safetensors".
+		return strings.HasSuffix(relLower, fLower)
 	}
 	nameLower := path.Base(relLower)
 	for _, whole := range []string{relLower, nameLower} {

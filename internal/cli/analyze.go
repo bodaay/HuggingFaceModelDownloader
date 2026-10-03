@@ -167,6 +167,9 @@ func runInteractiveSelector(ctx context.Context, info *smartdl.RepoInfo, ro *Roo
 			IsDataset: info.IsDataset,
 			Revision:  info.Branch,
 			Filters:   result.SelectedFilters,
+			// Picker items name specific quants: q6_k must not also pull
+			// q6_k_l / q6_k_xl (github issue #96).
+			ExactMatch: true,
 		}
 		if job.Revision == "" {
 			job.Revision = "main"
@@ -327,7 +330,7 @@ func printSelectableItems(info *smartdl.RepoInfo) {
 				if item.Recommended {
 					rec = " *"
 				}
-				fmt.Printf("  %-12s  %12s  %12s  %s  -F %s%s\n",
+				fmt.Printf("  %-12s  %12s  %12s  %s  -F %s --exact%s\n",
 					item.Label,
 					item.SizeHuman,
 					item.RAMHuman,
@@ -344,7 +347,7 @@ func printSelectableItems(info *smartdl.RepoInfo) {
 				if item.Recommended {
 					rec = "yes"
 				}
-				fmt.Printf("  %-20s  %12s  %10s  -F %s\n",
+				fmt.Printf("  %-20s  %12s  %10s  -F %s --exact\n",
 					item.Label,
 					item.SizeHuman,
 					rec,
@@ -363,7 +366,7 @@ func printSelectableItems(info *smartdl.RepoInfo) {
 				if sizeStr == "" {
 					sizeStr = "-"
 				}
-				fmt.Printf("  %-15s  %12s  %10s  -F %s\n",
+				fmt.Printf("  %-15s  %12s  %10s  -F %s --exact\n",
 					item.Label,
 					sizeStr,
 					rec,

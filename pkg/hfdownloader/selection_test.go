@@ -80,6 +80,8 @@ func TestApplyFilters_RealLayouts(t *testing.T) {
 			[]string{"Model-Q8_0.gguf", "README.md", "mmproj-F16.gguf"}},
 		{"spaces around comma-separated filters", unsloth, []string{" q8_0", " mmproj-f16 "}, true,
 			[]string{"Model-Q8_0.gguf", "README.md", "mmproj-F16.gguf"}},
+		{"exact extension filter", gpt2, []string{".bin"}, true,
+			[]string{"README.md", "config.json", "pytorch_model.bin", "tokenizer.json"}},
 		{"dataset split filter drops other splits", glue, []string{"validation"}, false,
 			[]string{"README.md", "cola/validation-00000-of-00001.parquet", "mnli/validation_matched-00000-of-00001.parquet"}},
 		{"dataset config folder", glue, []string{"cola/"}, true,
