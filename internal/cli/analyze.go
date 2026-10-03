@@ -558,6 +558,14 @@ func printDiffusersAnalysis(info *smartdl.RepoInfo) {
 
 	if len(diff.Variants) > 0 {
 		fmt.Printf("Variants:   %s\n", strings.Join(diff.Variants, ", "))
+		for _, c := range diff.Components {
+			if len(c.WeightFiles) > 0 && strings.Contains(strings.ToLower(c.WeightFiles[0]), ".fp16.") {
+				// The selection below downloads fp16 weights only; diffusers
+				// loads them only when asked for that variant.
+				fmt.Println(`            Recommended selection is fp16: load with from_pretrained(..., variant="fp16")`)
+				break
+			}
+		}
 		fmt.Println()
 	}
 

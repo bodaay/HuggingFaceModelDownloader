@@ -206,10 +206,14 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 //     config.json while unchosen folders' metadata is skipped.
 func applyFilters(items []PlanItem, filters []string, exact bool) []PlanItem {
 	var fs, orig []string // lowercased for matching; as given, for Subdir
-	for _, f := range filters {
-		if f = strings.TrimSpace(f); f != "" {
-			fs = append(fs, strings.ToLower(f))
-			orig = append(orig, f)
+	for _, list := range filters {
+		// A single filter value may itself be a comma-separated list (the
+		// analyzer's per-component file lists, sent as one item by the web UI).
+		for _, f := range strings.Split(list, ",") {
+			if f = strings.TrimSpace(f); f != "" {
+				fs = append(fs, strings.ToLower(f))
+				orig = append(orig, f)
+			}
 		}
 	}
 	if len(fs) == 0 {

@@ -4,7 +4,9 @@
 package smartdl
 
 import (
+	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -80,6 +82,10 @@ func analyzeDiffusers(files []FileInfo, metadata map[string]interface{}) *Diffus
 			// Calculate component size from files
 			comp.Size = calculateComponentSize(files, key)
 			comp.SizeHuman = humanSize(comp.Size)
+			for _, f := range chooseComponentWeights(files, key) {
+				comp.WeightFiles = append(comp.WeightFiles, f.Path)
+				comp.WeightSize += f.Size
+			}
 
 			// Determine if required
 			if required, ok := requiredComponents[info.PipelineType]; ok {
@@ -102,6 +108,69 @@ func analyzeDiffusers(files []FileInfo, metadata map[string]interface{}) *Diffus
 	info.Precisions = detectPrecisions(files)
 
 	return info
+}
+
+// weightFormatRank orders weight formats by preference (lower is better).
+var weightFormatRank = map[string]int{".safetensors": 0, ".bin": 1, ".pt": 2, ".pth": 2, ".ckpt": 3}
+
+// variantRank orders weight variants by preference: fp16 halves the
+// download and VRAM with no practical quality loss for inference, which is
+// what the old fp16-by-default recommendation intended.
+var variantRank = map[string]int{"fp16": 0, "": 1, "bf16": 2}
+
+// chooseComponentWeights picks the weight files to download for one pipeline
+// component: the best (format, variant) pair present — fp16 safetensors,
+// then default safetensors, then .bin — including every shard of it. Flax
+// (.msgpack), ONNX and OpenVINO exports are never chosen. Repos commonly ship
+// several of these side by side; downloading the whole folder pulled them
+// all (SDXL base: ~39 GiB instead of ~7).
+func chooseComponentWeights(files []FileInfo, component string) []FileInfo {
+	type key struct {
+		format, variant string
+	}
+	groups := map[key][]FileInfo{}
+	prefix := component + "/"
+	for _, f := range files {
+		if !strings.HasPrefix(f.Path, prefix) || !f.IsLFS {
+			continue
+		}
+		lower := strings.ToLower(f.Path)
+		if strings.Contains(lower, "onnx") || strings.Contains(lower, "openvino") || strings.Contains(lower, "flax") {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(f.Name))
+		if _, ok := weightFormatRank[ext]; !ok {
+			continue
+		}
+		// "diffusion_pytorch_model[-0000N-of-0000M].fp16.safetensors" → "fp16"
+		variant := ""
+		if parts := strings.Split(strings.TrimSuffix(strings.ToLower(f.Name), ext), "."); len(parts) > 1 {
+			variant = parts[len(parts)-1]
+		}
+		k := key{ext, variant}
+		groups[k] = append(groups[k], f)
+	}
+
+	var best *key
+	rank := func(k key) int {
+		v, ok := variantRank[k.variant]
+		if !ok {
+			v = 3
+		}
+		return weightFormatRank[k.format]*10 + v
+	}
+	for k := range groups {
+		k := k
+		if best == nil || rank(k) < rank(*best) || (rank(k) == rank(*best) && k.variant < best.variant) {
+			best = &k
+		}
+	}
+	if best == nil {
+		return nil
+	}
+	chosen := groups[*best]
+	sort.Slice(chosen, func(i, j int) bool { return chosen[i].Path < chosen[j].Path })
+	return chosen
 }
 
 // calculateComponentSize calculates total size of files in a component directory.
@@ -231,57 +300,70 @@ func CalculateDownloadSize(info *DiffusersInfo, files []FileInfo, selectedCompon
 	return total
 }
 
-// DiffusersToSelectableItems converts Diffusers components and variants to SelectableItems.
+// DiffusersToSelectableItems converts Diffusers components to SelectableItems.
+//
+// Each component item selects exactly the weight files chosen for it (see
+// chooseComponentWeights) — with --exact, a comma-separated list of their
+// paths — plus, automatically, the small config files in its folder.
+// Weightless components (tokenizer, scheduler) select their folder.
+// Variants are not separate items: filters combine with OR, so "-F fp16,unet"
+// meant "anything fp16 plus everything in unet/".
 func DiffusersToSelectableItems(info *DiffusersInfo) []SelectableItem {
 	if info == nil {
 		return nil
 	}
 
+	_, knownPipeline := requiredComponents[info.PipelineType]
 	var items []SelectableItem
-
-	// Add variants if available (fp16, fp32, bf16)
-	variantDescriptions := map[string]string{
-		"fp16": "Half precision - Recommended, uses less VRAM",
-		"fp32": "Full precision - Maximum quality, more VRAM",
-		"bf16": "Brain float - Good quality, efficient on modern GPUs",
-	}
-
-	for _, variant := range info.Variants {
-		desc := variantDescriptions[variant]
-		if desc == "" {
-			desc = "Model variant"
-		}
-
-		item := SelectableItem{
-			ID:          variant,
-			Label:       strings.ToUpper(variant),
-			Description: desc,
-			Recommended: variant == "fp16",
-			Category:    "variant",
-			FilterValue: variant,
-		}
-		items = append(items, item)
-	}
-
-	// Add components
 	for _, comp := range info.Components {
 		desc := comp.ClassName
 		if desc == "" {
 			desc = comp.Library + " component"
 		}
+		if comp.Library == "" && comp.ClassName == "" {
+			continue // null entry in model_index.json (e.g. no safety checker)
+		}
 
-		item := SelectableItem{
+		filter := comp.Name + "/"
+		size := comp.Size
+		if len(comp.WeightFiles) > 0 {
+			filter = strings.Join(comp.WeightFiles, ",")
+			size = comp.WeightSize
+			desc += " (" + weightFilesLabel(comp.WeightFiles) + ")"
+		}
+
+		recommended := comp.Required
+		if !knownPipeline {
+			// Unknown pipeline: everything except the optional safety checker.
+			recommended = comp.Name != "safety_checker"
+		}
+
+		items = append(items, SelectableItem{
 			ID:          comp.Name,
 			Label:       comp.Name,
 			Description: desc,
-			Size:        comp.Size,
-			SizeHuman:   comp.SizeHuman,
-			Recommended: comp.Required,
+			Size:        size,
+			SizeHuman:   humanSize(size),
+			Recommended: recommended,
 			Category:    "component",
-			FilterValue: comp.Name,
-		}
-		items = append(items, item)
+			FilterValue: filter,
+			Files:       comp.WeightFiles,
+		})
 	}
 
 	return items
+}
+
+// weightFilesLabel describes chosen weight files, e.g. "fp16 safetensors".
+func weightFilesLabel(paths []string) string {
+	name := strings.ToLower(filepath.Base(paths[0]))
+	ext := filepath.Ext(name)
+	label := strings.TrimPrefix(ext, ".")
+	if parts := strings.Split(strings.TrimSuffix(name, ext), "."); len(parts) > 1 {
+		label = parts[len(parts)-1] + " " + label
+	}
+	if len(paths) > 1 {
+		label += fmt.Sprintf(", %d shards", len(paths))
+	}
+	return label
 }

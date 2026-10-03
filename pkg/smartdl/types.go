@@ -308,6 +308,14 @@ type DiffusersComponent struct {
 	// Name is the component name (e.g., "unet", "vae").
 	Name string `json:"name"`
 
+	// WeightFiles are the weight files chosen for this component: one format
+	// and variant (fp16 safetensors preferred), never Flax/ONNX/OpenVINO
+	// exports. Empty for weightless components (tokenizer, scheduler).
+	WeightFiles []string `json:"weight_files,omitempty"`
+
+	// WeightSize is the combined size of WeightFiles.
+	WeightSize int64 `json:"weight_size,omitempty"`
+
 	// Library is the source library (e.g., "diffusers", "transformers").
 	Library string `json:"library,omitempty"`
 
