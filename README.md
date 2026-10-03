@@ -186,7 +186,8 @@ hfdownloader download TheBloke/Mistral-7B-Instruct-v0.2-GGUF -F q4_k_m -E ".md,f
 # Interrupted? Just run again - automatically resumes
 hfdownloader download owner/repo
 
-# Strict verification
+# Large (LFS) files are always SHA256-verified; --verify sets the check
+# for the remaining files (none|size|etag|sha256, default size)
 hfdownloader download owner/repo --verify sha256
 
 # Preview what would download
@@ -277,7 +278,12 @@ hashes, no symlinks — use `--local-dir` (matching
 ```bash
 hfdownloader download TheBloke/Mistral-7B-Instruct-v0.2-GGUF \
     --local-dir ./my-model
+# files land in ./my-model/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/
 ```
+
+Unlike `huggingface-cli`, the files go into an `<owner>/<name>/` subfolder of
+the directory you pass. To put a repo's files directly into a folder of your
+choice, download normally and use [`export`](#export-plain-files-from-what-you-already-downloaded).
 
 This is the right mode for:
 
@@ -304,14 +310,22 @@ scripts. They are mutually exclusive on a single command line.
 Every download creates `hfd.yaml` so you know exactly what you have:
 
 ```yaml
+version: "1.0"
+type: model
 repo: TheBloke/Mistral-7B-Instruct-v0.2-GGUF
 branch: main
 commit: a1b2c3d4...
-downloaded_at: 2024-01-15T10:30:00Z
+repo_path: hub/models--TheBloke--Mistral-7B-Instruct-v0.2-GGUF
+started_at: 2024-01-15T10:25:12Z
+completed_at: 2024-01-15T10:30:00Z
 command: hfdownloader download TheBloke/Mistral-7B-Instruct-v0.2-GGUF -F q4_k_m
+total_size: 4368438272
+total_files: 1
 files:
-  - path: mistral-7b.Q4_K_M.gguf
+  - name: mistral-7b-instruct-v0.2.Q4_K_M.gguf
+    blob: blobs/<sha256>
     size: 4368438272
+    lfs: true
 ```
 
 ```bash
@@ -383,8 +397,8 @@ hfdownloader mirror push office
 # Pull from target to local
 hfdownloader mirror pull office
 
-# Sync specific repos only
-hfdownloader mirror push office --filter "Llama,GGUF"
+# Sync specific repos only (case-insensitive substring of owner/name)
+hfdownloader mirror push office --repo Llama
 
 # Verify integrity after sync
 hfdownloader mirror push office --verify
@@ -537,12 +551,13 @@ endpoint: https://hf-mirror.com
 
 | Command | Description |
 |---------|-------------|
-| `download` | Download models or datasets (default command) |
+| `download` | Download models or datasets (`hfdownloader download owner/name`; the subcommand is required) |
 | `analyze` | Analyze repository before downloading |
 | `serve` | Start web server with REST API |
 | `list` | List all downloaded repos |
 | `info` | Show details about a downloaded repo |
 | `rebuild` | Regenerate friendly view from HF cache |
+| `export` | Export a downloaded repo as plain files (no re-download) |
 | `mirror` | Sync cache between locations |
 | `proxy` | Test and show proxy configuration |
 | `config` | Manage configuration |
@@ -577,6 +592,7 @@ are fully supported and permanent — neither is deprecated. See
 |----------|---------|
 | `HF_TOKEN` | HuggingFace access token |
 | `HF_HOME` | Override `~/.cache/huggingface` |
+| `HF_HUB_CACHE` | Override just the `hub/` directory |
 | `HTTP_PROXY` | Proxy for HTTP requests |
 | `HTTPS_PROXY` | Proxy for HTTPS requests |
 | `NO_PROXY` | Comma-separated bypass list |

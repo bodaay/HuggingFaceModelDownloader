@@ -194,7 +194,7 @@ hfdownloader mirror diff NAS
 hfdownloader mirror push NAS
 
 # Push specific repos only
-hfdownloader mirror push NAS --filter "Llama,GGUF"
+hfdownloader mirror push NAS --repo Llama
 
 # Pull from target to local cache
 hfdownloader mirror pull NAS

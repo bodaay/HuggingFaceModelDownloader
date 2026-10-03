@@ -16,6 +16,7 @@ Complete command-line reference for `hfdownloader`.
   - [list](#list)
   - [info](#info)
   - [rebuild](#rebuild)
+  - [export](#export)
   - [mirror](#mirror)
   - [proxy](#proxy)
   - [config](#config)
@@ -23,6 +24,7 @@ Complete command-line reference for `hfdownloader`.
 - [Environment Variables](#environment-variables)
 - [Configuration File](#configuration-file)
 - [Examples](#examples)
+- [Exit Codes](#exit-codes)
 
 ---
 
@@ -80,6 +82,7 @@ These flags work with all commands:
 | `--config` | | string | | Path to config file (JSON/YAML) |
 | `--log-file` | | string | | Write logs to file |
 | `--log-level` | | string | `info` | Log level: debug, info, warn, error |
+| `--version` | | bool | `false` | Print the version (root command only) |
 
 ### Authentication
 
@@ -100,12 +103,12 @@ hfdownloader download meta-llama/Llama-2-7b
 
 Download models or datasets from HuggingFace Hub.
 
-**This is the default command** — runs when no subcommand is specified.
-
 ```
 hfdownloader download [REPO] [flags]
-hfdownloader [REPO] [flags]              # Same as above
 ```
+
+The `download` subcommand is required: `hfdownloader owner/name` fails with
+`unknown command`. Running `hfdownloader` with no arguments prints help.
 
 #### Repository Selection
 
@@ -137,20 +140,27 @@ hfdownloader [REPO] [flags]              # Same as above
 | `--stall-timeout` | | string | `60s` | Retry a transfer that receives no data for this long (`0` disables) |
 | `--link-mode` | | string | `auto` | How cache entries refer to downloaded data: `auto` (symlink, else hardlink, else copy), `symlink`, `hardlink`, `copy` |
 | `--shards` | | string | | Only these shards of split files, e.g. `1-100` or `1-50,120-185` — download a large model in batches (files that aren't split are unaffected) |
-| `--verify` | | string | `size` | Verification: none, size, etag, sha256 |
+| `--verify` | | string | `size` | Verification for files **without** a known SHA256: `none`, `size`, `etag`, `sha256` (see below) |
 | `--stale-timeout` | | string | `5m` | Timeout for stale downloads |
 
 #### Output
 
 | Flag | Short | Type | Default | Description |
 |------|-------|------|---------|-------------|
-| `--cache-dir` | | string | `~/.cache/huggingface` | HF cache directory (default layout) |
-| `--local-dir` | | string | | Download real files (not HF cache symlinks) into this directory, `huggingface-cli`-style |
+| `--cache-dir` | | string | `~/.cache/huggingface` (or `$HF_HOME`) | HF cache directory (default layout) |
+| `--local-dir` | | string | | Download real files (not HF cache symlinks) under this directory, in `<dir>/<owner>/<name>/` |
 | `--endpoint` | | string | `https://huggingface.co` | Custom endpoint (mirrors) |
 | `--no-manifest` | | bool | `false` | Don't write hfd.yaml manifest |
 | `--no-friendly` | | bool | `false` | Don't create friendly symlinks |
 | `--dry-run` | | bool | `false` | Plan only, no download |
-| `--plan-format` | | string | `table` | Plan format: table, json |
+| `--plan-format` | | string | `table` | Plan format: table, json (`--json` also prints JSON) |
+
+**Verification.** Every file whose SHA256 is known in advance (all LFS files,
+which includes every multipart download) is always SHA256-verified, whatever
+`--verify` says — so `--verify none` only skips checks for small non-LFS files.
+For those files, `size` checks the byte count, `etag`/`sha256` fetch the
+server's hash and compare it (falling back to a size check if the server
+exposes none), and `none` skips verification.
 
 #### Proxy
 
@@ -170,12 +180,19 @@ away.
 
 | Flag | Short | Type | Default | Description |
 |------|-------|------|---------|-------------|
-| `--local-dir` | | string | | Flat-file mode; download real files into this directory |
+| `--local-dir` | | string | | Flat-file mode; download real files under this directory |
 | `--legacy` | | bool | `false` | Enable v2.x flat directory structure (defaults to `Models/` or `Datasets/`) |
-| `--output` | `-o` | string | | Output directory for `--legacy` mode |
+| `--output` | `-o` | string | | Output directory for `--legacy` mode (requires `--legacy`) |
 
 `--local-dir <path>` and `--legacy -o <path>` are equivalent. They are
 mutually exclusive on a single command line.
+
+**Layout differs from `huggingface-cli`:** files are written to
+`<path>/<owner>/<name>/`, not directly into `<path>`. For example
+`--local-dir ./x` for `TheBloke/Mistral-7B-Instruct-v0.2-GGUF` writes
+`./x/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/<files>`. (To put a repo's files
+directly into a folder of your choice, download to the cache and use
+[`export`](#export).)
 
 #### Examples
 
@@ -221,7 +238,8 @@ hfdownloader download owner/repo --proxy http://proxy:8080
 hfdownloader download owner/repo --proxy socks5://localhost:1080 \
   --proxy-user myuser --proxy-pass mypassword
 
-# Put real files (not HF cache symlinks) in a directory of your choice
+# Put real files (not HF cache symlinks) under a directory of your choice
+# (files land in ./my-model/owner/repo/)
 hfdownloader download owner/repo --local-dir ./my-model
 # Equivalent v2.x form (still supported)
 hfdownloader download owner/repo --legacy -o ./my-model
@@ -244,19 +262,24 @@ hfdownloader serve [flags]
 | `--addr` | | string | `0.0.0.0` | Bind address |
 | `--port` | `-p` | int | `8080` | Port |
 | `--cache-dir` | | string | `~/.cache/huggingface` | Cache directory |
+| `--local-dir` | | string | | Put the whole server in flat-file mode: every download writes real files into `<local-dir>/<owner>/<name>` instead of the HF cache |
 | `--connections` | `-c` | int | `8` | Connections per file |
-| `--max-active` | | int | `3` | Max concurrent downloads |
+| `--max-active` | | int | `3` | Max concurrent file downloads (per job) |
 | `--multipart-threshold` | | string | `32MiB` | Min size for multipart |
-| `--verify` | | string | `size` | Verification mode |
+| `--verify` | | string | `size` | Verification mode for files without a known SHA256: `none`, `size`, `etag`, `sha256` |
 | `--retries` | | int | `4` | Retry attempts (the count resets whenever an attempt makes progress) |
 | `--endpoint` | | string | | Custom HF endpoint |
-| `--auth-user` | | string | | Basic auth username |
-| `--auth-pass` | | string | | Basic auth password |
+| `--auth-user` | | string | | Basic auth username (must be used with `--auth-pass`) |
+| `--auth-pass` | | string | | Basic auth password (must be used with `--auth-user`) |
 | `--allow-origin` | | strings | | Extra browser origin allowed to call the API (repeatable; `*` allows any). Other origins get 403 |
 | `--export-dir` | | string | | Enable "Export as real files" in the web UI, writing to `<export-dir>/<owner>/<name>` |
-| `--link-mode` | | string | `auto` | Link mode for downloads (see `download`) |
+| `--link-mode` | | string | config `link-mode`, else `auto` | Link mode for downloads: `auto`, `symlink`, `hardlink`, `copy` (see `download`) |
 | `--models-dir` | | string | `./Models` | Legacy models directory |
 | `--datasets-dir` | | string | `./Datasets` | Legacy datasets directory |
+
+Flags not given on the command line fall back to the config file
+(`~/.config/hfdownloader.json`/`.yaml`), then to the defaults above. The server
+runs one download job (repo) at a time; additional jobs wait as `queued`.
 
 #### Examples
 
@@ -304,13 +327,18 @@ hfdownloader analyze <repo> [flags]
 | Flag | Short | Type | Default | Description |
 |------|-------|------|---------|-------------|
 | `--interactive` | `-i` | bool | `false` | Launch interactive TUI to pick files/quantizations to download |
+| `--dataset` | | bool | `false` | Analyze as a dataset repository |
+| `--revision` | `-b` | string | `main` | Branch or revision to analyze |
+| `--cache-dir` | | string | `~/.cache/huggingface` | Cache directory used when downloading from the interactive TUI |
 | `--endpoint` | | string | | Custom HF endpoint |
-| `--format` | | string | `text` | Output: text, json |
+| `--format` | | string | `text` | Output: text, json (`--json` also prints JSON) |
 
 #### Auto-Detection
 
-- Tries model API first, falls back to dataset API
-- If repo exists as both, prompts you to choose
+- Tries the model API first, falls back to the dataset API
+- If the repo exists as both a model and a dataset, the command stops with
+  `repository exists as both model and dataset`; pass `--dataset` to analyze
+  the dataset
 
 #### Detected Types
 
@@ -327,6 +355,7 @@ hfdownloader analyze <repo> [flags]
 | Vision | Vision-specific configs |
 | Multimodal | Multiple modality configs |
 | Dataset | Dataset configs |
+| Generic | Anything else |
 
 #### Examples
 
@@ -346,22 +375,27 @@ hfdownloader analyze owner/repo --endpoint https://hf-mirror.com
 
 #### Sample Output
 
+Output varies by detected type; for a small Transformers repo:
+
 ```
-Repository: TheBloke/Mistral-7B-Instruct-v0.2-GGUF
-Type:       GGUF Model
-Files:      12 files (4.2 GiB total)
+Repository: hf-internal-testing/tiny-random-gpt2
+Type:       transformers (Transformers model (safetensors))
+Files:      10
+Total Size: 11.9 MiB
 
-GGUF Quantizations:
-  Q2_K      2.1 GiB  ★★☆☆☆  ~2.8 GiB RAM  Smallest, lowest quality
-  Q4_K_M    3.8 GiB  ★★★★☆  ~4.7 GiB RAM  Good balance (recommended)
-  Q5_K_M    4.5 GiB  ★★★★★  ~5.4 GiB RAM  High quality
-  Q8_0      7.2 GiB  ★★★★★  ~8.3 GiB RAM  Near-lossless
+Model Configuration:
+  Vocab Size:      1000
+  Precision:       fp32
 
-Transformers Analysis:
-  Architecture:  MistralForCausalLM
-  Parameters:    7.24B
-  Context:       32768 tokens
-  Vocabulary:    32000
+Weight Files:
+  NAME                                                   SIZE  FORMAT
+  ---------------------------------------------  ------------  ------
+  model.safetensors                                 443.2 KiB  safetensors
+  pytorch_model.bin                                   3.4 MiB  pytorch_bin
+...
+Download Commands:
+  Full:        hfdownloader download hf-internal-testing/tiny-random-gpt2
+  Recommended: hfdownloader download hf-internal-testing/tiny-random-gpt2 -F safetensors --exact
 ```
 
 ---
@@ -382,7 +416,7 @@ hfdownloader list [flags]
 | `--type` | | string | | Filter: model, dataset |
 | `--sort` | | string | `name` | Sort: name, size, date |
 | `--format` | | string | `table` | Output: table, json |
-| `--scan` | | bool | `false` | Scan structure (not manifests) |
+| `--scan` | | bool | `false` | Scan cache structure instead of reading `hfd.yaml` manifests (includes repos downloaded by other tools) |
 
 #### Examples
 
@@ -405,15 +439,16 @@ hfdownloader list --scan
 
 #### Sample Output
 
+Sizes are shown in binary units (B, KiB, MiB, GiB).
+
 ```
-Downloaded Repositories
+TYPE     REPO                                    COMMIT   DOWNLOADED  FILES        SIZE  BRANCH
+-------  --------------------------------------  -------  ----------  -----  ----------  ------
+model    TheBloke/Mistral-7B-Instruct-v0.2-GGUF  41b61a3  2024-01-15      4     4.1 GiB  main
+dataset  facebook/flores                         7d4c3b1  2024-01-10     12   128.0 MiB  main
 
-TYPE     REPO                                    SIZE      BRANCH   DATE
-model    TheBloke/Mistral-7B-Instruct-v0.2-GGUF  4.2 GiB   main     2024-01-15
-model    meta-llama/Llama-3-8B-Instruct          16.1 GiB  main     2024-01-14
-dataset  facebook/flores                         128 MiB   main     2024-01-10
-
-Total: 3 repositories (20.4 GiB)
+Total: 2 repos
+(Use --scan to include repos without manifests)
 ```
 
 ---
@@ -448,28 +483,29 @@ hfdownloader info Mistral-7B --format json
 
 #### Sample Output
 
+Sizes are shown in binary units (B, KiB, MiB, GiB). A partial name must match
+exactly one downloaded repo.
+
 ```
 Repository: TheBloke/Mistral-7B-Instruct-v0.2-GGUF
 Type:       model
 Branch:     main
-Commit:     a1b2c3d4e5f6...
-
-Files:      12
-Total Size: 4.2 GiB
+Commit:     41b61a33a2483885c981aa79e0df6b32407ed873
+Files:      3
+Size:       4.1 GiB
 Downloaded: 2024-01-15 10:30:45
 
-Paths:
-  Friendly: ~/.cache/huggingface/models/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/
-  Cache:    ~/.cache/huggingface/hub/models--TheBloke--Mistral-7B-Instruct-v0.2-GGUF/
+Friendly path: /home/user/.cache/huggingface/models/TheBloke/Mistral-7B-Instruct-v0.2-GGUF
+Cache path:    /home/user/.cache/huggingface/hub/models--TheBloke--Mistral-7B-Instruct-v0.2-GGUF
 
-Original Command:
-  hfdownloader download TheBloke/Mistral-7B-Instruct-v0.2-GGUF -F q4_k_m
+Command: hfdownloader download TheBloke/Mistral-7B-Instruct-v0.2-GGUF -F q4_k_m
 
 Files:
-  NAME                                    SIZE      LFS
-  config.json                             1.2 KiB   no
-  mistral-7b-instruct-v0.2.Q4_K_M.gguf    4.1 GiB   yes
-  README.md                               8.5 KiB   no
+  NAME                                                      SIZE  LFS
+  --------------------------------------------------  ----------  ---
+  config.json                                              1.2 KiB
+  mistral-7b-instruct-v0.2.Q4_K_M.gguf                     4.1 GiB  yes
+  README.md                                                8.5 KiB
 ```
 
 ---
@@ -503,17 +539,35 @@ hfdownloader rebuild --clean
 
 # Write standalone script
 hfdownloader rebuild --write-script
+
+# Machine-readable result
+hfdownloader rebuild --json
 ```
 
 #### Sample Output
+
+By default `rebuild` prints a text summary:
+
+```
+Rebuilding friendly view from: /home/user/.cache/huggingface
+Cleaning orphaned symlinks...
+
+Rebuild complete:
+  Repos scanned:     5
+  Symlinks created:  23
+  Symlinks updated:  2
+  Orphans removed:   1
+```
+
+With the global `--json` flag it prints JSON instead (`orphans_removed`,
+`snapshot_entries_repaired` and `errors` are omitted when zero/empty):
 
 ```json
 {
   "repos_scanned": 5,
   "symlinks_created": 23,
   "symlinks_updated": 2,
-  "orphans_removed": 1,
-  "errors": []
+  "orphans_removed": 1
 }
 ```
 
@@ -527,7 +581,8 @@ Export a downloaded repo as plain files — no re-download.
 hfdownloader export <repo> <dest> [flags]
 ```
 
-Writes the repo's files into `<dest>` in the repo's own layout. On the same
+Writes the repo's files directly into `<dest>` (not `<dest>/<owner>/<name>`)
+in the repo's own layout. On the same
 drive files are **hardlinked** from the cache (real files, no extra disk
 space); otherwise they are copied. Works for caches written without links
 (older Windows builds) using the download manifest.
@@ -617,9 +672,9 @@ hfdownloader mirror diff <target> [flags]
 
 | Flag | Short | Type | Default | Description |
 |------|-------|------|---------|-------------|
-| `--cache-dir` | | string | `~/.cache/huggingface` | Local cache |
+| `--cache-dir` | | string | config `cache-dir`, else `~/.cache/huggingface` | Local cache |
 | `--format` | | string | `table` | Output: table, json |
-| `--repo` | | string | | Filter by repo name |
+| `--repo` | | string | | Filter by repo name (case-insensitive substring; one value) |
 
 ```bash
 hfdownloader mirror diff office
@@ -636,12 +691,14 @@ hfdownloader mirror push <target> [flags]
 
 | Flag | Short | Type | Default | Description |
 |------|-------|------|---------|-------------|
-| `--cache-dir` | | string | `~/.cache/huggingface` | Local cache |
-| `--repo` | | string | | Filter by repo name |
+| `--cache-dir` | | string | config `cache-dir`, else `~/.cache/huggingface` | Local cache |
+| `--repo` | | string | | Filter by repo name (case-insensitive substring; one value) |
 | `--dry-run` | | bool | `false` | Preview only |
 | `--verify` | | bool | `false` | Verify SHA256 after copy |
-| `--delete` | | bool | `false` | Delete repos not in source |
-| `--force` | | bool | `false` | Re-copy incomplete repos |
+| `--delete` | | bool | `false` | Delete repos in the target that are not in the local cache |
+| `--force` | | bool | `false` | Re-copy incomplete or outdated repos |
+
+There is no `--filter` flag; use `--repo`.
 
 ```bash
 # Preview
@@ -665,7 +722,8 @@ Pull repos from target to local.
 hfdownloader mirror pull <target> [flags]
 ```
 
-Same flags as `mirror push`.
+Same flags as `mirror push`, except that `--delete` removes **local** repos
+that are not in the target.
 
 ```bash
 hfdownloader mirror pull office
@@ -855,18 +913,26 @@ hfdownloader config path
 # Output: /home/user/.config/hfdownloader.json
 ```
 
+Prints the first of `hfdownloader.json`, `.yaml`, `.yml` that exists in
+`~/.config/`, or the JSON path if none does.
+
 #### Default Configuration
+
+Written by `config init`:
 
 ```json
 {
-  "connections": 8,
-  "max-active": 3,
-  "multipart-threshold": "32MiB",
-  "verify": "size",
-  "retries": 4,
   "backoff-initial": "400ms",
   "backoff-max": "10s",
-  "token": ""
+  "cache-dir": "",
+  "connections": 8,
+  "link-mode": "auto",
+  "max-active": 3,
+  "multipart-threshold": "32MiB",
+  "retries": 4,
+  "stall-timeout": "60s",
+  "token": "",
+  "verify": "size"
 }
 ```
 
@@ -886,14 +952,14 @@ hfdownloader version [flags]
 
 ```bash
 hfdownloader version
-# hfdownloader v3.3.0
-# Go:      go1.21.0
-# OS/Arch: darwin/arm64
-# Commit:  abc123
-# Built:   2024-01-15T10:30:00Z
+# hfdownloader 3.3.0
+#   Go:       go1.25.0
+#   OS/Arch:  darwin/arm64
+#   Commit:   abc123
+#   Built:    2024-01-15T10:30:00Z
 
 hfdownloader version -s
-# 3.0.0
+# 3.3.0
 ```
 
 ---
@@ -923,10 +989,17 @@ export NO_PROXY=localhost,.internal.com
 
 ## Configuration File
 
-Configuration is loaded from (in order):
-1. `--config` flag path
+Configuration is loaded from the first of:
+1. `--config` flag path (honored by `download` only)
 2. `~/.config/hfdownloader.json`
 3. `~/.config/hfdownloader.yaml`
+4. `~/.config/hfdownloader.yml`
+
+Command-line flags always win over the file. Besides the keys below, the file
+may hold `cache-dir`, `stall-timeout`, `link-mode` and (for `serve`)
+`export-dir`. Saving settings in the web UI rewrites only the keys it manages
+(`token`, `connections`, `max-active`, `multipart-threshold`, `verify`,
+`retries`, `endpoint`, `proxy`) and keeps everything else.
 
 ### JSON Format
 
@@ -1052,16 +1125,18 @@ hfdownloader download owner/repo -q
 
 | Code | Meaning |
 |------|---------|
-| 0 | Success |
-| 1 | General error |
-| 2 | Invalid arguments |
-| 130 | Interrupted (Ctrl+C) |
+| 0 | Success (also: bare `hfdownloader` printing help, `serve` shut down with Ctrl+C) |
+| 1 | Any error — including invalid arguments/flags, unknown commands, failed downloads, and a download interrupted with Ctrl+C |
+
+The error is printed to stderr as `error: <message>`.
 
 ---
 
 ## Signal Handling
 
-- `SIGINT` (Ctrl+C): Graceful shutdown, saves progress
+- `SIGINT` (Ctrl+C): Stops the download (`error: context canceled`, exit code 1);
+  partially downloaded data is kept for resuming. `serve` shuts down gracefully
+  and exits 0.
 - `SIGTERM`: Same as SIGINT
 
 Interrupted downloads can be resumed by running the same command again.
