@@ -2476,6 +2476,7 @@
       'variant': 'Variants',
       'component': 'Components',
       'split': 'Dataset Splits',
+      'config': 'Dataset Configs',
       'format': 'Weight Format',
       'precision': 'Precision',
       'vision_encoder': 'Vision Encoder (mmproj)',

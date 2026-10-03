@@ -188,7 +188,13 @@ func TestDetectSplit(t *testing.T) {
 		{"eval in path", "eval/data.parquet", "data.parquet", "eval"},
 		{"train prefix in filename", "data/train-00000.parquet", "train-00000.parquet", "train"},
 		{"test prefix in filename", "data/test-00000.parquet", "test-00000.parquet", "test"},
-		{"train underscore", "data/train_data.parquet", "train_data.parquet", "train"},
+		// A suffixed split keeps its full name: --exact treats "train_data" as
+		// one segment, so only that name selects the file (and it keeps
+		// glue's validation_matched / validation_mismatched apart).
+		{"train underscore", "data/train_data.parquet", "train_data.parquet", "train_data"},
+		{"split segment inside file name", "en/c4-train.00000-of-01024.json.gz", "c4-train.00000-of-01024.json.gz", "train"},
+		{"split folder with suffix", "clean/train.360/0000.parquet", "0000.parquet", "train"},
+		{"validation_matched", "mnli/validation_matched-00000-of-00001.parquet", "validation_matched-00000-of-00001.parquet", "validation_matched"},
 		{"train dot prefix", "data/train.parquet", "train.parquet", "train"},
 		{"data prefix with split name in filename", "data/english/train.parquet", "train.parquet", "train"},
 		{"no split detected", "other/data.parquet", "data.parquet", ""},
@@ -623,5 +629,46 @@ func TestStandardSplits(t *testing.T) {
 		if standardSplits[i] != split {
 			t.Errorf("standardSplits[%d] = %q, want %q", i, standardSplits[i], split)
 		}
+	}
+}
+
+// glue-style datasets keep each config in its own folder. Configs are
+// selectable, one is recommended (not "train", which would pull the train
+// split of every config), and every filter selects exactly its files.
+func TestDataset_ConfigsAndSplits(t *testing.T) {
+	paths := []string{
+		"ax/test-00000-of-00001.parquet",
+		"cola/train-00000-of-00001.parquet", "cola/validation-00000-of-00001.parquet", "cola/test-00000-of-00001.parquet",
+		"mnli/train-00000-of-00001.parquet", "mnli/validation_matched-00000-of-00001.parquet",
+		"mnli/validation_mismatched-00000-of-00001.parquet",
+	}
+	var files []FileInfo
+	for _, p := range paths {
+		files = append(files, FileInfo{Path: p, Name: p[strings.LastIndex(p, "/")+1:], Size: 10, IsLFS: true})
+	}
+	info := analyzeDataset(files)
+	items := DatasetToSelectableItems(info)
+
+	byID := map[string]SelectableItem{}
+	var recommended []string
+	for _, it := range items {
+		byID[it.ID] = it
+		if it.Recommended {
+			recommended = append(recommended, it.ID)
+		}
+	}
+	if len(recommended) != 1 || recommended[0] != "config:cola" {
+		t.Errorf("recommended %v, want exactly one config: the first with a train split", recommended)
+	}
+	for _, id := range []string{"config:cola", "config:mnli", "train", "validation", "validation_matched", "validation_mismatched", "test"} {
+		if _, ok := byID[id]; !ok {
+			t.Errorf("missing item %q (have %v)", id, len(items))
+		}
+	}
+	if _, ok := byID["default"]; ok {
+		t.Error("catch-all default split offered")
+	}
+	if got := byID["config:cola"].FilterValue; got != "cola/" {
+		t.Errorf("cola filter = %q, want cola/", got)
 	}
 }

@@ -433,11 +433,27 @@ type DatasetInfo struct {
 	// Configs is the list of available configurations/subsets.
 	Configs []string `json:"configs,omitempty"`
 
+	// ConfigDetails describes each config's folder, size and file count.
+	ConfigDetails []DatasetConfig `json:"config_details,omitempty"`
+
 	// Formats is the list of file formats found.
 	Formats []string `json:"formats,omitempty"`
 
 	// PrimaryFormat is the recommended format to download.
 	PrimaryFormat string `json:"primary_format,omitempty"`
+}
+
+// DatasetConfig is a dataset configuration (subset) stored in its own folder.
+type DatasetConfig struct {
+	// Name is the config name (e.g. "cola", "en").
+	Name string `json:"name"`
+	// Path is the folder holding the config's files (e.g. "cola", "data/en").
+	Path      string `json:"path"`
+	FileCount int    `json:"file_count"`
+	Size      int64  `json:"size"`
+	SizeHuman string `json:"size_human"`
+	// Splits are the split names found in this config.
+	Splits []string `json:"splits,omitempty"`
 }
 
 // DatasetSplit represents a dataset split (train, test, etc.).

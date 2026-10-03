@@ -301,6 +301,7 @@ func printSelectableItems(info *smartdl.RepoInfo) {
 		"variant":        "Available Variants",
 		"component":      "Available Components",
 		"split":          "Available Splits",
+		"config":         "Dataset Configs",
 		"format":         "Weight Formats",
 		"precision":      "Precision Options",
 		"vision_encoder": "Vision Encoder (mmproj)",
