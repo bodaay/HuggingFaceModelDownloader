@@ -83,7 +83,13 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 		commitSHA = job.Revision // fallback
 	}
 
-	err = walkTree(ctx, httpc, token, cfg.Endpoint, job, "", func(n hfNode) error {
+	// List and fetch files at the resolved commit rather than the branch name,
+	// so a repo updated mid-download (or between a pause and a resume) can't
+	// mix file versions under one snapshot.
+	pinned := job
+	pinned.Revision = commitSHA
+
+	err = walkTree(ctx, httpc, token, cfg.Endpoint, pinned, "", func(n hfNode) error {
 		if n.Type != "file" && n.Type != "blob" {
 			return nil
 		}
@@ -141,9 +147,9 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 		// Build URL and file size
 		var urlStr string
 		if isLFS {
-			urlStr = lfsURL(cfg.Endpoint, job, rel)
+			urlStr = lfsURL(cfg.Endpoint, pinned, rel)
 		} else {
-			urlStr = rawURL(cfg.Endpoint, job, rel)
+			urlStr = rawURL(cfg.Endpoint, pinned, rel)
 		}
 		// For LFS files, ALWAYS use LFS.Size (n.Size is the pointer file size, not actual)
 		var size int64

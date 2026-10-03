@@ -107,14 +107,33 @@ func BuildHTTPClient(proxy *ProxyConfig) (*http.Client, error) {
 	return buildHTTPProxyClient(proxy)
 }
 
-// buildHTTPProxyClient creates a client for HTTP/HTTPS proxies.
-func buildHTTPProxyClient(proxyCfg *ProxyConfig) (*http.Client, error) {
-	tr := &http.Transport{
+// newBaseTransport returns a transport with timeouts on every phase that can
+// otherwise block forever: dialing, waiting for response headers, and silent
+// HTTP/2 connections (detected with pings). Body reads are guarded separately
+// by the downloader's stall watchdog (github issues #87, #88).
+func newBaseTransport() *http.Transport {
+	return &http.Transport{
+		DialContext:           baseDialer().DialContext,
+		ForceAttemptHTTP2:     true, // a custom DialContext would otherwise disable HTTP/2
 		MaxIdleConns:          64,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
+		HTTP2: &http.HTTP2Config{
+			SendPingTimeout: 30 * time.Second,
+			PingTimeout:     15 * time.Second,
+		},
 	}
+}
+
+func baseDialer() *net.Dialer {
+	return &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+}
+
+// buildHTTPProxyClient creates a client for HTTP/HTTPS proxies.
+func buildHTTPProxyClient(proxyCfg *ProxyConfig) (*http.Client, error) {
+	tr := newBaseTransport()
 
 	// Configure proxy
 	if proxyCfg != nil && proxyCfg.URL != "" {
@@ -192,24 +211,24 @@ func buildSOCKS5Client(proxyCfg *ProxyConfig) (*http.Client, error) {
 		}
 	}
 
-	// Create transport with SOCKS5 dialer
-	tr := &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			// Check if we should bypass proxy
-			host, _, _ := net.SplitHostPort(addr)
-			if shouldBypassProxy(host, noProxyList) {
-				return (&net.Dialer{
-					Timeout:   30 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext(ctx, network, addr)
-			}
-			// Use SOCKS5 proxy
-			return dialer.Dial(network, addr)
-		},
-		MaxIdleConns:          64,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
+	// Create transport with SOCKS5 dialer. HTTP/2 stays off here (as before):
+	// ForceAttemptHTTP2 is deliberately not set for proxied connections.
+	tr := newBaseTransport()
+	tr.ForceAttemptHTTP2 = false
+	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		// Check if we should bypass proxy
+		host, _, _ := net.SplitHostPort(addr)
+		if shouldBypassProxy(host, noProxyList) {
+			return baseDialer().DialContext(ctx, network, addr)
+		}
+		// Use SOCKS5 proxy, bounded by the dial timeout and ctx so an
+		// unresponsive proxy cannot hang the request forever.
+		dctx, cancel := context.WithTimeout(ctx, baseDialer().Timeout)
+		defer cancel()
+		if cd, ok := dialer.(proxy.ContextDialer); ok {
+			return cd.DialContext(dctx, network, addr)
+		}
+		return dialer.Dial(network, addr)
 	}
 
 	if proxyCfg.InsecureSkipVerify {

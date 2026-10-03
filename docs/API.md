@@ -268,7 +268,8 @@ List all download jobs.
         "completedFiles": 1,
         "totalBytes": 4500000000,
         "downloadedBytes": 1500000000,
-        "bytesPerSecond": 50000000
+        "bytesPerSecond": 50000000,
+        "activity": "Verifying model.Q4_K_M.gguf (45%)"
       },
       "error": "",
       "createdAt": "2024-01-15T10:30:00Z",
@@ -448,6 +449,12 @@ queued ─────► running ─────► completed
 | `completed` | Finished successfully |
 | `failed` | Error occurred |
 | `cancelled` | Cancelled by user |
+
+While a job is `running`, `progress.activity` describes anything other than
+bytes flowing — assembling a multipart file, verifying its SHA256, or retrying
+a stalled or dropped transfer (e.g. `"Verifying model.gguf (45%)"`). It is
+omitted when empty. Per-file `status` values are `pending`, `active`,
+`assembling`, `verifying`, `complete`, `skipped` and `error`.
 
 ---
 

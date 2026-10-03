@@ -175,6 +175,7 @@ func newDownloadCmd(ctx context.Context, ro *RootOpts) *cobra.Command {
 	cmd.Flags().IntVar(&cfg.Retries, "retries", 4, "Max retry attempts per HTTP request/part")
 	cmd.Flags().StringVar(&cfg.BackoffInitial, "backoff-initial", "400ms", "Initial retry backoff duration")
 	cmd.Flags().StringVar(&cfg.BackoffMax, "backoff-max", "10s", "Maximum retry backoff duration")
+	cmd.Flags().StringVar(&cfg.StallTimeout, "stall-timeout", "60s", "Retry a transfer that receives no data for this long (0 disables)")
 	cmd.Flags().StringVar(&cfg.Endpoint, "endpoint", "", "Custom HuggingFace endpoint URL (e.g. https://hf-mirror.com)")
 	cmd.Flags().BoolVar(&cfg.NoManifest, "no-manifest", false, "Do not write hfd.yaml manifest file after download")
 	cmd.Flags().BoolVar(&cfg.NoFriendlyView, "no-friendly", false, "Do not create friendly view symlinks (models/, datasets/)")
@@ -450,6 +451,7 @@ func applySettingsDefaults(cmd *cobra.Command, ro *RootOpts, dst *hfdownloader.S
 	setInt("retries", func(v int) { dst.Retries = v })
 	setStr("backoff-initial", func(v string) { dst.BackoffInitial = v })
 	setStr("backoff-max", func(v string) { dst.BackoffMax = v })
+	setStr("stall-timeout", func(v string) { dst.StallTimeout = v })
 	setStr("endpoint", func(v string) { dst.Endpoint = v })
 
 	if !cmd.Flags().Changed("token") && os.Getenv("HF_TOKEN") == "" {
@@ -515,7 +517,11 @@ func splitComma(s string) []string {
 
 // cliProgress returns a simple text-based progress handler.
 func cliProgress(ro *RootOpts, job hfdownloader.Job) hfdownloader.ProgressFunc {
+	var mu sync.Mutex
+	announced := map[string]struct{}{}
 	return func(ev hfdownloader.ProgressEvent) {
+		mu.Lock()
+		defer mu.Unlock()
 		rev := job.Revision
 		if rev == "" {
 			rev = "main"
@@ -525,6 +531,17 @@ func cliProgress(ro *RootOpts, job hfdownloader.Job) hfdownloader.ProgressFunc {
 			fmt.Printf("Scanning %s@%s ...\n", job.Repo, rev)
 		case "retry":
 			fmt.Printf("retry %s (attempt %d): %s\n", ev.Path, ev.Attempt, ev.Message)
+		case "file_assemble", "file_verify":
+			// Announce each long post-download phase once per file.
+			key := ev.Event + "\x00" + ev.Path
+			if _, seen := announced[key]; !seen {
+				announced[key] = struct{}{}
+				verb := "assembling"
+				if ev.Event == "file_verify" {
+					verb = "verifying"
+				}
+				fmt.Printf("%s: %s\n", verb, ev.Path)
+			}
 		case "file_start":
 			fmt.Printf("downloading: %s (%d bytes)\n", ev.Path, ev.Total)
 		case "file_done":

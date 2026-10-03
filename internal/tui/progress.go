@@ -56,6 +56,11 @@ type fileState struct {
 	status string // "queued","downloading","done","skip","error"
 	err    string
 
+	// stage is a sub-state of "downloading" once bytes stop flowing:
+	// "merge" (assembling parts), "verify" (hashing) or "retry".
+	stage      string
+	stageBytes int64
+
 	// rolling speed (EMA smoothed)
 	lastBytes     int64
 	lastTime      time.Time
@@ -120,10 +125,21 @@ func (lr *LiveRenderer) Close() {
 // Handler returns a ProgressFunc that feeds events to the renderer.
 func (lr *LiveRenderer) Handler() hfdownloader.ProgressFunc {
 	return func(ev hfdownloader.ProgressEvent) {
-		select {
-		case lr.events <- ev:
+		switch ev.Event {
+		case "file_progress", "file_assemble", "file_verify":
+			// High-frequency, superseded by the next update: drop if the UI
+			// is congested so rendering stays smooth.
+			select {
+			case lr.events <- ev:
+			default:
+			}
 		default:
-			// Drop events if UI is congested; we keep rendering smoothly.
+			// State transitions (file_done, error, ...) must never be
+			// dropped or a finished file would look stuck forever.
+			select {
+			case lr.events <- ev:
+			case <-lr.done:
+			}
 		}
 	}
 }
@@ -164,6 +180,7 @@ func (lr *LiveRenderer) apply(ev hfdownloader.ProgressEvent) {
 		}
 	case "file_progress":
 		fs := lr.ensure(ev.Path)
+		prevBytes := fs.bytes
 		// Only update total if it's provided and reasonable
 		if ev.Total > 0 {
 			fs.total = ev.Total
@@ -178,8 +195,21 @@ func (lr *LiveRenderer) apply(ev hfdownloader.ProgressEvent) {
 			fs.lastTime = time.Now()
 			fs.lastBytes = fs.bytes
 		}
+		// Clear a retry marker only once bytes move again: the multipart
+		// ticker keeps reporting unchanged totals while a part retries.
+		if fs.stage == "retry" && fs.bytes > prevBytes {
+			fs.stage = ""
+		}
+	case "file_assemble", "file_verify":
+		fs := lr.ensure(ev.Path)
+		fs.stage = "merge"
+		if ev.Event == "file_verify" {
+			fs.stage = "verify"
+		}
+		fs.stageBytes = ev.Downloaded
 	case "file_done":
 		fs := lr.ensure(ev.Path)
+		fs.stage = ""
 		if strings.HasPrefix(strings.ToLower(ev.Message), "skip") {
 			fs.status = "skip"
 		} else {
@@ -187,7 +217,8 @@ func (lr *LiveRenderer) apply(ev hfdownloader.ProgressEvent) {
 		}
 		fs.bytes = fs.total
 	case "retry":
-		// Could record attempts if you want a column
+		fs := lr.ensure(ev.Path)
+		fs.stage = "retry"
 	case "error":
 		fs := lr.ensure(ev.Path)
 		fs.status = "error"
@@ -400,7 +431,15 @@ func renderFileRow(fs *fileState, w int, lr *LiveRenderer) string {
 	default:
 		st, col = "…", "fg=magenta"
 	}
-	status := pad(colorize(st+" "+fs.status, col, lr), statusW)
+	label := fs.status
+	if fs.status == "downloading" && fs.stage != "" {
+		label = fs.stage
+		st, col = "⟳", "fg=cyan"
+		if fs.stage == "retry" {
+			st, col = "↻", "fg=yellow"
+		}
+	}
+	status := pad(colorize(st+" "+label, col, lr), statusW)
 
 	// filename
 	name := ellipsizeMiddle(fs.path, fileW)
@@ -416,8 +455,23 @@ func renderFileRow(fs *fileState, w int, lr *LiveRenderer) string {
 			p = 1
 		}
 	}
+	stagePhase := fs.status == "downloading" && (fs.stage == "merge" || fs.stage == "verify")
+	if stagePhase && fs.total > 0 {
+		// Show the merge/verify pass's own progress instead of a full bar.
+		p = float64(fs.stageBytes) / float64(fs.total)
+		if p > 1 {
+			p = 1
+		}
+	}
 	bar := renderBar(progressW-18, p, lr) // leave room for numbers
 	progTxt := fmt.Sprintf(" %s/%s %s", humanBytes(fs.bytes), humanBytes(fs.total), percent(p))
+	if stagePhase {
+		verb := "verifying"
+		if fs.stage == "merge" {
+			verb = "merging"
+		}
+		progTxt = fmt.Sprintf(" %s %s", verb, percent(p))
+	}
 	progress := bar + progTxt
 	if utf8.RuneCountInString(progress) > progressW {
 		// simple cut if needed
@@ -447,7 +501,9 @@ func renderFileRow(fs *fileState, w int, lr *LiveRenderer) string {
 
 	// eta (use smoothed speed for stable ETA)
 	eta := "—"
-	if speed > 0 && fs.total > 0 && fs.bytes < fs.total {
+	if stagePhase {
+		speedTxt = pad("—", speedW)
+	} else if speed > 0 && fs.total > 0 && fs.bytes < fs.total {
 		rem := float64(fs.total-fs.bytes) / speed
 		eta = fmtDuration(time.Duration(rem) * time.Second)
 	}

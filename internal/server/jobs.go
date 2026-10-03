@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"sync"
 	"time"
 
@@ -55,6 +56,10 @@ type JobProgress struct {
 	TotalBytes      int64 `json:"totalBytes"`
 	DownloadedBytes int64 `json:"downloadedBytes"`
 	BytesPerSecond  int64 `json:"bytesPerSecond"`
+	// Activity describes a non-download phase or problem worth surfacing,
+	// e.g. "Verifying model.gguf (45%)" or a retry reason. Empty while
+	// bytes are simply flowing.
+	Activity string `json:"activity,omitempty"`
 }
 
 // JobFileProgress holds per-file progress.
@@ -62,7 +67,7 @@ type JobFileProgress struct {
 	Path       string `json:"path"`
 	TotalBytes int64  `json:"totalBytes"`
 	Downloaded int64  `json:"downloaded"`
-	Status     string `json:"status"` // pending, active, complete, skipped, error
+	Status     string `json:"status"` // pending, active, assembling, verifying, complete, skipped, error
 }
 
 // JobManager manages download jobs.
@@ -597,8 +602,30 @@ func (m *JobManager) runJob(job *Job) {
 	}
 
 	// Progress callback - NOTE: must not hold lock when calling notifyListeners
+	// activityPath is the file the current Activity message refers to, and
+	// activityMark its byte count when the message was set: the message is
+	// cleared once that file's download actually moves past the mark (the
+	// multipart ticker keeps reporting unchanged bytes during a retry).
+	var activityPath string
+	var activityMark int64
+	findFile := func(path string) *JobFileProgress {
+		for i := range job.Files {
+			if job.Files[i].Path == path {
+				return &job.Files[i]
+			}
+		}
+		return nil
+	}
+
 	progressFunc := func(evt hfdownloader.ProgressEvent) {
 		m.mu.Lock()
+
+		// Ignore events from a run that has been paused, cancelled or
+		// superseded by a resume: they would corrupt the new run's state.
+		if job.generation != myGeneration || job.Status != JobStatusRunning {
+			m.mu.Unlock()
+			return
+		}
 
 		switch evt.Event {
 		case "plan_item":
@@ -618,7 +645,33 @@ func (m *JobManager) runJob(job *Job) {
 				}
 			}
 
+		case "file_assemble", "file_verify":
+			stage, verb := "assembling", "Assembling"
+			if evt.Event == "file_verify" {
+				stage, verb = "verifying", "Verifying"
+			}
+			if f := findFile(evt.Path); f != nil {
+				f.Status = stage
+			}
+			pct := 0.0
+			if evt.Total > 0 {
+				pct = float64(evt.Downloaded) / float64(evt.Total) * 100
+			}
+			job.Progress.Activity = fmt.Sprintf("%s %s (%.0f%%)", verb, evt.Path, pct)
+			activityPath, activityMark = evt.Path, evt.Total
+
+		case "retry":
+			job.Progress.Activity = fmt.Sprintf("Retrying %s (attempt %d): %s", evt.Path, evt.Attempt, evt.Message)
+			activityPath, activityMark = evt.Path, 0
+			if f := findFile(evt.Path); f != nil {
+				activityMark = f.Downloaded
+			}
+
 		case "file_progress":
+			if activityPath == evt.Path && evt.Downloaded > activityMark {
+				job.Progress.Activity = ""
+				activityPath = ""
+			}
 			for i := range job.Files {
 				if job.Files[i].Path == evt.Path {
 					job.Files[i].Downloaded = evt.Downloaded
@@ -633,6 +686,10 @@ func (m *JobManager) runJob(job *Job) {
 			job.Progress.DownloadedBytes = total
 
 		case "file_done":
+			if activityPath == evt.Path {
+				job.Progress.Activity = ""
+				activityPath = ""
+			}
 			for i := range job.Files {
 				if job.Files[i].Path == evt.Path {
 					job.Files[i].Status = "complete"
@@ -659,25 +716,39 @@ func (m *JobManager) runJob(job *Job) {
 
 	// Update final status
 	m.mu.Lock()
-	// Don't update status if:
-	// 1. Job was paused (user intentionally stopped it)
-	// 2. We're a stale goroutine (a newer runJob has started)
-	if job.Status == JobStatusPaused || job.generation != myGeneration {
+	if !finishRunStatusLocked(job, myGeneration, ctx.Err(), err) {
 		m.mu.Unlock()
 		return
-	}
-	endTime := time.Now()
-	job.EndedAt = &endTime
-	if ctx.Err() != nil {
-		job.Status = JobStatusCancelled
-	} else if err != nil {
-		job.Status = JobStatusFailed
-		job.Error = err.Error()
-	} else {
-		job.Status = JobStatusCompleted
 	}
 	endSnap := m.cloneJobLocked(job)
 	m.mu.Unlock()
 
 	m.notifyListeners(endSnap)
+}
+
+// finishRunStatusLocked records a run's outcome on job and reports whether it
+// did. It leaves the job alone when this run no longer owns it:
+//  1. the job was paused (user intentionally stopped it);
+//  2. the job was resumed (re-queued) while this paused run was still winding
+//     down — the queued run owns it now, and marking it cancelled here would
+//     make the scheduler skip it, silently killing the resume;
+//  3. this is a stale run (a newer runJob has started).
+//
+// Must hold m.mu (write).
+func finishRunStatusLocked(job *Job, myGeneration int, ctxErr, runErr error) bool {
+	if job.Status == JobStatusPaused || job.Status == JobStatusQueued || job.generation != myGeneration {
+		return false
+	}
+	endTime := time.Now()
+	job.EndedAt = &endTime
+	job.Progress.Activity = ""
+	if ctxErr != nil {
+		job.Status = JobStatusCancelled
+	} else if runErr != nil {
+		job.Status = JobStatusFailed
+		job.Error = runErr.Error()
+	} else {
+		job.Status = JobStatusCompleted
+	}
+	return true
 }

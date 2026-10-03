@@ -242,20 +242,11 @@ func (c *WSClient) writePump() {
 				return
 			}
 
-			w, err := c.conn.NextWriter(websocket.TextMessage)
-			if err != nil {
-				return
-			}
-			w.Write(message)
-
-			// Batch any queued messages
-			n := len(c.send)
-			for i := 0; i < n; i++ {
-				w.Write([]byte("\n"))
-				w.Write(<-c.send)
-			}
-
-			if err := w.Close(); err != nil {
+			// One JSON message per frame. Batching several messages into a
+			// single newline-separated frame made the browser's JSON.parse
+			// fail and silently drop every message in it — including final
+			// job states, leaving jobs looking stuck (github #87/#88).
+			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
 				return
 			}
 
