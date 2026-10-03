@@ -198,12 +198,14 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 // names select too (diffusers components like "unet", per-quant folders like
 // "Q4_K_M/", dataset splits like "validation"). With filters set:
 //   - a file matching any filter is kept (the longest matching filter wins);
-//   - any other LFS file is dropped, whatever its type (previously only six
-//     weight extensions were dropped, so ONNX/TF/Flax weights, parquet
-//     splits and imatrix files came along with every filter);
-//   - any other small (non-LFS) file is kept only in the repo root or in a
-//     folder holding a matched file, so a chosen component keeps its
-//     config.json while unchosen folders' metadata is skipped.
+//   - any other weight or data file (isPayloadFile) is dropped, whatever its
+//     format (previously only six weight extensions were, so ONNX/TF/Flax
+//     weights, parquet splits and imatrix files came along with every
+//     filter);
+//   - every other file — configs, tokenizers (tokenizer.model is LFS in
+//     Llama/Mistral/Gemma repos), schedulers, docs, images — is kept, in
+//     any folder: models need them to load (a diffusers pipeline filtered
+//     by "fp16" still needs tokenizer/ and scheduler/).
 func applyFilters(items []PlanItem, filters []string, exact bool) []PlanItem {
 	var fs, orig []string // lowercased for matching; as given, for Subdir
 	for _, list := range filters {
@@ -220,35 +222,44 @@ func applyFilters(items []PlanItem, filters []string, exact bool) []PlanItem {
 		return items
 	}
 
-	matched := make([]string, len(items))
-	matchedDirs := map[string]bool{} // folders (and their ancestors) holding a match
-	for i, it := range items {
-		relLower := strings.ToLower(it.RelativePath)
-		for j, f := range fs {
-			if filterMatches(relLower, f, exact) && len(f) > len(matched[i]) {
-				matched[i] = orig[j]
-			}
-		}
-		if matched[i] != "" {
-			for d := path.Dir(it.RelativePath); d != "." && !matchedDirs[d]; d = path.Dir(d) {
-				matchedDirs[d] = true
-			}
-		}
-	}
-
 	var out []PlanItem
-	for i, it := range items {
+	for _, it := range items {
+		relLower := strings.ToLower(it.RelativePath)
+		matched := ""
+		for j, f := range fs {
+			if filterMatches(relLower, f, exact) && len(f) > len(matched) {
+				matched = orig[j]
+			}
+		}
 		switch {
-		case matched[i] != "":
-			it.Subdir = matched[i]
-		case it.LFS:
-			continue
-		case path.Dir(it.RelativePath) != "." && !matchedDirs[path.Dir(it.RelativePath)]:
+		case matched != "":
+			it.Subdir = matched
+		case isPayloadFile(it.RelativePath):
 			continue
 		}
 		out = append(out, it)
 	}
 	return out
+}
+
+// payloadExts are extensions of model weights, exported model formats and
+// dataset/archive files: what filters choose between.
+var payloadExts = map[string]bool{
+	// weights and exported model formats
+	".safetensors": true, ".bin": true, ".pt": true, ".pth": true, ".ckpt": true,
+	".gguf": true, ".ggml": true, ".gguf_file": true, ".onnx": true, ".onnx_data": true,
+	".msgpack": true, ".h5": true, ".tflite": true, ".ot": true, ".npz": true, ".npy": true,
+	".pb": true, ".mlmodel": true, ".act": true, ".dat": true, // .dat: imatrix data
+	// dataset files and archives
+	".parquet": true, ".arrow": true, ".jsonl": true, ".csv": true, ".tsv": true,
+	".tar": true, ".zip": true, ".gz": true, ".zst": true, ".xz": true, ".bz2": true,
+}
+
+// isPayloadFile reports whether a repo file is a weight, export or data
+// file — dropped by filters it doesn't match — rather than a supporting file
+// such as a tokenizer, config, doc or image.
+func isPayloadFile(rel string) bool {
+	return payloadExts[strings.ToLower(path.Ext(rel))]
 }
 
 // UnmatchedFiltersWarning returns a warning when a filtered job matched no
