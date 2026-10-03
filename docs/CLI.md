@@ -952,14 +952,14 @@ hfdownloader version [flags]
 
 ```bash
 hfdownloader version
-# hfdownloader 3.3.0
+# hfdownloader 3.4.0
 #   Go:       go1.25.0
 #   OS/Arch:  darwin/arm64
 #   Commit:   abc123
 #   Built:    2024-01-15T10:30:00Z
 
 hfdownloader version -s
-# 3.3.0
+# 3.4.0
 ```
 
 ---
