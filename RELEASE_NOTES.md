@@ -88,6 +88,9 @@ picks the right files for GGUF, diffusers, quantized and dataset repos.
 - New `--stall-timeout` flag and config key; `progress.activity` in the jobs
   API; tests no longer touch the developer's real config; ~60 new tests,
   including fake-Hub end-to-end tests.
+- Release binaries are built with Go 1.26.8 (`toolchain` in go.mod; previous
+  releases used Go 1.24.0, missing later standard-library security fixes).
+  The minimum Go version for building from source is unchanged (1.24).
 
 **Full Changelog**: https://github.com/bodaay/HuggingFaceModelDownloader/compare/v3.2.0...v3.3.0
 

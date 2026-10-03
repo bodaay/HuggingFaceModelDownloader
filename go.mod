@@ -2,6 +2,8 @@ module github.com/bodaay/HuggingFaceModelDownloader
 
 go 1.24.0
 
+toolchain go1.26.8
+
 require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/spf13/cobra v1.7.0
