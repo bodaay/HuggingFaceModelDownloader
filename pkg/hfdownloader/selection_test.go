@@ -104,7 +104,7 @@ func TestApplyFilters_RealLayouts(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := selectedPaths(applyFilters(tc.its, tc.filters, tc.exact))
+			got := selectedPaths(applyFilters(tc.its, tc.filters, tc.exact, false))
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("got  %v\nwant %v", got, tc.want)
 			}
@@ -113,7 +113,7 @@ func TestApplyFilters_RealLayouts(t *testing.T) {
 }
 
 func TestApplyFilters_SubdirRecordsLongestFilter(t *testing.T) {
-	got := applyFilters(items("Model-Q4_K_M.gguf", "Model-Q4_K.gguf"), []string{"Q4_K", "Q4_K_M"}, false)
+	got := applyFilters(items("Model-Q4_K_M.gguf", "Model-Q4_K.gguf"), []string{"Q4_K", "Q4_K_M"}, false, false)
 	subdirs := map[string]string{}
 	for _, it := range got {
 		subdirs[it.RelativePath] = it.Subdir
@@ -124,15 +124,45 @@ func TestApplyFilters_SubdirRecordsLongestFilter(t *testing.T) {
 }
 
 func TestUnmatchedFiltersWarning(t *testing.T) {
-	plan := &Plan{Items: applyFilters(items("Model-Q8_0.gguf", "README.md|small"), []string{"q4_k_m"}, true)}
+	plan := &Plan{Items: applyFilters(items("Model-Q8_0.gguf", "README.md|small"), []string{"q4_k_m"}, true, false)}
 	if w := UnmatchedFiltersWarning(Job{Repo: "o/r", Filters: []string{"q4_k_m"}}, plan); !strings.Contains(w, "q4_k_m") {
 		t.Errorf("expected a warning naming the filter, got %q", w)
 	}
-	plan = &Plan{Items: applyFilters(items("Model-Q8_0.gguf"), []string{"q8_0"}, true)}
+	plan = &Plan{Items: applyFilters(items("Model-Q8_0.gguf"), []string{"q8_0"}, true, false)}
 	if w := UnmatchedFiltersWarning(Job{Repo: "o/r", Filters: []string{"q8_0"}}, plan); w != "" {
 		t.Errorf("unexpected warning: %q", w)
 	}
 	if w := UnmatchedFiltersWarning(Job{Repo: "o/r"}, &Plan{}); w != "" {
 		t.Errorf("unexpected warning without filters: %q", w)
+	}
+}
+
+// Weight/data formats beyond the common ones, and dataset .json/.txt data
+// (repo-type QA: TinyStories -F validation pulled 3.9 GiB of train .txt;
+// Falcon-180B -F q4_k_m pulled every .gguf-split part).
+func TestApplyFilters_MoreFormats(t *testing.T) {
+	cases := []struct {
+		name    string
+		its     []PlanItem
+		filters []string
+		dataset bool
+		want    []string
+	}{
+		{"old-style gguf split parts and other weight formats are filtered", items(
+			"falcon-180b.Q4_K_M.gguf-split-a", "falcon-180b.Q4_K_M.gguf-split-b", "falcon-180b.Q8_0.gguf-split-a",
+			"model.llamafile", "model.nemo", "README.md|small"), []string{"q4_k_m"}, false,
+			[]string{"README.md", "falcon-180b.Q4_K_M.gguf-split-a", "falcon-180b.Q4_K_M.gguf-split-b"}},
+		{"dataset .txt/.json are data", items("train.txt", "valid.txt", "data/train.json"), []string{"valid"}, true,
+			[]string{"valid.txt"}},
+		{"model repo LFS tokenizer.json is kept", items("tokenizer.json", "model.safetensors", "other.safetensors"), []string{"model"}, false,
+			[]string{"model.safetensors", "tokenizer.json"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := selectedPaths(applyFilters(tc.its, tc.filters, true, tc.dataset))
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("got  %v\nwant %v", got, tc.want)
+			}
+		})
 	}
 }

@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/bodaay/HuggingFaceModelDownloader/internal/filtermatch"
 )
 
 // analyzeTransformers performs detailed analysis of a Transformers model.
@@ -456,6 +458,28 @@ func describeArchitecture(arch string) string {
 	return "Transformer model"
 }
 
+// pytorchBinSelection returns the --exact filter and size for a repo's
+// PyTorch .bin weights. With pytorch_model*.bin files present the filter is
+// "pytorch_model" (every shard, nothing else); a plain ".bin" filter also
+// took OpenVINO exports (openvino/*.bin) and training_args.bin.
+func pytorchBinSelection(files []FileInfo) (string, int64) {
+	filter := ".bin"
+	for _, f := range files {
+		if f.IsLFS && strings.HasPrefix(strings.ToLower(f.Name), "pytorch_model") && strings.HasSuffix(strings.ToLower(f.Name), ".bin") {
+			filter = "pytorch_model"
+			break
+		}
+	}
+	var size int64
+	for _, f := range files {
+		lower := strings.ToLower(f.Path)
+		if f.IsLFS && strings.HasSuffix(lower, ".bin") && filtermatch.Match(lower, filter, true) {
+			size += f.Size
+		}
+	}
+	return filter, size
+}
+
 // TransformersToSelectableItems converts Transformers weight files to SelectableItems.
 func TransformersToSelectableItems(info *TransformersInfo, files []FileInfo) []SelectableItem {
 	if info == nil {
@@ -494,17 +518,21 @@ func TransformersToSelectableItems(info *TransformersInfo, files []FileInfo) []S
 			FilterValue:  "safetensors",
 		})
 
+		binFilter, binSize := pytorchBinSelection(files)
+		if binSize == 0 {
+			binSize = pytorchBinSize
+		}
 		items = append(items, SelectableItem{
 			ID:           "pytorch",
 			Label:        "PyTorch (.bin)",
 			Description:  "Legacy format",
-			Size:         pytorchBinSize,
-			SizeHuman:    humanSize(pytorchBinSize),
+			Size:         binSize,
+			SizeHuman:    humanSize(binSize),
 			Quality:      3,
 			QualityStars: "★★★☆☆",
 			Recommended:  false,
 			Category:     "format",
-			FilterValue:  ".bin",
+			FilterValue:  binFilter,
 		})
 	}
 

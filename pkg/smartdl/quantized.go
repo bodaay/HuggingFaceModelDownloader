@@ -295,17 +295,21 @@ func QuantizedToSelectableItems(info *QuantizedInfo, files []FileInfo) []Selecta
 			FilterValue:  "safetensors",
 		})
 
+		binFilter, binSize := pytorchBinSelection(files)
+		if binSize == 0 {
+			binSize = pytorchBinSize
+		}
 		items = append(items, SelectableItem{
 			ID:           "pytorch",
 			Label:        "PyTorch (.bin)",
 			Description:  "Legacy format",
-			Size:         pytorchBinSize,
-			SizeHuman:    humanSize(pytorchBinSize),
+			Size:         binSize,
+			SizeHuman:    humanSize(binSize),
 			Quality:      3,
 			QualityStars: "★★★☆☆",
 			Recommended:  false,
 			Category:     "format",
-			FilterValue:  ".bin",
+			FilterValue:  binFilter,
 		})
 	}
 

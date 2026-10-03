@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -189,7 +190,7 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 			}
 		}
 	}
-	return &Plan{Items: applyFilters(items, job.Filters, job.ExactMatch), Commit: commitSHA}, nil
+	return &Plan{Items: applyFilters(items, job.Filters, job.ExactMatch, job.IsDataset), Commit: commitSHA}, nil
 }
 
 // applyFilters keeps the items a filtered job should download and records
@@ -207,7 +208,7 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 //   - other unmatched LFS files — tokenizers (tokenizer.model is LFS in
 //     Llama/Mistral/Gemma repos), docs, images — are kept: models need
 //     them to load.
-func applyFilters(items []PlanItem, filters []string, exact bool) []PlanItem {
+func applyFilters(items []PlanItem, filters []string, exact, isDataset bool) []PlanItem {
 	var fs, orig []string // lowercased for matching; as given, for Subdir
 	for _, list := range filters {
 		// A single filter value may itself be a comma-separated list (the
@@ -235,7 +236,7 @@ func applyFilters(items []PlanItem, filters []string, exact bool) []PlanItem {
 		switch {
 		case matched != "":
 			it.Subdir = matched
-		case it.LFS && isPayloadFile(it.RelativePath):
+		case it.LFS && isPayloadFile(it.RelativePath, isDataset):
 			continue
 		}
 		out = append(out, it)
@@ -251,16 +252,26 @@ var payloadExts = map[string]bool{
 	".gguf": true, ".ggml": true, ".gguf_file": true, ".onnx": true, ".onnx_data": true,
 	".msgpack": true, ".h5": true, ".tflite": true, ".ot": true, ".npz": true, ".npy": true,
 	".pb": true, ".mlmodel": true, ".act": true, ".dat": true, // .dat: imatrix data
+	".llamafile": true, ".nemo": true, ".pkl": true, ".pickle": true, ".joblib": true, ".keras": true,
 	// dataset files and archives
 	".parquet": true, ".arrow": true, ".jsonl": true, ".csv": true, ".tsv": true,
-	".tar": true, ".zip": true, ".gz": true, ".zst": true, ".xz": true, ".bz2": true,
+	".tar": true, ".tgz": true, ".zip": true, ".7z": true, ".rar": true, ".gz": true, ".zst": true, ".xz": true, ".bz2": true,
 }
+
+// ggufSplitExt matches old-style split GGUF parts ("model.gguf-split-a").
+var ggufSplitExt = regexp.MustCompile(`\.gguf-split-[a-z]+$`)
 
 // isPayloadFile reports whether a repo file is a weight, export or data
 // file — dropped by filters it doesn't match — rather than a supporting file
-// such as a tokenizer, config, doc or image.
-func isPayloadFile(rel string) bool {
-	return payloadExts[strings.ToLower(path.Ext(rel))]
+// such as a tokenizer, config, doc or image. In datasets, .json and .txt
+// files are data too (in model repos an LFS tokenizer.json must be kept).
+func isPayloadFile(rel string, isDataset bool) bool {
+	lower := strings.ToLower(rel)
+	ext := path.Ext(lower)
+	if payloadExts[ext] || ggufSplitExt.MatchString(lower) {
+		return true
+	}
+	return isDataset && (ext == ".json" || ext == ".txt")
 }
 
 // UnmatchedFiltersWarning returns a warning when a filtered job matched no
@@ -281,7 +292,7 @@ func UnmatchedFiltersWarning(job Job, plan *Plan) string {
 			return ""
 		}
 	}
-	return fmt.Sprintf("no files matched filter(s) %s; only repo metadata will be downloaded (run `hfdownloader analyze %s` to see what is available)",
+	return fmt.Sprintf("no files matched filter(s) %s; only files that filters don't apply to (configs, tokenizers, docs) will be downloaded (run `hfdownloader analyze %s` to see what is available)",
 		strings.Join(given, ","), job.Repo)
 }
 
