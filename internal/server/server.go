@@ -103,7 +103,7 @@ func New(cfg Config) *Server {
 	s.upgrader = websocket.Upgrader{
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
-		CheckOrigin:     s.isAllowedWSOrigin,
+		CheckOrigin:     s.isAllowedOrigin,
 	}
 	return s
 }
@@ -254,31 +254,26 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// corsMiddleware enforces the origin policy (see isAllowedOrigin) for every
+// request. Requests from other origins are rejected outright rather than just
+// denied CORS headers: without CORS headers the browser hides the response,
+// but a cross-site POST or DELETE would still have been executed. Previously,
+// with no AllowedOrigins configured, any origin was echoed back as allowed.
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
+		w.Header().Add("Vary", "Origin")
 
-		// Allow same-origin and configured origins
 		if origin != "" {
-			allowed := false
-			if len(s.config.AllowedOrigins) == 0 {
-				// Default: allow same host
-				allowed = true
-			} else {
-				for _, o := range s.config.AllowedOrigins {
-					if o == "*" || o == origin {
-						allowed = true
-						break
-					}
-				}
+			if !s.isAllowedOrigin(r) {
+				writeError(w, http.StatusForbidden, "Cross-origin request blocked",
+					fmt.Sprintf("origin %q is not allowed; start the server with --allow-origin %s to permit it", origin, origin))
+				return
 			}
-
-			if allowed {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-				w.Header().Set("Access-Control-Max-Age", "86400")
-			}
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Max-Age", "86400")
 		}
 
 		if r.Method == "OPTIONS" {

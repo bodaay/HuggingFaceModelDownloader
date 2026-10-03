@@ -452,3 +452,23 @@ func TestRepoDir_EnsureFriendlyDir(t *testing.T) {
 		t.Errorf("friendly directory %s was not created", friendlyPath)
 	}
 }
+
+// TestHFCacheRepo_RejectsTraversal: HFCache.Repo is where repo IDs become
+// cache paths. It used to split on the first "/" only, so "x/../../victim"
+// produced models--x--/../../victim, outside the cache (GET /api/cache
+// exposed this to the web).
+func TestHFCacheRepo_RejectsTraversal(t *testing.T) {
+	cache := NewHFCache(t.TempDir(), 0)
+	for _, id := range []string{"x/../../victim", "../x", "x/..", "x/a/b", `x/..\..\v`, "x/"} {
+		if _, err := cache.Repo(id, RepoTypeModel); err == nil {
+			t.Errorf("Repo(%q) accepted", id)
+		}
+	}
+	rd, err := cache.Repo("TheBloke/Mistral-7B-GGUF", RepoTypeModel)
+	if err != nil {
+		t.Fatalf("valid repo rejected: %v", err)
+	}
+	if !strings.HasPrefix(rd.Path(), cache.HubDir()+string(filepath.Separator)) {
+		t.Errorf("path %q escapes hub dir %q", rd.Path(), cache.HubDir())
+	}
+}

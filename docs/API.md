@@ -1096,18 +1096,35 @@ curl -s http://localhost:8080/api/jobs | jq -r '.jobs[].repo'
 
 ## CORS
 
+Browser requests are checked against an origin policy, for the REST API and
+the WebSocket alike:
+
+- **No `Origin` header** (curl, scripts, the CLI): allowed.
+- **Same origin** (the web UI served by this server): allowed.
+- **Any other origin**: rejected with `403 Forbidden` before the request is
+  handled, unless allowed with `serve --allow-origin`. Rejecting (rather than
+  only omitting CORS headers) matters because browsers still *send* simple
+  cross-site POST/DELETE requests; CORS only hides the response.
+
 ### Headers
+
+Sent for allowed requests that carry an `Origin` header:
 
 | Header | Value |
 |--------|-------|
-| `Access-Control-Allow-Origin` | Configured origins or `*` |
+| `Access-Control-Allow-Origin` | The request's origin (same origin or allowed via `--allow-origin`) |
 | `Access-Control-Allow-Methods` | GET, POST, PUT, DELETE, OPTIONS |
 | `Access-Control-Allow-Headers` | Content-Type, Authorization |
 | `Access-Control-Max-Age` | 86400 |
 
 ### Configuration
 
-CORS origins are configured via server settings (code modification required for custom origins).
+Allow extra origins, e.g. when a reverse proxy serves the UI under another
+host name, with the repeatable `--allow-origin` flag (`*` allows any origin):
+
+```bash
+hfdownloader serve --allow-origin https://hfd.example.com
+```
 
 ---
 
@@ -1122,7 +1139,7 @@ No rate limiting is implemented. For production deployments, consider using a re
 1. **Token Protection**: HF token is masked in API responses
 2. **Directory Lock**: Output directories cannot be changed via API
 3. **Basic Auth**: Optional authentication for all endpoints
-4. **CORS**: Configurable origin restrictions
+4. **Origin policy**: Requests from other websites are rejected (see CORS)
 5. **Input Validation**: Repository format validation
 6. **File Size Limits**: WebSocket messages limited to 512 KB
 

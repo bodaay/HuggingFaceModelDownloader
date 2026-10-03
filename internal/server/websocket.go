@@ -14,19 +14,19 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// isAllowedWSOrigin decides whether a WebSocket upgrade request may proceed.
-// Browsers attach an Origin header to cross-site WebSocket handshakes but —
-// unlike fetch/XHR — the browser does NOT enforce the CORS response on the
-// connection, so the server itself must reject disallowed origins or any web
-// page the user visits could open a socket to a locally-bound server and stream
-// job state (cross-site WebSocket hijacking). Policy:
+// isAllowedOrigin decides whether a browser request may reach the server; it
+// guards both the REST API (corsMiddleware) and WebSocket upgrades. Without it
+// any web page the user visits could drive a locally-bound server: browsers
+// don't enforce CORS on WebSocket handshakes at all, and CORS on fetch only
+// hides the response — a cross-site "simple" POST/DELETE still executes.
+// Policy:
 //   - No Origin header (native clients such as curl/websocat): allow.
 //   - Same-origin (Origin host == request host): allow.
 //   - Otherwise: allow only if the origin is in AllowedOrigins (or it is "*").
 //
 // With no AllowedOrigins configured this is default-deny for cross-origin,
 // which matches the safe expectation for a tool bound to localhost/0.0.0.0.
-func (s *Server) isAllowedWSOrigin(r *http.Request) bool {
+func (s *Server) isAllowedOrigin(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		// Non-browser client; no Origin to forge or hijack.

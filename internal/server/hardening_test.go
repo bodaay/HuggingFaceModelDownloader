@@ -113,8 +113,8 @@ func TestIsAllowedWSOrigin(t *testing.T) {
 			if tc.origin != "" {
 				r.Header.Set("Origin", tc.origin)
 			}
-			if got := s.isAllowedWSOrigin(r); got != tc.want {
-				t.Errorf("isAllowedWSOrigin(host=%q, origin=%q) = %v, want %v",
+			if got := s.isAllowedOrigin(r); got != tc.want {
+				t.Errorf("isAllowedOrigin(host=%q, origin=%q) = %v, want %v",
 					tc.host, tc.origin, got, tc.want)
 			}
 		})

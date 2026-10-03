@@ -26,7 +26,19 @@ func TestIsValidModelName(t *testing.T) {
 		{"empty name", "TheBloke/", false},
 		{"multiple slashes", "owner/name/extra", false},
 		{"just owner", "TheBloke", false},
-		{"spaces in name", "The Bloke/Model", true}, // Contains slash, so valid format
+		{"spaces in name", "The Bloke/Model", false}, // Hub IDs never contain spaces
+		{"underscores", "my_org/my_model.v2", true},
+		// Repo IDs become cache paths: anything that could traverse is invalid.
+		{"dotdot name", "x/..", false},
+		{"dot owner", "./model", false},
+		{"dotdot owner", "../x", false},
+		{"traversal in name", "x/../../etc", false},
+		{"encoded-then-decoded traversal", "x/../../../victim", false},
+		{"backslash", `x/..\..\etc`, false},
+		{"absolute in name", "x//etc/passwd", false},
+		{"colon (repo:filter not stripped)", "owner/repo:q4_k_m", false},
+		{"NUL byte", "owner/re\x00po", false},
+		{"dots inside are fine", "owner/..model..", true},
 	}
 
 	for _, tt := range tests {
