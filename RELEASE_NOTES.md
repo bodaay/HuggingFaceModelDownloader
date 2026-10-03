@@ -53,8 +53,11 @@ picks the right files for GGUF, diffusers, quantized and dataset repos.
   configs and other small files are always downloaded.
 - **Unmatched weight/data files of every format are skipped.** Previously only
   six extensions were, so `gpt2 -F safetensors` also pulled ONNX, TF, Flax,
-  TFLite and Rust weights (4.74 GiB → 0.52 GiB), and `-F train` on datasets
-  pulled every split.
+  TFLite and Rust weights (4.74 GiB → 0.52 GiB), `-F train` on datasets
+  pulled every split, and Falcon-180B `-F q4_k_m` pulled every old-style
+  `.gguf-split` part (1,264 GiB → 101 GiB).
+- **Web UI downloads only what you selected**, even when every item is
+  ticked (SDXL: ~72 GiB → 6.5 GiB).
 - **Exact matching for selections (#96).** `analyze -i` and every command the
   analyzer prints use `--exact`, so picking Q6_K no longer also downloads
   Q6_K_L / Q6_K_XL. A filter that matches nothing now warns.
