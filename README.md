@@ -4,7 +4,7 @@
 
 **The fastest, smartest way to download models from HuggingFace Hub**
 
-[![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://go.dev)
+[![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/bodaay/HuggingFaceModelDownloader?color=green)](https://github.com/bodaay/HuggingFaceModelDownloader/releases)
 [![Downloads](https://img.shields.io/github/downloads/bodaay/HuggingFaceModelDownloader/total?color=purple)](https://github.com/bodaay/HuggingFaceModelDownloader/releases)
