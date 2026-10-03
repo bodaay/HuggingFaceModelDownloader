@@ -109,6 +109,10 @@ Examples:
 				if res.Unchanged > 0 {
 					fmt.Printf("  Unchanged:  %d (already exported)\n", res.Unchanged)
 				}
+				if res.Hardlinked > 0 {
+					fmt.Println("  Note: hardlinked files share their data with the cache; editing one in place")
+					fmt.Println("        changes the cached copy too. Use --mode copy for files you will modify.")
+				}
 				if res.FromBlobs {
 					fmt.Println("  Note: the cache had no snapshot links; files were found via the download manifest.")
 					fmt.Println("        Run `hfdownloader rebuild` to repair the cache for Python/HF tools.")

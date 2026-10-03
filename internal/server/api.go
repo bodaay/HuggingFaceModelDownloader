@@ -142,6 +142,10 @@ func (s *Server) handleStartDownload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Invalid repo format", "Expected owner/name")
 		return
 	}
+	if req.Revision != "" && !hfdownloader.ValidRevision(req.Revision) {
+		writeError(w, http.StatusBadRequest, "Invalid revision", fmt.Sprintf("%q is not a branch, tag or commit", req.Revision))
+		return
+	}
 
 	// If dry-run, return the plan
 	if req.DryRun {
@@ -254,7 +258,7 @@ func (s *Server) handlePlanInternal(w http.ResponseWriter, req DownloadRequest) 
 	}
 
 	// Run in dry-run mode (plan only)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), hubRequestTimeout)
 	defer cancel()
 
 	// We need to get the plan - use a modified Run that returns early
@@ -462,7 +466,18 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	// Reject bad values up front: they used to be saved and then made every
 	// later job fail (even after a restart) with a misleading error.
-	if msg := validateSettingsUpdate(req.Concurrency, req.MaxActive, req.Retries, req.MultipartThreshold, req.Verify, req.Endpoint); msg != "" {
+	msg := validateSettingsUpdate(req.Concurrency, req.MaxActive, req.Retries, req.MultipartThreshold, req.Verify, req.Endpoint)
+	if msg == "" && req.Proxy != nil && req.Proxy.URL != nil && *req.Proxy.URL != "" {
+		// A malformed proxy URL was saved and then broke every download.
+		u, err := url.Parse(*req.Proxy.URL)
+		switch {
+		case err != nil || u.Host == "":
+			msg = fmt.Sprintf("proxy url %q is not a valid URL", *req.Proxy.URL)
+		case u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "socks5" && u.Scheme != "socks5h":
+			msg = fmt.Sprintf("proxy url %q must use http, https, socks5 or socks5h", *req.Proxy.URL)
+		}
+	}
+	if msg != "" {
 		writeError(w, http.StatusBadRequest, "Invalid settings", msg)
 		return
 	}
@@ -610,6 +625,11 @@ func validateSettingsUpdate(conns, maxActive, retries *int, threshold, verify, e
 	return ""
 }
 
+// hubRequestTimeout bounds analyze/plan Hub requests. It must stay below the
+// server's WriteTimeout or slow requests (large repos, a dead proxy) end in an
+// empty reply instead of an error.
+const hubRequestTimeout = 3 * time.Minute
+
 // hubErrorStatus maps a Hub lookup error to an HTTP status: 404 for missing
 // repos/revisions, 401 for gated or private ones, else 502 (upstream).
 func hubErrorStatus(err error) int {
@@ -673,7 +693,7 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	analyzer := smartdl.NewAnalyzer(opts)
 
 	// Analyze with timeout
-	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), hubRequestTimeout)
 	defer cancel()
 
 	info, err := analyzer.AnalyzeWithRevision(ctx, repo, isDataset, revision)
@@ -1055,13 +1075,14 @@ func (s *Server) handleCacheInfo(w http.ResponseWriter, r *http.Request) {
 
 // RebuildResponse represents the result of a cache rebuild operation.
 type RebuildResponse struct {
-	Success         bool     `json:"success"`
-	ReposScanned    int      `json:"reposScanned"`
-	SymlinksCreated int      `json:"symlinksCreated"`
-	SymlinksUpdated int      `json:"symlinksUpdated"`
-	OrphansRemoved  int      `json:"orphansRemoved,omitempty"`
-	Errors          []string `json:"errors,omitempty"`
-	Message         string   `json:"message,omitempty"`
+	Success                 bool     `json:"success"`
+	ReposScanned            int      `json:"reposScanned"`
+	SymlinksCreated         int      `json:"symlinksCreated"`
+	SymlinksUpdated         int      `json:"symlinksUpdated"`
+	OrphansRemoved          int      `json:"orphansRemoved,omitempty"`
+	Errors                  []string `json:"errors,omitempty"`
+	Message                 string   `json:"message,omitempty"`
+	SnapshotEntriesRepaired int      `json:"snapshotEntriesRepaired,omitempty"`
 }
 
 // handleCacheRebuild regenerates the friendly view symlinks from the hub cache.
@@ -1096,6 +1117,8 @@ func (s *Server) handleCacheRebuild(w http.ResponseWriter, r *http.Request) {
 		SymlinksCreated: result.SymlinksCreated,
 		SymlinksUpdated: result.SymlinksUpdated,
 		OrphansRemoved:  result.OrphansRemoved,
+
+		SnapshotEntriesRepaired: result.SnapshotEntriesRepaired,
 	}
 
 	for _, e := range result.Errors {
@@ -1156,6 +1179,10 @@ func (s *Server) handleCacheExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dest := filepath.Join(cfg.ExportDir, repoDir.Owner(), repoDir.Name())
+	if req.Revision != "" && !hfdownloader.ValidRevision(req.Revision) {
+		writeError(w, http.StatusBadRequest, "Invalid revision", fmt.Sprintf("%q is not a branch, tag or commit", req.Revision))
+		return
+	}
 	res, err := repoDir.Export(dest, hfdownloader.ExportOptions{Revision: req.Revision, Filters: req.Filters})
 	if err != nil {
 		status := http.StatusInternalServerError

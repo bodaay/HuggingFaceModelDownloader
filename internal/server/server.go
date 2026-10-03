@@ -175,10 +175,13 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	handler := s.corsMiddleware(s.basicAuthMiddleware(s.loggingMiddleware(limitBodyMiddleware(mux))))
 
 	s.httpServer = &http.Server{
-		Addr:         addr,
-		Handler:      handler,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		Addr:        addr,
+		Handler:     handler,
+		ReadTimeout: 30 * time.Second,
+		// Above hubRequestTimeout: analyzing big repos (allenai/c4 lists
+		// 69k files) can take well over 30s. WebSockets are hijacked and
+		// unaffected.
+		WriteTimeout: hubRequestTimeout + 30*time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
 

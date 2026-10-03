@@ -20,6 +20,23 @@ func IsValidModelName(modelName string) bool {
 	return ok && validRepoIDPart(owner) && validRepoIDPart(name)
 }
 
+// ValidRevision reports whether rev is a safe branch, tag, commit or
+// "refs/pr/N" name. Revisions become cache paths (refs/<rev>,
+// snapshots/<commit>), so "..", absolute paths, backslashes and NUL bytes
+// are rejected — export once accepted "../../../../secret" and read files
+// outside the cache.
+func ValidRevision(rev string) bool {
+	if rev == "" || len(rev) > 256 || strings.HasPrefix(rev, "/") || strings.ContainsAny(rev, "\\\x00:") {
+		return false
+	}
+	for _, seg := range strings.Split(rev, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return false
+		}
+	}
+	return true
+}
+
 // validRepoIDPart reports whether s is a valid owner or name in a repo ID.
 func validRepoIDPart(s string) bool {
 	if s == "" || s == "." || s == ".." {
@@ -43,6 +60,9 @@ func validate(job Job, cfg Settings) error {
 	}
 	if !IsValidModelName(job.Repo) {
 		return fmt.Errorf("invalid repo id %q (expected owner/name)", job.Repo)
+	}
+	if job.Revision != "" && !ValidRevision(job.Revision) {
+		return fmt.Errorf("invalid revision %q", job.Revision)
 	}
 	switch cfg.Verify {
 	case "", "none", "size", "etag", "sha256":

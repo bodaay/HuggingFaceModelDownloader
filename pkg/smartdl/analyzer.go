@@ -134,7 +134,7 @@ func (a *Analyzer) AnalyzeWithRevision(ctx context.Context, repo string, isDatas
 	// Quantizations stored on branches (EXL2/EXL3, github issue #94): main
 	// holds only measurement files; list the bitrate branches as choices.
 	if !isDataset && revision == "main" {
-		if branches := quantBranchesFromRefs(info.Refs); len(branches) > 0 && rootWeightBytes(files) < 50<<20 {
+		if branches := quantBranchesFromRefs(info.Refs, repo); len(branches) > 0 && rootWeightBytes(files) < 50<<20 {
 			method := a.branchQuantMethod(ctx, repo, branches)
 			a.fillBranchSizes(ctx, repo, branches)
 			info.QuantBranches = branches

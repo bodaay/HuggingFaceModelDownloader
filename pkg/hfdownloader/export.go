@@ -93,7 +93,11 @@ func (r *RepoDir) Export(dest string, opts ExportOptions) (*ExportResult, error)
 	if len(entries) == 0 {
 		return nil, fmt.Errorf("export: no files found for %s at %s (snapshot is empty and there is no download manifest)", r.RepoID(), shortCommit(commit))
 	}
+	all := entries
 	entries = filterExportEntries(entries, opts.Filters, r.repoType == RepoTypeDataset)
+	if len(opts.Filters) > 0 && countPayload(entries, r.repoType == RepoTypeDataset) == 0 && countPayload(all, r.repoType == RepoTypeDataset) > 0 {
+		return nil, fmt.Errorf("export: no files matched filter(s) %s", strings.Join(opts.Filters, ","))
+	}
 
 	for _, e := range entries {
 		dst := filepath.Join(dest, filepath.FromSlash(e.rel))
@@ -104,7 +108,7 @@ func (r *RepoDir) Export(dest string, opts ExportOptions) (*ExportResult, error)
 		}
 		res.Files++
 		res.Bytes += info.Size()
-		if sameFile(dst, e.src) {
+		if sameFile(dst, e.src) || upToDateCopy(dst, info) {
 			res.Unchanged++
 			continue
 		}
@@ -152,11 +156,20 @@ func (r *RepoDir) resolveCommit(revision string) (string, error) {
 	if rev == "" {
 		rev = "main"
 	}
+	if !ValidRevision(rev) {
+		return "", fmt.Errorf("export: invalid revision %q", revision)
+	}
 	if c, err := r.ReadRef(rev); err == nil && c != "" {
+		// A ref file holds a commit hash; never follow anything else.
+		if !ValidRevision(c) || strings.Contains(c, "/") {
+			return "", fmt.Errorf("export: ref %q does not hold a commit hash", rev)
+		}
 		return c, nil
 	}
-	if fi, err := os.Stat(r.SnapshotDir(rev)); err == nil && fi.IsDir() {
-		return rev, nil // a commit hash
+	if !strings.Contains(rev, "/") {
+		if fi, err := os.Stat(r.SnapshotDir(rev)); err == nil && fi.IsDir() {
+			return rev, nil // a commit hash
+		}
 	}
 	snaps, _ := r.ListSnapshots()
 	if revision == "" && len(snaps) == 1 {
@@ -293,14 +306,49 @@ func filterExportEntries(entries []exportEntry, filters []string, isDataset bool
 	return out
 }
 
-// within reports whether path is root or inside it.
+// within reports whether path is root or inside it, after resolving
+// symlinks (on macOS /tmp is a symlink to /private/tmp).
 func within(path, root string) bool {
-	root, err := filepath.Abs(root)
-	if err != nil {
-		return false
-	}
+	path, root = resolveExisting(path), resolveExisting(root)
 	rel, err := filepath.Rel(root, path)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// resolveExisting makes p absolute and resolves symlinks in its longest
+// existing prefix.
+func resolveExisting(p string) string {
+	p, _ = filepath.Abs(p)
+	rest := ""
+	for cur := p; ; {
+		if real, err := filepath.EvalSymlinks(cur); err == nil {
+			return filepath.Join(real, rest)
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return p
+		}
+		rest = filepath.Join(filepath.Base(cur), rest)
+		cur = parent
+	}
+}
+
+// upToDateCopy reports whether dst is a regular file with src's size that is
+// not older than src — a previous copy-mode export (hardlinks are detected
+// with sameFile).
+func upToDateCopy(dst string, src os.FileInfo) bool {
+	fi, err := os.Stat(dst)
+	return err == nil && fi.Mode().IsRegular() && fi.Size() == src.Size() && !fi.ModTime().Before(src.ModTime())
+}
+
+// countPayload counts weight/data files among entries.
+func countPayload(entries []exportEntry, isDataset bool) int {
+	n := 0
+	for _, e := range entries {
+		if isPayloadFile(e.rel, isDataset) {
+			n++
+		}
+	}
+	return n
 }
 
 func shortCommit(c string) string {

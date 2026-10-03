@@ -19,7 +19,7 @@ var turboderpRefs = func() []RepoRef {
 }()
 
 func TestQuantBranchesFromRefs(t *testing.T) {
-	branches := quantBranchesFromRefs(turboderpRefs)
+	branches := quantBranchesFromRefs(turboderpRefs, "turboderp/Qwen3.8-27B-exl3")
 	if len(branches) != 10 {
 		t.Fatalf("got %d branches, want 10 (main and tags excluded)", len(branches))
 	}
@@ -34,14 +34,14 @@ func TestQuantBranchesFromRefs(t *testing.T) {
 	if got := recommendedBranch(branches); got != "4.00bpw" {
 		t.Errorf("recommended %q, want 4.00bpw (closest to 4 bpw, plain name)", got)
 	}
-	if got := quantBranchesFromRefs([]RepoRef{{Name: "main", Type: "branch"}, {Name: "fp16", Type: "branch"}}); len(got) != 0 {
+	if got := quantBranchesFromRefs([]RepoRef{{Name: "main", Type: "branch"}, {Name: "fp16", Type: "branch"}}, "o/r"); len(got) != 0 {
 		t.Errorf("non-bpw branches detected: %v", got)
 	}
 }
 
 func TestQuantBranchItemsAndCommand(t *testing.T) {
 	info := &RepoInfo{Repo: "turboderp/Qwen3.8-27B-exl3"}
-	info.SelectableItems = QuantBranchItems(quantBranchesFromRefs(turboderpRefs), "exl3")
+	info.SelectableItems = QuantBranchItems(quantBranchesFromRefs(turboderpRefs, "turboderp/Qwen3.8-27B-exl3"), "exl3")
 	info.PopulateCLICommands()
 
 	var rec []string
@@ -61,5 +61,24 @@ func TestQuantBranchItemsAndCommand(t *testing.T) {
 	}
 	if !strings.Contains(info.SelectableItems[0].Description, "EXL3 2 bpw") {
 		t.Errorf("description %q", info.SelectableItems[0].Description)
+	}
+}
+
+// bartowski names EXL2 branches "3_5", "4_25", "8_0"; trusted only for repos
+// whose name says exl2/exl3.
+func TestQuantBranches_UnderscoreNames(t *testing.T) {
+	var refs []RepoRef
+	for _, n := range []string{"main", "3_5", "4_25", "5_0", "6_5", "8_0"} {
+		refs = append(refs, RepoRef{Name: n, Type: "branch"})
+	}
+	b := quantBranchesFromRefs(refs, "bartowski/magnum-12b-v2.5-kto-exl2")
+	if len(b) != 5 || b[1].Name != "4_25" || b[1].BitsPerWeight != 4.25 {
+		t.Errorf("got %+v", b)
+	}
+	if got := recommendedBranch(b); got != "4_25" {
+		t.Errorf("recommended %q", got)
+	}
+	if got := quantBranchesFromRefs(refs, "someone/plain-model"); len(got) != 0 {
+		t.Errorf("underscore branches of a non-exl repo detected: %v", got)
 	}
 }

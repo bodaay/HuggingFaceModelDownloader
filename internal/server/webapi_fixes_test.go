@@ -90,3 +90,25 @@ func TestJobCommand(t *testing.T) {
 		t.Errorf("plain job command = %q", got)
 	}
 }
+
+// On case-insensitive filesystems "BARTOWSKI/x" is the same cache dir.
+func TestCacheDelete_GuardIgnoresCase(t *testing.T) {
+	srv := newTestServer()
+	srv.jobs.runFn = func(*Job) { select {} }
+	srv.jobs.CreateJob(DownloadRequest{Repo: "bartowski/SmolLM2"})
+	if !srv.jobs.HasActiveJob("BARTOWSKI/smollm2", false) {
+		t.Error("case-changed repo id bypassed the active-download guard")
+	}
+}
+
+func TestUpdateSettings_RejectsBadProxy(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	for _, body := range []string{`{"proxy":{"url":"bogus::"}}`, `{"proxy":{"url":"ftp://x:1"}}`} {
+		srv := newTestServer()
+		w := httptest.NewRecorder()
+		srv.handleUpdateSettings(w, httptest.NewRequest("POST", "/api/settings", bytes.NewBufferString(body)))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400", body, w.Code)
+		}
+	}
+}

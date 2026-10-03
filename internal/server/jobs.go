@@ -810,7 +810,9 @@ func (m *JobManager) HasActiveJob(repo string, isDataset bool) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, j := range m.jobs {
-		if j.Repo == repo && j.IsDataset == isDataset &&
+		// EqualFold: on case-insensitive filesystems (macOS, Windows)
+		// "BARTOWSKI/x" and "bartowski/x" are the same cache directory.
+		if strings.EqualFold(j.Repo, repo) && j.IsDataset == isDataset &&
 			(j.Status == JobStatusQueued || j.Status == JobStatusRunning || j.Status == JobStatusPaused) {
 			return true
 		}

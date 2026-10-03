@@ -332,6 +332,9 @@ func (r *RepoDir) Type() RepoType {
 // WriteRef writes a commit hash to a ref file.
 // Example: WriteRef("main", "a1b2c3d4...") writes to refs/main
 func (r *RepoDir) WriteRef(ref, commit string) error {
+	if !ValidRevision(ref) || !ValidRevision(commit) || strings.Contains(commit, "/") {
+		return fmt.Errorf("invalid ref %q -> %q", ref, commit)
+	}
 	refPath := r.RefPath(ref)
 	if err := os.MkdirAll(filepath.Dir(refPath), 0755); err != nil {
 		return fmt.Errorf("create refs directory: %w", err)
@@ -342,6 +345,9 @@ func (r *RepoDir) WriteRef(ref, commit string) error {
 // ReadRef reads the commit hash from a ref file.
 // Returns empty string if the ref doesn't exist.
 func (r *RepoDir) ReadRef(ref string) (string, error) {
+	if !ValidRevision(ref) {
+		return "", fmt.Errorf("invalid revision %q", ref)
+	}
 	refPath := r.RefPath(ref)
 	data, err := os.ReadFile(refPath)
 	if errors.Is(err, os.ErrNotExist) {
