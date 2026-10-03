@@ -753,10 +753,12 @@
 
     // Build filters - prefer selections, fallback to advanced options
     let filters = [];
-    const totalItems = document.querySelectorAll('.selectable-items input[type="checkbox"], #quantOptions input[type="checkbox"]').length;
 
-    // Only add filter if user selected a subset (not all)
-    if (selectedItems.length > 0 && selectedItems.length < totalItems) {
+    // Always send the selected items' filters, even when every item is
+    // ticked: items cover only the files the analyzer chose (e.g. one weight
+    // format per diffusers component), so "all items" is not "the whole
+    // repo" — SDXL's items are 6.5 GiB, the repo is ~72 GiB.
+    if (selectedItems.length > 0) {
       filters = selectedItems;
     } else if (advancedOptions.filter) {
       filters = advancedOptions.filter.split(',').map(s => s.trim()).filter(Boolean);
@@ -2629,9 +2631,8 @@
       cmd += ` -b ${currentAnalysis.branch}`;
     }
 
-    // Add filter if selections differ from "all selected" or "recommended"
-    const totalItems = document.querySelectorAll('.selectable-items input[type="checkbox"]').length;
-    if (selectedItems.length > 0 && selectedItems.length < totalItems) {
+    // Always filter by the selected items (see startWizardDownload).
+    if (selectedItems.length > 0) {
       // Selections name specific items, matched exactly like the web UI's
       // own downloads (exactMatch) — github issues #78, #96.
       cmd += ` -F ${selectedItems.join(',')} --exact`;
@@ -2653,6 +2654,34 @@
     updateFileListFromSelections(selectedItems);
   }
 
+  // exactFilterMatch ports internal/filtermatch.Match (exact mode).
+  function exactFilterMatch(rel, f) {
+    if (f.startsWith('.') && !f.includes('/')) return rel.endsWith(f);
+    if (f.includes('/')) {
+      const p = f.replace(/^\/+|\/+$/g, '');
+      return rel === p || rel.startsWith(p + '/') || rel.includes('/' + p + '/');
+    }
+    const name = rel.slice(rel.lastIndexOf('/') + 1);
+    const stripExt = s => { const i = s.lastIndexOf('.'); return i > 0 ? s.slice(0, i) : s; };
+    const stripShard = s => stripExt(s).replace(/-\d{5}-of-\d{5}$/, '');
+    if (f === rel || f === name || f === stripShard(name) || f === stripExt(rel)) return true;
+    return rel.split(/[\/\-. ]+/).includes(f);
+  }
+
+  // isPayloadPath mirrors pkg/hfdownloader isPayloadFile.
+  const PAYLOAD_EXTS = new Set(['.safetensors', '.bin', '.pt', '.pth', '.ckpt', '.gguf', '.ggml', '.gguf_file',
+    '.onnx', '.onnx_data', '.msgpack', '.h5', '.tflite', '.ot', '.npz', '.npy', '.pb', '.mlmodel', '.act', '.dat',
+    '.llamafile', '.nemo', '.pkl', '.pickle', '.joblib', '.keras',
+    '.parquet', '.arrow', '.jsonl', '.csv', '.tsv', '.tar', '.tgz', '.zip', '.7z', '.rar', '.gz', '.zst', '.xz', '.bz2']);
+  function isPayloadPath(rel, isDataset) {
+    const name = rel.slice(rel.lastIndexOf('/') + 1);
+    if (/\.gguf-split-[a-z]+$/.test(name)) return true;
+    const i = name.lastIndexOf('.');
+    const ext = i >= 0 ? name.slice(i) : '';
+    if (PAYLOAD_EXTS.has(ext)) return true;
+    return isDataset && (ext === '.json' || ext === '.txt');
+  }
+
   /**
    * Update the displayed file list based on selected items.
    */
@@ -2668,32 +2697,20 @@
 
     // If we have selectable items and some are selected, filter the files
     if (currentAnalysis.selectable_items && currentAnalysis.selectable_items.length > 0 && selectedFilters.length > 0) {
-      // Build a set of filter patterns
-      const filterPatterns = new Set(selectedFilters.map(f => f.toLowerCase()));
+      // Mirror the server's selection rule (pkg/hfdownloader applyFilters
+      // with exactMatch) so the preview shows exactly what will download.
+      const patterns = selectedFilters
+        .flatMap(f => String(f).split(','))
+        .map(f => f.trim().toLowerCase())
+        .filter(Boolean);
+      const isDataset = !!currentAnalysis.is_dataset;
 
       filteredFiles = currentAnalysis.files.filter(file => {
         const filePath = (file.path || file.name || '').toLowerCase();
-
-        // Check if file matches any of the selected filters
-        for (const pattern of filterPatterns) {
-          // Match various patterns: exact name, contains, extension
-          if (filePath.includes(pattern) ||
-              filePath.endsWith('.' + pattern) ||
-              filePath.includes('/' + pattern + '/') ||
-              filePath.includes('_' + pattern + '.') ||
-              filePath.includes('-' + pattern + '.') ||
-              filePath.includes('.' + pattern + '.')) {
-            return true;
-          }
-        }
-
-        // Also include config/metadata files that are always needed
-        const alwaysInclude = ['config.json', 'tokenizer', '.txt', 'readme', '.md', 'generation_config'];
-        for (const inc of alwaysInclude) {
-          if (filePath.includes(inc)) return true;
-        }
-
-        return false;
+        if (patterns.some(p => exactFilterMatch(filePath, p))) return true;
+        // Only LFS weight/data files go through filters; everything else
+        // (configs, tokenizers, docs) is always downloaded.
+        return !file.is_lfs || !isPayloadPath(filePath, isDataset);
       });
 
       // Calculate selected size
