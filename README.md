@@ -245,11 +245,28 @@ bindings, …) find them automatically — nothing to configure.
 **Layer 2 (`models/`)**: Human-readable paths via symlinks — browse your
 downloads like normal folders.
 
-> **Windows**: The friendly view (Layer 2) needs symlinks, which require
-> Administrator or Developer Mode on Windows. Downloads still succeed —
-> files land in Layer 1 — but the readable paths in Layer 2 won't be
-> created. Use Mode 2 below if you want plain files on Windows without
-> elevated privileges.
+> **Windows**: Symlinks need Administrator or Developer Mode on Windows, so
+> without them hfdownloader uses **hardlinks** instead — real files that
+> share the same disk space, which Python, the HF CLI and you can all use.
+> On drives without hardlinks either (FAT/exFAT), it copies, and asks once
+> first. Choose explicitly with `--link-mode auto|symlink|hardlink|copy`.
+>
+> Caches written by older Windows builds (files only in `blobs/`) are
+> repaired by `hfdownloader rebuild`.
+
+### Export: plain files from what you already downloaded
+
+Need real files for LM Studio, Ollama or llama.cpp but already downloaded
+into the cache? Export them — nothing is re-downloaded, and on the same
+drive the exported files are hardlinks that use no extra disk space:
+
+```bash
+hfdownloader export TheBloke/Mistral-7B-Instruct-v0.2-GGUF ~/lmstudio/models/TheBloke/Mistral-7B
+hfdownloader export unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF ./qwen -F q4_k_m   # just one quant
+```
+
+In the Web UI, start the server with `--export-dir <folder>` and use
+**Export as real files** on any cached repo.
 
 ### Mode 2 — Flat files in a directory you choose
 

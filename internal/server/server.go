@@ -38,6 +38,13 @@ type Config struct {
 	Verify             string // Verification mode: none, size, sha256
 	Retries            int    // Number of retry attempts
 	AllowedOrigins     []string // CORS origins
+	// LinkMode is how HF cache entries refer to downloaded data (see
+	// hfdownloader.LinkMode); empty = auto.
+	LinkMode string
+	// ExportDir enables "Export as real files" in the web UI: exports are
+	// written to <ExportDir>/<owner>/<name>. Empty disables exporting from
+	// the web, so the API can't be used to write files anywhere else.
+	ExportDir          string
 	Endpoint           string   // Custom HuggingFace endpoint (e.g., for mirrors)
 
 	// Authentication
@@ -229,6 +236,7 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/cache/{repo...}", s.handleCacheInfo)
 	mux.HandleFunc("POST /api/cache/rebuild", s.handleCacheRebuild)
 	mux.HandleFunc("DELETE /api/cache/{repo...}", s.handleCacheDelete)
+	mux.HandleFunc("POST /api/cache/export", s.handleCacheExport)
 
 	// Mirror - Target management
 	mux.HandleFunc("GET /api/mirror/targets", s.handleMirrorTargetsList)

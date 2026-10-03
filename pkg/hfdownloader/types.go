@@ -178,6 +178,11 @@ type Settings struct {
 	// If empty, defaults to "10s".
 	BackoffMax string
 
+	// LinkMode controls how the HF cache's snapshot and friendly-view
+	// entries refer to downloaded blobs: "auto" (default; symlink, else
+	// hardlink, else copy), "symlink", "hardlink" or "copy".
+	LinkMode string
+
 	// StallTimeout abandons and retries a transfer that delivers no data for
 	// this long (e.g. a connection that stays open but stops sending).
 	// Accepts duration strings: "60s", "2m". "0" disables the watchdog.
@@ -334,5 +339,11 @@ func (s Settings) BuildHFCache() (*HFCache, error) {
 			return nil, fmt.Errorf("invalid stale-timeout %q: %w", s.StaleTimeout, err)
 		}
 	}
-	return NewHFCache(s.CacheDir, staleTimeout), nil
+	mode, err := ParseLinkMode(s.LinkMode)
+	if err != nil {
+		return nil, err
+	}
+	c := NewHFCache(s.CacheDir, staleTimeout)
+	c.LinkMode = mode
+	return c, nil
 }

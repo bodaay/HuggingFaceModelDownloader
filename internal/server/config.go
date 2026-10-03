@@ -5,6 +5,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +29,8 @@ type ConfigFile struct {
 	BackoffInitial     string       `json:"backoff-initial,omitempty" yaml:"backoff-initial,omitempty"`
 	BackoffMax         string       `json:"backoff-max,omitempty" yaml:"backoff-max,omitempty"`
 	Proxy              *ProxyConfig `json:"proxy,omitempty" yaml:"proxy,omitempty"`
+	LinkMode           string       `json:"link-mode,omitempty" yaml:"link-mode,omitempty"`
+	ExportDir          string       `json:"export-dir,omitempty" yaml:"export-dir,omitempty"`
 }
 
 // ProxyConfig holds proxy settings for the config file.
@@ -138,6 +141,66 @@ func SaveConfigFile(cfg *ConfigFile) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
+// UpdateConfigFile sets (or, for nil values, removes) the given keys in the
+// config file and keeps every other key as it is. Saving settings from the web
+// UI used to rewrite the whole file from the server's few web-managed fields,
+// dropping cache-dir, backoff, stall-timeout and every other CLI key. The file
+// is written 0600 since it may hold the HF token.
+func UpdateConfigFile(updates map[string]any) error {
+	configMu.Lock()
+	defer configMu.Unlock()
+
+	path := ConfigPath()
+	if path == "" {
+		return nil
+	}
+	isYAML := strings.HasSuffix(strings.ToLower(path), ".yaml") || strings.HasSuffix(strings.ToLower(path), ".yml")
+
+	current := map[string]any{}
+	if data, err := os.ReadFile(path); err == nil {
+		if isYAML {
+			err = yaml.Unmarshal(data, &current)
+		} else {
+			err = json.Unmarshal(data, &current)
+		}
+		if err != nil {
+			return fmt.Errorf("parse %s: %w", path, err)
+		}
+		if current == nil {
+			current = map[string]any{}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	for k, v := range updates {
+		if v == nil {
+			delete(current, k)
+		} else {
+			current[k] = v
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	var data []byte
+	var err error
+	if isYAML {
+		data, err = yaml.Marshal(current)
+	} else {
+		data, err = json.MarshalIndent(current, "", "  ")
+	}
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
 // ApplyConfigToServer applies config file settings to server config.
 // CLI flags take precedence (non-zero values are not overwritten).
 func ApplyConfigToServer(serverCfg *Config) error {
@@ -170,6 +233,12 @@ func ApplyConfigToServer(serverCfg *Config) error {
 	}
 	if serverCfg.Endpoint == "" && fileCfg.Endpoint != "" {
 		serverCfg.Endpoint = fileCfg.Endpoint
+	}
+	if serverCfg.LinkMode == "" && fileCfg.LinkMode != "" {
+		serverCfg.LinkMode = fileCfg.LinkMode
+	}
+	if serverCfg.ExportDir == "" && fileCfg.ExportDir != "" {
+		serverCfg.ExportDir = fileCfg.ExportDir
 	}
 
 	// Apply proxy settings if not already set

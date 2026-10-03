@@ -7,36 +7,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 )
 
 // Windows symlink warning - only show once per session
-var (
-	windowsSymlinkWarned bool
-	windowsSymlinkMu     sync.Mutex
-)
-
-// isWindows returns true if running on Windows
-func isWindows() bool {
-	return runtime.GOOS == "windows"
-}
-
-// warnWindowsSymlink logs a warning about symlinks on Windows (once per session)
-func warnWindowsSymlink() {
-	windowsSymlinkMu.Lock()
-	defer windowsSymlinkMu.Unlock()
-	if !windowsSymlinkWarned {
-		fmt.Fprintln(os.Stderr, "[WARN] Symlinks not supported on Windows without admin/Developer Mode. Friendly view will not be created.")
-		fmt.Fprintln(os.Stderr, "[WARN] Downloads will still work - files are stored in the HuggingFace cache.")
-		windowsSymlinkWarned = true
-	}
-}
-
-// RepoType indicates whether a repository is a model or dataset.
 type RepoType string
 
 const (
@@ -53,6 +29,18 @@ type HFCache struct {
 	// StaleTimeout is the duration after which an .incomplete file
 	// with no writes is considered stale and can be taken over.
 	StaleTimeout time.Duration
+
+	// LinkMode controls how snapshot and friendly-view entries refer to
+	// blobs (see LinkMode). Empty means auto.
+	LinkMode LinkMode
+}
+
+// copyOnly reports whether auto mode found that neither symlinks nor
+// hardlinks work in this cache (so entries are copies).
+func (c *HFCache) copyOnly() bool {
+	_, sym := linkFallbacks.Load(c.Root + "|" + string(LinkSymlink))
+	_, hard := linkFallbacks.Load(c.Root + "|" + string(LinkHardlink))
+	return sym && hard
 }
 
 // DefaultStaleTimeout is the default timeout for stale .incomplete files.
@@ -394,50 +382,28 @@ func (r *RepoDir) CreateSnapshot(commit string, files []SnapshotFile) error {
 	return nil
 }
 
-// createSnapshotSymlink creates a single symlink from snapshot to blob.
-// Uses relative symlinks: snapshots/{commit}/{path} -> ../../blobs/{sha256}
-// On Windows, this is skipped gracefully since symlinks require admin privileges.
+// createSnapshotSymlink links snapshots/{commit}/{path} to blobs/{sha256}
+// using the cache's link mode: a relative symlink like the HuggingFace Hub
+// cache, or — where symlinks aren't available (Windows without Developer
+// Mode) — a hardlink, else a copy. Windows used to skip snapshot links
+// entirely, leaving files only as blobs/{sha256} that neither Python nor
+// users could find.
 func (r *RepoDir) createSnapshotSymlink(commit, relativePath, sha256 string) error {
-	// Skip symlinks on Windows - they require admin/Developer Mode
-	if isWindows() {
-		warnWindowsSymlink()
-		return nil
+	linkPath := filepath.Join(r.SnapshotDir(commit), filepath.FromSlash(relativePath))
+	blobPath := r.BlobPath(sha256)
+	target, err := filepath.Rel(filepath.Dir(linkPath), blobPath)
+	if err != nil {
+		return fmt.Errorf("calculate relative path: %w", err)
 	}
-
-	snapshotDir := r.SnapshotDir(commit)
-	linkPath := filepath.Join(snapshotDir, relativePath)
-
-	// Create parent directories if needed (for nested paths like "subdir/file.txt")
-	if err := os.MkdirAll(filepath.Dir(linkPath), 0755); err != nil {
-		return fmt.Errorf("create parent directory: %w", err)
+	if _, err := placeLink(blobPath, linkPath, target, r.cache.Root, r.cache.LinkMode); err != nil {
+		return err
 	}
-
-	// Calculate relative path from link location to blob
-	// From: snapshots/{commit}/{relativePath}
-	// To:   blobs/{sha256}
-	// Need: ../../blobs/{sha256} (or more ../ for nested paths)
-	depth := strings.Count(relativePath, string(filepath.Separator)) + 1 // +1 for commit dir
-	relPrefix := strings.Repeat("../", depth+1)                          // +1 to get from snapshots/ to repo root
-	target := relPrefix + "blobs/" + sha256
-
-	// Remove existing symlink if it exists
-	if _, err := os.Lstat(linkPath); err == nil {
-		if err := os.Remove(linkPath); err != nil {
-			return fmt.Errorf("remove existing symlink: %w", err)
-		}
-	}
-
-	// Create symlink
-	if err := os.Symlink(target, linkPath); err != nil {
-		return fmt.Errorf("create symlink: %w", err)
-	}
-
 	return nil
 }
 
 // SnapshotPath returns the path to a file within a snapshot.
 func (r *RepoDir) SnapshotPath(commit, relativePath string) string {
-	return filepath.Join(r.SnapshotDir(commit), relativePath)
+	return filepath.Join(r.SnapshotDir(commit), filepath.FromSlash(relativePath))
 }
 
 // ListSnapshots returns all commit hashes that have snapshots.
@@ -461,53 +427,43 @@ func (r *RepoDir) ListSnapshots() ([]string, error) {
 
 // --- Friendly View Management ---
 
-// CreateFriendlySymlink creates a symlink in the friendly view pointing to a snapshot file.
-// Uses relative symlinks for portability.
-// filterSubdir is optional - if provided, creates symlink in a subdirectory (e.g., "q4_k_m")
-// On Windows, this is skipped gracefully since symlinks require admin privileges.
+// CreateFriendlySymlink links the friendly view file
+// models/{owner}/{name}/[filterSubdir/]{relativePath} to its snapshot file,
+// using the cache's link mode (symlink, else hardlink). In copy mode — no
+// links available at all — the friendly view is skipped rather than storing
+// every file a third time.
 func (r *RepoDir) CreateFriendlySymlink(commit, relativePath, filterSubdir string) error {
-	// Skip symlinks on Windows - they require admin/Developer Mode
-	if isWindows() {
-		warnWindowsSymlink()
+	if r.cache.LinkMode == LinkCopy || r.cache.copyOnly() {
 		return nil
 	}
 
 	friendlyBase := r.FriendlyPath()
-
-	// Determine the link path
 	var linkPath string
 	if filterSubdir != "" {
-		linkPath = filepath.Join(friendlyBase, filterSubdir, relativePath)
+		linkPath = filepath.Join(friendlyBase, filterSubdir, filepath.FromSlash(relativePath))
 	} else {
-		linkPath = filepath.Join(friendlyBase, relativePath)
+		linkPath = filepath.Join(friendlyBase, filepath.FromSlash(relativePath))
 	}
 
-	// Create parent directories
-	if err := os.MkdirAll(filepath.Dir(linkPath), 0755); err != nil {
-		return fmt.Errorf("create parent directory: %w", err)
-	}
-
-	// Calculate relative path from link location to snapshot
-	// Need to go from: models/{owner}/{name}/[filterSubdir/]{relativePath}
-	// To:              hub/models--{owner}--{name}/snapshots/{commit}/{relativePath}
 	snapshotPath := r.SnapshotPath(commit, relativePath)
 	target, err := filepath.Rel(filepath.Dir(linkPath), snapshotPath)
 	if err != nil {
 		return fmt.Errorf("calculate relative path: %w", err)
 	}
-
-	// Remove existing symlink if it exists
-	if _, err := os.Lstat(linkPath); err == nil {
-		if err := os.Remove(linkPath); err != nil {
-			return fmt.Errorf("remove existing symlink: %w", err)
+	mode := r.cache.LinkMode
+	if mode == LinkAuto || mode == "" {
+		// Never fall back to copying for the friendly view.
+		if _, err := placeLink(snapshotPath, linkPath, target, r.cache.Root, LinkSymlink); err == nil {
+			return nil
 		}
+		mode = LinkHardlink
 	}
-
-	// Create symlink
-	if err := os.Symlink(target, linkPath); err != nil {
-		return fmt.Errorf("create symlink: %w", err)
+	if _, err := placeLink(snapshotPath, linkPath, target, r.cache.Root, mode); err != nil {
+		if r.cache.LinkMode == LinkAuto || r.cache.LinkMode == "" {
+			return nil // no links possible here; the HF cache itself is complete
+		}
+		return err
 	}
-
 	return nil
 }
 

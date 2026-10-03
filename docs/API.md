@@ -741,6 +741,26 @@ Request body (optional):
 curl -X POST http://localhost:8080/api/cache/rebuild -d '{"clean":true}'
 ```
 
+#### POST /api/cache/export
+
+Export a cached repo as plain files (hardlinked from the cache when on the
+same drive, else copied) into `<export-dir>/<owner>/<name>`. Disabled unless
+the server was started with `--export-dir` (or `export-dir` in the config
+file) — returns 400 otherwise.
+
+Request body:
+
+```json
+{ "repo": "TheBloke/Mistral-7B-Instruct-v0.2-GGUF", "type": "model", "revision": "main", "filters": ["q4_k_m"] }
+```
+
+Response:
+
+```json
+{ "commit": "41b61a3...", "dest": "/exports/TheBloke/Mistral-7B-Instruct-v0.2-GGUF",
+  "files": 4, "hardlinked": 4, "copied": 0, "unchanged": 0, "bytes": 4368439584 }
+```
+
 #### DELETE /api/cache/{repo}
 
 Delete a cached repository (blobs, snapshots and friendly-view symlinks). The

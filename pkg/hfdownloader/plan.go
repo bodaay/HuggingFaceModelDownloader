@@ -251,7 +251,7 @@ var payloadExts = map[string]bool{
 	".safetensors": true, ".bin": true, ".pt": true, ".pth": true, ".ckpt": true,
 	".gguf": true, ".ggml": true, ".gguf_file": true, ".onnx": true, ".onnx_data": true,
 	".msgpack": true, ".h5": true, ".tflite": true, ".ot": true, ".npz": true, ".npy": true,
-	".pb": true, ".mlmodel": true, ".act": true, ".dat": true, // .dat: imatrix data
+	".pb": true, ".mlmodel": true, ".act": true, ".dat": true, ".imatrix": true, // .dat/.imatrix: imatrix data
 	".llamafile": true, ".nemo": true, ".pkl": true, ".pickle": true, ".joblib": true, ".keras": true,
 	// dataset files and archives
 	".parquet": true, ".arrow": true, ".jsonl": true, ".csv": true, ".tsv": true,

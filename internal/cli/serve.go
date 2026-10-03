@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bodaay/HuggingFaceModelDownloader/internal/server"
+	"github.com/bodaay/HuggingFaceModelDownloader/pkg/hfdownloader"
 )
 
 func newServeCmd(ro *RootOpts) *cobra.Command {
@@ -33,6 +34,8 @@ func newServeCmd(ro *RootOpts) *cobra.Command {
 		authUser           string
 		authPass           string
 		allowOrigins       []string
+		linkMode           string
+		exportDir          string
 	)
 
 	cmd := &cobra.Command{
@@ -69,12 +72,17 @@ web app on a different origin needs to call the API.`,
 				AuthUser:       authUser,
 				AuthPass:       authPass,
 				AllowedOrigins: allowOrigins,
+				LinkMode:       linkMode,
+				ExportDir:      exportDir,
 				Version:        cmd.Root().Version, // injected build version (ldflags)
 			}
 
 			// Apply config file settings first (for values not set by CLI)
 			if err := server.ApplyConfigToServer(&cfg); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: could not load config file: %v\n", err)
+			}
+			if _, err := hfdownloader.ParseLinkMode(cfg.LinkMode); err != nil {
+				return err
 			}
 
 			// Then override with CLI flags if explicitly set
@@ -150,6 +158,10 @@ web app on a different origin needs to call the API.`,
 	// Authentication
 	cmd.Flags().StringVar(&authUser, "auth-user", "", "Username for basic auth (enables auth when set)")
 	cmd.Flags().StringVar(&authPass, "auth-pass", "", "Password for basic auth")
+
+	// Storage
+	cmd.Flags().StringVar(&linkMode, "link-mode", "", "How cache entries refer to downloaded data: auto (symlink, else hardlink, else copy), symlink, hardlink, copy")
+	cmd.Flags().StringVar(&exportDir, "export-dir", "", "Enable \"Export as real files\" in the web UI, writing to <export-dir>/<owner>/<name>")
 
 	// Cross-origin access
 	cmd.Flags().StringSliceVar(&allowOrigins, "allow-origin", nil, "Extra browser origin allowed to call the API, e.g. https://hfd.example.com (repeatable; \"*\" allows any)")

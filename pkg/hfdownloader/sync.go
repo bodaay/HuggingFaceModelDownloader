@@ -25,7 +25,10 @@ type SyncResult struct {
 	SymlinksCreated int
 	SymlinksUpdated int
 	OrphansRemoved  int
-	Errors          []error
+	// SnapshotEntriesRepaired counts snapshot entries recreated from the
+	// download manifest (caches written without links).
+	SnapshotEntriesRepaired int
+	Errors                  []error
 }
 
 // Sync regenerates the friendly view (models/, datasets/) from the hub cache.
@@ -63,6 +66,14 @@ func (c *HFCache) Sync(opts SyncOptions) (*SyncResult, error) {
 			result.Errors = append(result.Errors, fmt.Errorf("parse repo %s: %w", entry.Name(), err))
 			continue
 		}
+
+		// Recreate snapshot entries missing from caches written without
+		// links (Windows builds before v3.4.0), so the repo is usable again.
+		repaired, err := repoDir.RepairSnapshot()
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("repair %s: %w", entry.Name(), err))
+		}
+		result.SnapshotEntriesRepaired += repaired
 
 		// Sync this repo's friendly view
 		created, updated, err := c.syncRepoFriendlyView(repoDir, opts)
@@ -182,6 +193,9 @@ func (c *HFCache) syncRepoFriendlyView(repoDir *RepoDir, opts SyncOptions) (int,
 		if err == nil && existingTarget == expectedTarget {
 			// Symlink exists and is correct
 			return nil
+		}
+		if sameFile(friendlyPath, snapshotPath) {
+			return nil // hardlink to the same data
 		}
 
 		// Create or update symlink
@@ -323,4 +337,18 @@ func (c *HFCache) ListRepos() ([]*RepoDir, error) {
 	}
 
 	return repos, nil
+}
+
+// sameFile reports whether a and b (following symlinks) are the same file,
+// e.g. a hardlinked friendly-view entry and its snapshot file.
+func sameFile(a, b string) bool {
+	ia, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	ib, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(ia, ib)
 }

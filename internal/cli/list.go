@@ -318,11 +318,11 @@ func humanSize(bytes int64) string {
 	)
 	switch {
 	case bytes >= GB:
-		return fmt.Sprintf("%.1f GB", float64(bytes)/GB)
+		return fmt.Sprintf("%.1f GiB", float64(bytes)/GB)
 	case bytes >= MB:
-		return fmt.Sprintf("%.1f MB", float64(bytes)/MB)
+		return fmt.Sprintf("%.1f MiB", float64(bytes)/MB)
 	case bytes >= KB:
-		return fmt.Sprintf("%.1f KB", float64(bytes)/KB)
+		return fmt.Sprintf("%.1f KiB", float64(bytes)/KB)
 	default:
 		return fmt.Sprintf("%d B", bytes)
 	}

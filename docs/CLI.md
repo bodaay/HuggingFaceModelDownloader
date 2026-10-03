@@ -135,6 +135,7 @@ hfdownloader [REPO] [flags]              # Same as above
 | `--backoff-initial` | | string | `400ms` | Initial retry delay |
 | `--backoff-max` | | string | `10s` | Max retry delay |
 | `--stall-timeout` | | string | `60s` | Retry a transfer that receives no data for this long (`0` disables) |
+| `--link-mode` | | string | `auto` | How cache entries refer to downloaded data: `auto` (symlink, else hardlink, else copy), `symlink`, `hardlink`, `copy` |
 | `--verify` | | string | `size` | Verification: none, size, etag, sha256 |
 | `--stale-timeout` | | string | `5m` | Timeout for stale downloads |
 
@@ -251,6 +252,8 @@ hfdownloader serve [flags]
 | `--auth-user` | | string | | Basic auth username |
 | `--auth-pass` | | string | | Basic auth password |
 | `--allow-origin` | | strings | | Extra browser origin allowed to call the API (repeatable; `*` allows any). Other origins get 403 |
+| `--export-dir` | | string | | Enable "Export as real files" in the web UI, writing to `<export-dir>/<owner>/<name>` |
+| `--link-mode` | | string | `auto` | Link mode for downloads (see `download`) |
 | `--models-dir` | | string | `./Models` | Legacy models directory |
 | `--datasets-dir` | | string | `./Datasets` | Legacy datasets directory |
 
@@ -478,7 +481,7 @@ Regenerate friendly view symlinks from hub cache.
 hfdownloader rebuild [flags]
 ```
 
-Use after downloading with the official HuggingFace Python library, or after manually modifying the cache.
+Use after downloading with the official HuggingFace Python library, or after manually modifying the cache. Also repairs caches written by older Windows builds (files only in `blobs/`) by recreating snapshot entries from the download manifest.
 
 #### Flags
 
@@ -511,6 +514,39 @@ hfdownloader rebuild --write-script
   "orphans_removed": 1,
   "errors": []
 }
+```
+
+---
+
+### export
+
+Export a downloaded repo as plain files — no re-download.
+
+```
+hfdownloader export <repo> <dest> [flags]
+```
+
+Writes the repo's files into `<dest>` in the repo's own layout. On the same
+drive files are **hardlinked** from the cache (real files, no extra disk
+space); otherwise they are copied. Works for caches written without links
+(older Windows builds) using the download manifest.
+
+#### Flags
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--cache-dir` | | string | `~/.cache/huggingface` | Cache directory |
+| `--revision` | `-b` | string | `main` | Branch, tag or commit to export |
+| `--mode` | | string | `auto` | `auto` (hardlink, else copy), `hardlink`, `copy`, `symlink` |
+| `--dataset` | | bool | `false` | The repo is a dataset |
+| `--filters` | `-F` | strings | | Export only matching weight/data files (exact match); other files always exported |
+
+#### Examples
+
+```bash
+hfdownloader export TheBloke/Mistral-7B-Instruct-v0.2-GGUF ~/lmstudio/models/TheBloke/Mistral-7B
+hfdownloader export unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF ./qwen -F q4_k_m
+hfdownloader export --dataset nyu-mll/glue ./glue --mode copy
 ```
 
 ---
