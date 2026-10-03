@@ -4,10 +4,14 @@
 package smartdl
 
 import (
+	"fmt"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/bodaay/HuggingFaceModelDownloader/internal/filtermatch"
 )
 
 // GGUF quantization quality ratings (1-5 stars).
@@ -65,6 +69,14 @@ var quantQuality = map[string]int{
 	"Q8_0":    5,
 	"Q8_K_XL": 5, // unsloth dynamic
 
+	// Ternary, ARM-repacked and microscaling formats
+	"TQ1_0":     1,
+	"TQ2_0":     1,
+	"Q4_0_4_4":  3,
+	"Q4_0_4_8":  3,
+	"Q4_0_8_8":  3,
+	"MXFP4":     3,
+	"MXFP4_MOE": 3,
 	// Full / half precision
 	"F16":  5,
 	"F32":  5,
@@ -121,6 +133,14 @@ var quantDescriptions = map[string]string{
 	"Q8_0":    "8-bit, minimal loss",
 	"Q8_K_XL": "Unsloth dynamic 8-bit, minimal loss",
 
+	// Ternary, ARM-repacked and microscaling formats
+	"TQ1_0":     "Ternary ~1.7-bit, extreme compression",
+	"TQ2_0":     "Ternary 2-bit, extreme compression",
+	"Q4_0_4_4":  "4-bit repacked for ARM CPUs",
+	"Q4_0_4_8":  "4-bit repacked for ARM CPUs (i8mm)",
+	"Q4_0_8_8":  "4-bit repacked for ARM CPUs (SVE)",
+	"MXFP4":     "Microscaling FP4",
+	"MXFP4_MOE": "Microscaling FP4 for MoE experts",
 	// Full / half precision
 	"F16":  "Half precision, full quality",
 	"F32":  "Full precision, original quality",
@@ -129,24 +149,40 @@ var quantDescriptions = map[string]string{
 
 // Regex patterns for parsing GGUF filenames.
 //
-// quantPattern captures the full quantization type from a filename segment.
-// Supports:
-//   - IQ1..IQ4 importance-matrix quants with XXS/XS/S/M/NL suffixes
-//   - Q2..Q8 with legacy _0/_1 suffixes, plain _K, or _K with
-//     S/M/L/XL/XXL suffixes (XL/XXL are unsloth "Unsloth Dynamic" quants)
-//   - F16/F32/BF16 float precisions
-//
-// Alternation order inside the _K suffix group puts longer literals first
-// (XXL before XL before L) so the longest applicable suffix is always captured.
+// quantPattern captures the quantization type (group 1). Alternatives are
+// ordered so the longest form wins (Q4_0_4_4 before Q4_0, XXL before XL
+// before L). An unsloth "UD-" (dynamic) prefix is detected by quantLabel.
 var (
-	quantPattern = regexp.MustCompile(`(?i)(IQ[1-4]_(?:XXS|XS|S|M|NL)|Q[2-8]_(?:[01]|K(?:_(?:XXL|XL|L|M|S))?)|F(?:16|32)|BF16)`)
+	quantPattern = regexp.MustCompile(`(?i)(IQ[1-4]_(?:XXS|XS|S|M|NL)|TQ[12]_0|MXFP4(?:_MOE)?|Q[2-8]_(?:0_[48]_[48]|[01]|K(?:_(?:XXL|XL|L|M|S))?)|F(?:16|32)|BF16)`)
+
+	// bitsPattern pulls a bit width out of non-standard labels such as
+	// "Q3_LynnStyle" or "Q8-MTP" for a rough quality rating.
+	bitsPattern = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])I?Q([1-8])(?:[^0-9]|$)`)
 
 	// Match parameter count: 7B, 13B, 70B, 1.5B, etc.
 	paramPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)[Bb]`)
 
 	// Match model name from filename (before quant type).
-	modelNamePattern = regexp.MustCompile(`^(.+?)[-._](?:IQ|Q|F|BF)\d`)
+	modelNamePattern = regexp.MustCompile(`^(.+?)[-._](?:UD[-_])?(?:IQ|TQ|Q|F|BF|MXFP)\d`)
 )
+
+// quantLabel finds the quantization type in s and returns it with any
+// unsloth "UD-" prefix kept in the label ("UD-Q4_K_XL", "Q4_K_XL").
+func quantLabel(s string) (label, quantType string, ok bool) {
+	m := quantPattern.FindStringSubmatchIndex(s)
+	if m == nil {
+		return "", "", false
+	}
+	quantType = strings.ToUpper(s[m[2]:m[3]])
+	label = quantType
+	if m[2] >= 3 && strings.EqualFold(s[m[2]-3:m[2]], "UD-") {
+		label = "UD-" + quantType
+	}
+	return label, quantType, true
+}
+
+// qualityByBits rates labels with no known quant type by their bit width.
+var qualityByBits = map[string]int{"1": 1, "2": 1, "3": 2, "4": 3, "5": 4, "6": 5, "8": 5}
 
 // isMMProjFile reports whether a GGUF filename is a multimodal projector
 // (vision encoder) file. These files live alongside LLM quantizations in
@@ -157,35 +193,72 @@ func isMMProjFile(name string) bool {
 	return strings.HasPrefix(base, "mmproj") || strings.Contains(base, "-mmproj")
 }
 
+// isMTPDraftFile reports whether a GGUF file is a multi-token-prediction
+// draft model (github issue #86): "mtp-<model>.gguf", "...-MTP-draft.gguf",
+// or anything in an "MTP/" folder. A main model with MTP layers built in
+// (e.g. "Q8-MTP-00001-of-00005.gguf") is not a draft.
+func isMTPDraftFile(p string) bool {
+	lower := strings.ToLower(filepath.ToSlash(p))
+	base := path.Base(lower)
+	if strings.HasPrefix(base, "mtp-") || strings.HasPrefix(base, "mtp_") {
+		return true
+	}
+	if strings.Contains(base, "mtp") && strings.Contains(base, "draft") {
+		return true
+	}
+	for _, dir := range strings.Split(path.Dir(lower), "/") {
+		if dir == "mtp" {
+			return true
+		}
+	}
+	return false
+}
+
+// isImatrixFile reports whether a GGUF file is importance-matrix calibration
+// data rather than a model.
+func isImatrixFile(name string) bool {
+	return strings.HasPrefix(strings.ToLower(filepath.Base(name)), "imatrix")
+}
+
 // analyzeGGUF analyzes GGUF files and extracts quantization information.
-// Multimodal projector ("mmproj") files are detected and kept separate from
-// LLM quantizations so the picker shows clean quant options while still
-// knowing to bundle the vision encoder with any quant download.
+//
+// Model files are grouped into one quantization each: the shards of a split
+// model ("-00001-of-00003") form one entry with their combined size, and a
+// quant is named from its file name, else its folder (unsloth/bartowski put
+// big quants in "Q4_K_M/" folders; custom quants like "Q3_LynnStyle/" keep
+// the folder name — github issue #89). Multimodal projectors and MTP draft
+// models are kept as companions (github issues #76, #86); imatrix
+// calibration files are left out.
 func analyzeGGUF(files []FileInfo) *GGUFInfo {
 	info := &GGUFInfo{}
 
-	// Partition .gguf files into LLM quants vs mmproj vision encoders.
-	var llmFiles []FileInfo
+	var ggufFiles, modelFiles []FileInfo
 	for _, f := range files {
 		if !strings.HasSuffix(strings.ToLower(f.Name), ".gguf") {
 			continue
 		}
-		if isMMProjFile(f.Name) {
+		ggufFiles = append(ggufFiles, f)
+		switch {
+		case isMMProjFile(f.Name):
 			info.MMProjFiles = append(info.MMProjFiles, f)
-			continue
+		case isMTPDraftFile(f.Path):
+			info.MTPFiles = append(info.MTPFiles, f)
+		case isImatrixFile(f.Name):
+			// calibration data, not a model
+		default:
+			modelFiles = append(modelFiles, f)
 		}
-		llmFiles = append(llmFiles, f)
 	}
 
-	if len(llmFiles) == 0 && len(info.MMProjFiles) == 0 {
+	if len(modelFiles) == 0 && len(info.MMProjFiles) == 0 {
 		return nil
 	}
 
-	// Extract model name and parameter count from the first LLM file (or the
+	// Extract model name and parameter count from a model file (or the
 	// first mmproj file if the repo is mmproj-only, which is rare).
 	var nameSource string
-	if len(llmFiles) > 0 {
-		nameSource = llmFiles[0].Name
+	if len(modelFiles) > 0 {
+		nameSource = filtermatch.StripShard(modelFiles[0].Name)
 	} else {
 		nameSource = info.MMProjFiles[0].Name
 	}
@@ -197,11 +270,36 @@ func analyzeGGUF(files []FileInfo) *GGUFInfo {
 		info.ParameterCount = matches[1] + "B"
 	}
 
-	// Parse each LLM GGUF file (mmproj files are intentionally excluded).
-	for _, f := range llmFiles {
-		quant := parseGGUFQuantization(f)
-		if quant != nil {
-			info.Quantizations = append(info.Quantizations, *quant)
+	// Group shards: same folder + same name once the shard suffix is removed.
+	type group struct{ files []FileInfo }
+	var order []string
+	groups := map[string]*group{}
+	for _, f := range modelFiles {
+		key := strings.ToLower(path.Join(filepath.ToSlash(f.Directory), filtermatch.StripShard(f.Name)))
+		g := groups[key]
+		if g == nil {
+			g = &group{}
+			groups[key] = g
+			order = append(order, key)
+		}
+		g.files = append(g.files, f)
+	}
+
+	labels := map[string]int{}
+	for _, key := range order {
+		g := groups[key]
+		sort.Slice(g.files, func(i, j int) bool { return g.files[i].Path < g.files[j].Path })
+		q := parseGGUFGroup(g.files)
+		q.Filter = ggufGroupFilter(q, g.files, ggufFiles)
+		labels[q.Name]++
+		info.Quantizations = append(info.Quantizations, q)
+	}
+
+	// Disambiguate identical labels (same quant in two folders).
+	for i := range info.Quantizations {
+		q := &info.Quantizations[i]
+		if labels[q.Name] > 1 && q.File.Directory != "" && q.File.Directory != "." {
+			q.Name = q.Name + " (" + q.File.Directory + ")"
 		}
 	}
 
@@ -210,53 +308,116 @@ func analyzeGGUF(files []FileInfo) *GGUFInfo {
 		if info.Quantizations[i].Quality != info.Quantizations[j].Quality {
 			return info.Quantizations[i].Quality > info.Quantizations[j].Quality
 		}
-		return info.Quantizations[i].File.Size < info.Quantizations[j].File.Size
+		return info.Quantizations[i].Size < info.Quantizations[j].Size
 	})
 
 	return info
 }
 
-// parseGGUFQuantization extracts quantization info from a GGUF file.
+// parseGGUFQuantization extracts quantization info from a single GGUF file.
 func parseGGUFQuantization(f FileInfo) *GGUFQuantization {
-	name := strings.ToUpper(filepath.Base(f.Name))
+	q := parseGGUFGroup([]FileInfo{f})
+	return &q
+}
 
-	// Find quantization type
-	matches := quantPattern.FindStringSubmatch(name)
-	if len(matches) < 2 {
-		// No recognized quantization, might be a split file or unknown format
-		ram := estimateRAM(f.Size)
-		return &GGUFQuantization{
-			Name:             "Unknown",
-			File:             f,
-			Quality:          3,
-			QualityStars:     qualityToStars(3),
-			EstimatedRAM:     ram,
-			EstimatedRAMHuman: humanSize(ram),
-			Description:      "Unknown quantization format",
+// parseGGUFGroup builds the quantization entry for one model's files (one
+// file, or the shards of a split model).
+func parseGGUFGroup(files []FileInfo) GGUFQuantization {
+	first := files[0]
+	var total int64
+	for _, f := range files {
+		total += f.Size
+	}
+
+	stem := filtermatch.StripShard(filepath.Base(first.Name))
+	dir := filepath.ToSlash(first.Directory)
+	folder := ""
+	if dir != "" && dir != "." {
+		folder = path.Base(dir)
+	}
+
+	// Name from the file, else the folder, else the folder/file name itself.
+	label, quantType, ok := quantLabel(stem)
+	if !ok {
+		label, quantType, ok = quantLabel(folder)
+	}
+	if !ok && folder != "" {
+		label = folder
+	} else if !ok {
+		label = stem
+	}
+
+	quality := quantQuality[quantType]
+	if quality == 0 {
+		quality = 3
+		if m := bitsPattern.FindStringSubmatch(label); m != nil {
+			quality = qualityByBits[m[1]]
 		}
 	}
 
-	quantType := strings.ToUpper(matches[1])
-	quality := quantQuality[quantType]
-	if quality == 0 {
-		quality = 3 // Default to medium if not found
-	}
-
 	desc := quantDescriptions[quantType]
-	if desc == "" {
+	switch {
+	case quantType == "":
+		desc = "Custom quantization"
+	case desc == "":
 		desc = "Quantized model"
 	}
-
-	ram := estimateRAM(f.Size)
-	return &GGUFQuantization{
-		Name:             quantType,
-		File:             f,
-		Quality:          quality,
-		QualityStars:     qualityToStars(quality),
-		EstimatedRAM:     ram,
-		EstimatedRAMHuman: humanSize(ram),
-		Description:      desc,
+	if strings.HasPrefix(label, "UD-") {
+		desc = "Unsloth Dynamic: " + desc
 	}
+	if len(files) > 1 {
+		desc += fmt.Sprintf(" (%d-part split)", len(files))
+	}
+
+	ram := estimateRAM(total)
+	return GGUFQuantization{
+		Name:              label,
+		File:              first,
+		Files:             files,
+		Size:              total,
+		SizeHuman:         humanSize(total),
+		Quality:           quality,
+		QualityStars:      qualityToStars(quality),
+		EstimatedRAM:      ram,
+		EstimatedRAMHuman: humanSize(ram),
+		Description:       desc,
+	}
+}
+
+// ggufGroupFilter returns the shortest filter that, with --exact, selects
+// exactly this quantization's files among all GGUF files in the repo. A
+// plain quant name ("q4_k_m") is preferred; when it would also catch other
+// files (a draft in the same folder, an mmproj sharing the quant tag, a
+// custom quant without a standard name) the file name without its shard
+// suffix is used, which matches all shards and nothing else.
+func ggufGroupFilter(q GGUFQuantization, own, all []FileInfo) string {
+	stem := strings.ToLower(filtermatch.StripShard(filepath.Base(q.File.Name)))
+	var candidates []string
+	if _, quantType, ok := quantLabel(q.Name); ok {
+		candidates = append(candidates, strings.ToLower(quantType))
+	}
+	candidates = append(candidates, stem)
+	if dir := filepath.ToSlash(q.File.Directory); dir != "" && dir != "." {
+		candidates = append(candidates, strings.ToLower(dir)+"/")
+	}
+
+	ownSet := map[string]bool{}
+	for _, f := range own {
+		ownSet[f.Path] = true
+	}
+	for _, c := range candidates {
+		ok := true
+		for _, f := range all {
+			if filtermatch.Match(strings.ToLower(filepath.ToSlash(f.Path)), c, true) != ownSet[f.Path] {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return c
+		}
+	}
+	return stem
 }
 
 // qualityToStars converts a 1-5 quality rating to star representation.
@@ -289,7 +450,7 @@ func RecommendGGUF(info *GGUFInfo, availableRAM int64) []GGUFQuantization {
 		if recommended[i].Quality != recommended[j].Quality {
 			return recommended[i].Quality > recommended[j].Quality
 		}
-		return recommended[i].File.Size < recommended[j].File.Size
+		return recommended[i].Size < recommended[j].Size
 	})
 
 	return recommended
@@ -319,11 +480,12 @@ func preferredMMProj(files []FileInfo) (FileInfo, string) {
 // GGUFToSelectableItems converts GGUF quantizations to SelectableItems.
 // This provides a unified interface for the web UI and CLI.
 //
-// When the repo contains mmproj vision-encoder files (multimodal models),
-// an additional SelectableItem with Category="vision_encoder" is emitted
-// for the preferred mmproj file. It is Recommended=true by default so that
-// the recommended download command auto-bundles the vision encoder
-// alongside any selected LLM quant.
+// Each quantization is one item covering all of its files (every shard of a
+// split model). Companions follow: the preferred mmproj vision encoder
+// (Category="vision_encoder", Recommended so the recommended command
+// bundles it — github issue #76) and MTP draft models for speculative
+// decoding (Category="mtp_draft", optional — github issue #86). Filter
+// values are meant for --exact matching.
 func GGUFToSelectableItems(info *GGUFInfo) []SelectableItem {
 	if info == nil {
 		return nil
@@ -332,7 +494,7 @@ func GGUFToSelectableItems(info *GGUFInfo) []SelectableItem {
 		return nil
 	}
 
-	items := make([]SelectableItem, 0, len(info.Quantizations)+1)
+	items := make([]SelectableItem, 0, len(info.Quantizations)+1+len(info.MTPFiles))
 
 	// Track if we have a Q4_K_M (common recommended default)
 	hasQ4KM := false
@@ -343,32 +505,57 @@ func GGUFToSelectableItems(info *GGUFInfo) []SelectableItem {
 		}
 	}
 
+	recommendedOne := false
+	fallback := -1 // used when no quant fits the rule above
+	for i, q := range info.Quantizations {
+		if fallback < 0 || (q.Quality >= 4 && (info.Quantizations[fallback].Quality < 4 || q.Size < info.Quantizations[fallback].Size)) {
+			fallback = i
+		}
+	}
 	for _, q := range info.Quantizations {
-		// Determine if this should be recommended
-		// Q4_K_M is a good default, otherwise highest quality in 4-bit range
+		// Recommend Q4_K_M when present, otherwise the best-rated quant
+		// under 10 GiB — one quant, not every one that qualifies.
 		recommended := false
 		if hasQ4KM && q.Name == "Q4_K_M" {
 			recommended = true
-		} else if !hasQ4KM && q.Quality >= 4 && q.File.Size < 10*1024*1024*1024 { // < 10 GiB
+		} else if !hasQ4KM && !recommendedOne && q.Quality >= 4 && q.Size < 10*1024*1024*1024 {
 			recommended = true
 		}
+		recommendedOne = recommendedOne || recommended
 
-		item := SelectableItem{
+		paths := make([]string, 0, len(q.Files))
+		for _, f := range q.Files {
+			paths = append(paths, f.Path)
+		}
+		if len(paths) == 0 {
+			paths = []string{q.File.Path}
+		}
+		filter := q.Filter
+		if filter == "" {
+			filter = strings.ToLower(q.Name)
+		}
+		items = append(items, SelectableItem{
 			ID:           strings.ToLower(q.Name),
 			Label:        q.Name,
 			Description:  q.Description,
-			Size:         q.File.Size,
-			SizeHuman:    q.File.SizeHuman,
+			Size:         q.Size,
+			SizeHuman:    q.SizeHuman,
 			Quality:      q.Quality,
 			QualityStars: q.QualityStars,
 			Recommended:  recommended,
 			Category:     "quantization",
-			FilterValue:  strings.ToLower(q.Name),
-			Files:        []string{q.File.Path},
+			FilterValue:  filter,
+			Files:        paths,
 			RAM:          q.EstimatedRAM,
 			RAMHuman:     q.EstimatedRAMHuman,
-		}
-		items = append(items, item)
+		})
+	}
+
+	// Nothing fit (no Q4_K_M, nothing 4-star under 10 GiB — e.g. a repo of
+	// big custom quants): recommend the smallest 4-star-or-better quant, or
+	// the best-rated one, so "Recommended" never means "only the mmproj".
+	if !recommendedOne && fallback >= 0 {
+		items[fallback].Recommended = true
 	}
 
 	// Append a vision-encoder companion item when mmproj files are present.
@@ -387,6 +574,21 @@ func GGUFToSelectableItems(info *GGUFInfo) []SelectableItem {
 			Category:    "vision_encoder",
 			FilterValue: filter,
 			Files:       []string{chosen.Path},
+		})
+	}
+
+	// MTP draft models: optional companions for speculative decoding.
+	for _, f := range info.MTPFiles {
+		stem := strings.ToLower(filtermatch.StripShard(filepath.Base(f.Name)))
+		items = append(items, SelectableItem{
+			ID:          "mtp:" + strings.ToLower(f.Path),
+			Label:       filepath.Base(f.Name),
+			Description: "Multi-token-prediction draft model for speculative decoding (optional; needs llama.cpp MTP support)",
+			Size:        f.Size,
+			SizeHuman:   f.SizeHuman,
+			Category:    "mtp_draft",
+			FilterValue: stem,
+			Files:       []string{f.Path},
 		})
 	}
 

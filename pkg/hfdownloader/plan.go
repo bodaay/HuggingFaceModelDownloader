@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/bodaay/HuggingFaceModelDownloader/internal/filtermatch"
 )
 
 // unsafeRepoPath reports whether a relative path returned by the repo tree API
@@ -291,46 +293,9 @@ func resolveAcceptsURL(ctx context.Context, httpc *http.Client, token, u string)
 }
 
 // filterMatches reports whether filter fLower matches the repo path relLower
-// (both already lowercased). In substring mode (the default) it is a plain
-// substring check on the full path. In exact mode it matches when fLower
-// equals the whole path or file name (with or without extension), a
-// delimiter-bounded segment of the path, or — for filters containing "/" — a
-// run of whole path elements; a filter starting with "." matches a file
-// extension. So "q6_k" matches "...-Q6_K.gguf" and the
-// folder "Q6_K/" but not "...-Q6_K_XL.gguf" (github issue #78), and a
-// full-name filter such as a vision encoder's "...-mmproj-bf16" still
-// matches its file (github issue #84).
+// (both lowercased); see filtermatch.Match for the rules.
 func filterMatches(relLower, fLower string, exact bool) bool {
-	if !exact {
-		return strings.Contains(relLower, fLower)
-	}
-	if strings.HasPrefix(fLower, ".") && !strings.Contains(fLower, "/") {
-		// Extension filter, e.g. ".bin" or ".fp16.safetensors".
-		return strings.HasSuffix(relLower, fLower)
-	}
-	nameLower := path.Base(relLower)
-	for _, whole := range []string{relLower, nameLower} {
-		if fLower == whole || fLower == strings.TrimSuffix(whole, path.Ext(whole)) {
-			return true
-		}
-	}
-	if strings.Contains(fLower, "/") {
-		p := strings.Trim(fLower, "/")
-		return relLower == p || strings.HasPrefix(relLower, p+"/") || strings.Contains(relLower, "/"+p+"/")
-	}
-	for _, seg := range strings.FieldsFunc(relLower, isFilterDelimiter) {
-		if seg == fLower {
-			return true
-		}
-	}
-	return false
-}
-
-// isFilterDelimiter reports whether r separates segments for exact-match
-// filtering. Underscores are intentionally NOT delimiters because quantization
-// names contain them (e.g. Q6_K, Q4_K_M).
-func isFilterDelimiter(r rune) bool {
-	return r == '/' || r == '-' || r == '.' || r == ' '
+	return filtermatch.Match(relLower, fLower, exact)
 }
 
 // destinationBase returns the base output directory for a job.

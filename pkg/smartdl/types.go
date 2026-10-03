@@ -24,7 +24,7 @@
 //	if info.Type == smartdl.TypeGGUF {
 //	    gguf := info.GGUF
 //	    for _, q := range gguf.Quantizations {
-//	        fmt.Printf("  %s: %s (%s RAM)\n", q.Name, q.File.SizeHuman, q.EstimatedRAMHuman)
+//	        fmt.Printf("  %s: %s (%s RAM)\n", q.Name, q.SizeHuman, q.EstimatedRAMHuman)
 //	    }
 //	}
 package smartdl
@@ -230,6 +230,11 @@ type GGUFInfo struct {
 	// models. Populated when .gguf files whose basename starts with "mmproj"
 	// are present in the repo (e.g. gemma-3, llava, qwen2.5-vl in GGUF form).
 	MMProjFiles []FileInfo `json:"mmproj_files,omitempty"`
+
+	// MTPFiles are multi-token-prediction draft models (e.g. "mtp-*.gguf",
+	// "*-MTP-draft.gguf", files in an "MTP/" folder): optional companions
+	// for speculative decoding, not quantizations of the main model.
+	MTPFiles []FileInfo `json:"mtp_files,omitempty"`
 }
 
 // GGUFQuantization represents a single GGUF quantization option.
@@ -237,8 +242,19 @@ type GGUFQuantization struct {
 	// Name is the quantization name (e.g., "Q4_K_M").
 	Name string `json:"name"`
 
-	// File is the file info for this quantization.
+	// File is the first (or only) file of this quantization.
 	File FileInfo `json:"file"`
+
+	// Files are all files of this quantization: every shard of a split
+	// model ("-00001-of-00003"), in order.
+	Files []FileInfo `json:"files,omitempty"`
+
+	// Size is the combined size of Files.
+	Size      int64  `json:"size"`
+	SizeHuman string `json:"size_human"`
+
+	// Filter selects exactly this quantization's files with --exact.
+	Filter string `json:"filter,omitempty"`
 
 	// Quality is the quality rating (1-5 stars).
 	Quality int `json:"quality"`

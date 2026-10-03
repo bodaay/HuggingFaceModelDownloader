@@ -304,6 +304,7 @@ func printSelectableItems(info *smartdl.RepoInfo) {
 		"format":         "Weight Formats",
 		"precision":      "Precision Options",
 		"vision_encoder": "Vision Encoder (mmproj)",
+		"mtp_draft":      "MTP Draft Models (optional, for speculative decoding)",
 		"options":        "Available Options",
 	}
 

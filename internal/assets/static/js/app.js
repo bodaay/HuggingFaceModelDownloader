@@ -2478,6 +2478,8 @@
       'split': 'Dataset Splits',
       'format': 'Weight Format',
       'precision': 'Precision',
+      'vision_encoder': 'Vision Encoder (mmproj)',
+      'mtp_draft': 'MTP Draft Models (optional)',
       'default': 'Options'
     };
 
