@@ -741,8 +741,26 @@
 
   // Start download from wizard with selected options
   window.startWizardDownload = async function(repo, isDataset) {
+    // Quantizations stored on branches (EXL2/EXL3): one job per selected
+    // branch, downloading the whole branch.
+    const branches = Array.from(document.querySelectorAll('.selectable-items input[type="checkbox"]:checked'))
+      .map(cb => cb.dataset.revision).filter(Boolean);
+    if (branches.length > 0) {
+      try {
+        for (const revision of branches) {
+          await api('POST', '/download', { repo, revision, dataset: isDataset });
+        }
+        showToast(`Download started: ${repo} (${branches.join(', ')})`, 'success');
+        navigateTo('jobs');
+      } catch (e) {
+        showToast(`Failed: ${e.message}`, 'error');
+      }
+      return;
+    }
+
     // Get selected items from unified selector (new) or legacy quantOptions
     let selectedItems = Array.from(document.querySelectorAll('.selectable-items input[type="checkbox"]:checked'))
+      .filter(cb => !cb.dataset.revision)
       .map(cb => cb.value);
 
     // Fallback to legacy GGUF selector if no new selectable items
@@ -2510,6 +2528,7 @@
       'component': 'Components',
       'split': 'Dataset Splits',
       'config': 'Dataset Configs',
+      'branch': 'Quantization Branches',
       'format': 'Weight Format',
       'precision': 'Precision',
       'vision_encoder': 'Vision Encoder (mmproj)',
@@ -2538,6 +2557,7 @@
             <input type="checkbox"
                    value="${escapeHtml(item.filter_value)}"
                    data-id="${escapeHtml(item.id)}"
+                   data-revision="${escapeHtml(item.revision || '')}"
                    data-size="${item.size || 0}"
                    ${item.recommended ? 'checked' : ''}>
             <span class="selector-checkbox"></span>
@@ -2649,8 +2669,9 @@
   function updateCLICommandFromSelections() {
     if (!currentAnalysis) return;
 
-    const selectedItems = Array.from(document.querySelectorAll('.selectable-items input[type="checkbox"]:checked'))
-      .map(cb => cb.value);
+    const checked = Array.from(document.querySelectorAll('.selectable-items input[type="checkbox"]:checked'));
+    const selectedItems = checked.filter(cb => !cb.dataset.revision).map(cb => cb.value);
+    const selectedBranch = checked.map(cb => cb.dataset.revision).find(Boolean);
 
     let cmd = `hfdownloader download ${currentAnalysis.repo}`;
 
@@ -2658,7 +2679,9 @@
       cmd += ' --dataset';
     }
 
-    if (currentAnalysis.branch && currentAnalysis.branch !== 'main') {
+    if (selectedBranch) {
+      cmd += ` -b ${selectedBranch}`;
+    } else if (currentAnalysis.branch && currentAnalysis.branch !== 'main') {
       cmd += ` -b ${currentAnalysis.branch}`;
     }
 

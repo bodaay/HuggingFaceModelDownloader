@@ -153,7 +153,7 @@ func runInteractiveSelector(ctx context.Context, info *smartdl.RepoInfo, ro *Roo
 	// Handle the result
 	switch result.Action {
 	case "download":
-		if len(result.SelectedFilters) == 0 {
+		if len(result.SelectedFilters) == 0 && result.SelectedRevision == "" {
 			fmt.Println("\nNo items selected. Aborting download.")
 			return nil
 		}
@@ -170,6 +170,10 @@ func runInteractiveSelector(ctx context.Context, info *smartdl.RepoInfo, ro *Roo
 			// Picker items name specific quants: q6_k must not also pull
 			// q6_k_l / q6_k_xl (github issue #96).
 			ExactMatch: true,
+		}
+		if result.SelectedRevision != "" {
+			// A quantization stored on its own branch (EXL2/EXL3).
+			job.Revision = result.SelectedRevision
 		}
 		if job.Revision == "" {
 			job.Revision = "main"
@@ -302,6 +306,7 @@ func printSelectableItems(info *smartdl.RepoInfo) {
 		"component":      "Available Components",
 		"split":          "Available Splits",
 		"config":         "Dataset Configs",
+		"branch":         "Quantization Branches (download one with -b)",
 		"format":         "Weight Formats",
 		"precision":      "Precision Options",
 		"vision_encoder": "Vision Encoder (mmproj)",
@@ -340,6 +345,20 @@ func printSelectableItems(info *smartdl.RepoInfo) {
 					item.FilterValue,
 					rec,
 				)
+			}
+		case "branch":
+			fmt.Printf("  %-22s  %12s  %-28s  %s\n", "BRANCH", "SIZE", "QUANTIZATION", "DOWNLOAD")
+			fmt.Printf("  %-22s  %12s  %-28s  %s\n", "----------------------", "------------", "----------------------------", "--------")
+			for _, item := range items {
+				rec := ""
+				if item.Recommended {
+					rec = " *"
+				}
+				size := item.SizeHuman
+				if size == "" {
+					size = "-"
+				}
+				fmt.Printf("  %-22s  %12s  %-28s  -b %s%s\n", item.Label, size, item.Description, item.Revision, rec)
 			}
 		case "component", "split":
 			fmt.Printf("  %-20s  %12s  %10s  %s\n", "OPTION", "SIZE", "REC", "FILTER")

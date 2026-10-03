@@ -188,6 +188,10 @@ type RepoInfo struct {
 	// Refs is the list of available branches and tags.
 	Refs []RepoRef `json:"refs,omitempty"`
 
+	// QuantBranches are quantizations stored on their own branches (EXL2/
+	// EXL3 repos like turboderp's): download one with -b <name>.
+	QuantBranches []QuantBranch `json:"quant_branches,omitempty"`
+
 	// AnalyzedAt is when the analysis was performed.
 	AnalyzedAt time.Time `json:"analyzed_at"`
 
@@ -574,6 +578,10 @@ type SelectableItem struct {
 	// FilterValue is the value to pass to -F flag for downloading.
 	FilterValue string `json:"filter_value"`
 
+	// Revision, when set, means choosing this item downloads that branch
+	// (-b) instead of filtering files — quantizations stored on branches.
+	Revision string `json:"revision,omitempty"`
+
 	// Files is the list of files included in this selection.
 	Files []string `json:"files,omitempty"`
 
@@ -633,6 +641,16 @@ func (r *RepoInfo) GenerateCLICommand(selectedFilters []string) string {
 	return cmd
 }
 
+// GenerateBranchCommand generates the CLI command that downloads one branch
+// (a quantization stored on its own branch).
+func (r *RepoInfo) GenerateBranchCommand(branch string) string {
+	cmd := "hfdownloader download " + r.Repo
+	if r.IsDataset {
+		cmd += " --dataset"
+	}
+	return cmd + " -b " + branch
+}
+
 // GenerateRecommendedCommand generates the CLI command with recommended selections.
 func (r *RepoInfo) GenerateRecommendedCommand() string {
 	var recommended []string
@@ -648,6 +666,11 @@ func (r *RepoInfo) GenerateRecommendedCommand() string {
 func (r *RepoInfo) PopulateCLICommands() {
 	r.CLICommand = r.GenerateCLICommand(nil)
 	r.CLICommandFull = r.GenerateRecommendedCommand()
+	for _, it := range r.SelectableItems {
+		if it.Revision != "" && it.Recommended {
+			r.CLICommandFull = r.GenerateBranchCommand(it.Revision)
+		}
+	}
 
 	// If no recommended items, full command equals base command
 	if r.CLICommandFull == r.CLICommand {
