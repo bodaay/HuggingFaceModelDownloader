@@ -11,13 +11,29 @@ import (
 	"time"
 )
 
-// IsValidModelName checks if the model name is in "owner/name" format.
+// IsValidModelName reports whether modelName is a Hub repo ID in "owner/name"
+// format. Each part may contain only letters, digits, '-', '_' and '.', and
+// may not be "." or "..". Repo IDs become cache and output paths, so anything
+// looser (e.g. "x/../../etc") would allow path traversal.
 func IsValidModelName(modelName string) bool {
-	if modelName == "" || !strings.Contains(modelName, "/") {
+	owner, name, ok := strings.Cut(modelName, "/")
+	return ok && validRepoIDPart(owner) && validRepoIDPart(name)
+}
+
+// validRepoIDPart reports whether s is a valid owner or name in a repo ID.
+func validRepoIDPart(s string) bool {
+	if s == "" || s == "." || s == ".." {
 		return false
 	}
-	parts := strings.Split(modelName, "/")
-	return len(parts) == 2 && parts[0] != "" && parts[1] != ""
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-', r == '_', r == '.':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // validate checks that the job and settings are valid.

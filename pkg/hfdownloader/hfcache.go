@@ -116,10 +116,12 @@ type RepoDir struct {
 // Repo returns a RepoDir for the given repository.
 // repoID should be in the format "owner/name".
 func (c *HFCache) Repo(repoID string, repoType RepoType) (*RepoDir, error) {
-	parts := strings.SplitN(repoID, "/", 2)
-	if len(parts) != 2 {
+	// Validate here, at the one place repo IDs become cache paths, so no
+	// caller can build a path outside the cache (e.g. "x/../../etc").
+	if !IsValidModelName(repoID) {
 		return nil, fmt.Errorf("invalid repo ID: %q (expected owner/name)", repoID)
 	}
+	parts := strings.SplitN(repoID, "/", 2)
 	return &RepoDir{
 		cache:    c,
 		repoType: repoType,
