@@ -20,11 +20,11 @@ type ExportOptions struct {
 	// Revision is a branch, tag or commit; empty means "main", falling back
 	// to the only snapshot when there is no ref.
 	Revision string
-	// Mode is how exported files refer to cached data. Auto (default) uses
-	// hardlinks — real files that share disk space with the cache — and
-	// copies when the destination is on another drive or hardlinks aren't
-	// supported. Symlinks are used only when asked for explicitly: tools
-	// like LM Studio need real files.
+	// Mode is how exported files are written. Copy (the default; "" and
+	// auto mean copy) produces independent files: an export is yours to
+	// move, edit or delete without touching the cache. Hardlink (no extra
+	// disk space, but edits in place change the cache) and symlink are
+	// opt-in.
 	Mode LinkMode
 	// Filters limits which weight/data files are exported (exact matching,
 	// like `download -F ... --exact`); other files are always exported.
@@ -52,7 +52,7 @@ type exportEntry struct {
 
 // Export writes a cached repo snapshot to dest as plain files in the repo's
 // own layout, without downloading anything (github issues #83, #91). Files
-// are hardlinked from the cache when possible, else copied.
+// are copied unless ExportOptions.Mode asks for hardlinks or symlinks.
 //
 // It also works on caches whose snapshot links were never created (Windows
 // before v3.4.0 stored files only as blobs/<sha256>): the download manifest
@@ -69,8 +69,8 @@ func (r *RepoDir) Export(dest string, opts ExportOptions) (*ExportResult, error)
 		return nil, fmt.Errorf("export: destination %s is inside the cache %s", dest, r.cache.Root)
 	}
 	mode := opts.Mode
-	if mode == "" {
-		mode = LinkAuto
+	if mode == "" || mode == LinkAuto {
+		mode = LinkCopy
 	}
 
 	commit, err := r.resolveCommit(opts.Revision)
@@ -131,18 +131,13 @@ func (r *RepoDir) Export(dest string, opts ExportOptions) (*ExportResult, error)
 	return res, nil
 }
 
-// exportOne places one file: auto = hardlink, else copy.
+// exportOne places one file with the given mode (copy by default).
 func exportOne(src, dst string, mode LinkMode) (LinkMode, error) {
 	real, err := filepath.EvalSymlinks(src)
 	if err != nil {
 		return "", err
 	}
 	switch mode {
-	case LinkAuto:
-		if used, err := placeLink(real, dst, "", "", LinkHardlink); err == nil {
-			return used, nil
-		}
-		return placeLink(real, dst, "", "", LinkCopy)
 	case LinkSymlink:
 		return placeLink(real, dst, real, "", LinkSymlink)
 	default:

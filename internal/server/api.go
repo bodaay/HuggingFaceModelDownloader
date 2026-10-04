@@ -1148,8 +1148,8 @@ type CacheExportRequest struct {
 	Filters  []string `json:"filters,omitempty"`
 }
 
-// handleCacheExport writes a cached repo as plain files (hardlinked from the
-// cache when possible) into <ExportDir>/<owner>/<name> — github issues #83,
+// handleCacheExport writes a cached repo as plain files (independent copies)
+// into <ExportDir>/<owner>/<name> — github issues #83,
 // #91. It is disabled unless the server was started with --export-dir, so the
 // API can't be used to write files anywhere else on disk.
 func (s *Server) handleCacheExport(w http.ResponseWriter, r *http.Request) {

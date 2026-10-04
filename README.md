@@ -258,8 +258,9 @@ downloads like normal folders.
 ### Export: plain files from what you already downloaded
 
 Need real files for LM Studio, Ollama or llama.cpp but already downloaded
-into the cache? Export them — nothing is re-downloaded, and on the same
-drive the exported files are hardlinks that use no extra disk space:
+into the cache? Export them — nothing is re-downloaded; the files are copied
+into a folder of your choice (add `--mode hardlink` to share the cache's disk
+space instead):
 
 ```bash
 hfdownloader export TheBloke/Mistral-7B-Instruct-v0.2-GGUF ~/lmstudio/models/TheBloke/Mistral-7B

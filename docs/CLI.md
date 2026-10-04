@@ -582,10 +582,11 @@ hfdownloader export <repo> <dest> [flags]
 ```
 
 Writes the repo's files directly into `<dest>` (not `<dest>/<owner>/<name>`)
-in the repo's own layout. On the same
-drive files are **hardlinked** from the cache (real files, no extra disk
-space); otherwise they are copied. Works for caches written without links
-(older Windows builds) using the download manifest.
+in the repo's own layout. Files are **copied**, so the export is independent
+of the cache. To save disk space, `--mode hardlink` makes real files that share
+the cache's data (same drive only; editing one in place changes the cache too).
+Works for caches written without links (older Windows builds) using the
+download manifest.
 
 #### Flags
 
@@ -593,7 +594,7 @@ space); otherwise they are copied. Works for caches written without links
 |------|-------|------|---------|-------------|
 | `--cache-dir` | | string | `~/.cache/huggingface` | Cache directory |
 | `--revision` | `-b` | string | `main` | Branch, tag or commit to export |
-| `--mode` | | string | `auto` | `auto` (hardlink, else copy), `hardlink`, `copy`, `symlink` |
+| `--mode` | | string | `copy` | `copy` (independent files), `hardlink` (shares the cache's disk space; same drive only), `symlink` |
 | `--dataset` | | bool | `false` | The repo is a dataset |
 | `--filters` | `-F` | strings | | Export only matching weight/data files (exact match); other files always exported |
 
@@ -602,7 +603,7 @@ space); otherwise they are copied. Works for caches written without links
 ```bash
 hfdownloader export TheBloke/Mistral-7B-Instruct-v0.2-GGUF ~/lmstudio/models/TheBloke/Mistral-7B
 hfdownloader export unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF ./qwen -F q4_k_m
-hfdownloader export --dataset nyu-mll/glue ./glue --mode copy
+hfdownloader export --dataset nyu-mll/glue ./glue --mode hardlink   # no extra disk space
 ```
 
 ---

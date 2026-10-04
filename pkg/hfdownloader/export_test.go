@@ -135,11 +135,38 @@ func TestDownload_ExplicitLinkModes(t *testing.T) {
 	}
 }
 
-func TestExport_HardlinksRealFiles(t *testing.T) {
+// Export copies by default: the result is independent of the cache, so
+// editing an exported file can't change the cached data.
+func TestExport_CopiesByDefault(t *testing.T) {
 	_, rd, commit, files := downloadFake(t, Settings{})
 	dest := filepath.Join(t.TempDir(), "out")
 
 	res, err := rd.Export(dest, ExportOptions{})
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	if res.Commit != commit || res.Files != 2 || res.Copied != 2 || res.Hardlinked != 0 {
+		t.Errorf("result = %+v; want 2 copies", res)
+	}
+	exported := filepath.Join(dest, "model.gguf")
+	if sameFile(exported, rd.SnapshotPath(commit, "model.gguf")) {
+		t.Fatal("default export shares data with the cache")
+	}
+	os.WriteFile(exported, []byte("edited"), 0o644)
+	if !bytes.Equal(readFile(t, rd.SnapshotPath(commit, "model.gguf")), files["model.gguf"]) {
+		t.Error("editing the export changed the cache")
+	}
+	again, err := rd.Export(dest, ExportOptions{})
+	if err != nil || again.Copied != 1 || again.Unchanged != 1 {
+		t.Errorf("re-export = %+v, %v; want the edited file re-copied and the other unchanged", again, err)
+	}
+}
+
+func TestExport_HardlinkMode(t *testing.T) {
+	_, rd, commit, files := downloadFake(t, Settings{})
+	dest := filepath.Join(t.TempDir(), "out")
+
+	res, err := rd.Export(dest, ExportOptions{Mode: LinkHardlink})
 	if err != nil {
 		t.Fatalf("Export: %v", err)
 	}
@@ -162,9 +189,12 @@ func TestExport_HardlinksRealFiles(t *testing.T) {
 	}
 }
 
-func TestExport_CopyWhenHardlinksFail(t *testing.T) {
+func TestExport_HardlinkModeFailsWithoutLinks(t *testing.T) {
 	_, rd, _, files := downloadFake(t, Settings{})
 	simulateLinks(t, true, true) // destination on a drive without links
+	if _, err := rd.Export(t.TempDir(), ExportOptions{Mode: LinkHardlink}); err == nil {
+		t.Error("hardlink mode silently fell back")
+	}
 	dest := t.TempDir()
 	res, err := rd.Export(dest, ExportOptions{})
 	if err != nil || res.Copied != 2 {

@@ -890,8 +890,8 @@ Response:
 
 #### POST /api/cache/export
 
-Export a cached repo as plain files (hardlinked from the cache when on the
-same drive, else copied) into `<export-dir>/<owner>/<name>`. Disabled unless
+Export a cached repo as plain files (independent copies) into
+`<export-dir>/<owner>/<name>`. Disabled unless
 the server was started with `--export-dir` (or `export-dir` in the config
 file) — returns 400 otherwise.
 
@@ -907,7 +907,7 @@ Response `200 OK`:
 
 ```json
 { "commit": "41b61a3...", "dest": "/exports/TheBloke/Mistral-7B-Instruct-v0.2-GGUF",
-  "files": 4, "hardlinked": 4, "copied": 0, "symlinked": 0, "unchanged": 0, "bytes": 4368439584 }
+  "files": 4, "hardlinked": 0, "copied": 4, "symlinked": 0, "unchanged": 0, "bytes": 4368439584 }
 ```
 
 `fromBlobs` (exported from a cache without snapshot links) and `missingBlob`

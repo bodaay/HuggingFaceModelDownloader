@@ -5,23 +5,21 @@
 
 ## Highlights
 
-Turn what you already downloaded into plain files for LM Studio, Ollama or
+Copy what you already downloaded out as plain files for LM Studio, Ollama or
 llama.cpp without re-downloading, a cache that works on Windows without
 Developer Mode, download huge sharded models in batches, and pick EXL2/EXL3
 bitrates that live on separate branches.
 
 ## Export & Flat Files (#83, #91)
 
-- **`hfdownloader export <repo> <dest>`** writes a cached repo as plain files
-  in its own layout — nothing is re-downloaded. On the same drive the files
-  are **hardlinks** (real files, no extra disk space); otherwise they are
-  copied. `-F` exports only some weights (tokenizers/configs always come
-  along), `-b` picks a revision, `--mode` forces hardlink/copy/symlink.
-- **Web UI: "Export as real files"** on any cached repo, written to
+- **`hfdownloader export <repo> <dest>`** copies a cached repo out as plain
+  files in its own layout — nothing is re-downloaded, and the export is
+  independent of the cache. `-F` exports only some weights (tokenizers and
+  configs always come along), `-b` picks a revision, and `--mode hardlink`
+  shares the cache's disk space instead of copying (same drive only).
+- **Web UI: "Export as real files"** on any cached repo, copied to
   `<export-dir>/<owner>/<name>`. Enabled with `serve --export-dir <folder>`;
   without it the API refuses, so it can't write anywhere else.
-- Exported hardlinks share data with the cache: use `--mode copy` for files
-  you will edit.
 
 ## Windows: Hardlinks Instead of Missing Links
 

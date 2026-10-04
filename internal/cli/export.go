@@ -29,8 +29,9 @@ func newExportCmd(ro *RootOpts) *cobra.Command {
 repo's own layout — for tools that need real files (LM Studio, Ollama
 Modelfiles, llama.cpp, ...). Nothing is downloaded.
 
-Files are hardlinked from the cache when <dest> is on the same drive (real
-files that use no extra disk space), and copied otherwise.
+Files are copied, so the export is independent of the cache. To save disk
+space, --mode hardlink makes real files that share the cache's data (same
+drive only; editing one in place changes the cache too).
 
 Also works for caches written without links (Windows before v3.4.0, where
 files ended up only as blobs/<sha256>), using the download manifest.
@@ -111,7 +112,7 @@ Examples:
 				}
 				if res.Hardlinked > 0 {
 					fmt.Println("  Note: hardlinked files share their data with the cache; editing one in place")
-					fmt.Println("        changes the cached copy too. Use --mode copy for files you will modify.")
+					fmt.Println("        changes the cached copy too.")
 				}
 				if res.FromBlobs {
 					fmt.Println("  Note: the cache had no snapshot links; files were found via the download manifest.")
@@ -124,7 +125,7 @@ Examples:
 
 	cmd.Flags().StringVar(&cacheDir, "cache-dir", "", "HuggingFace cache directory (default: ~/.cache/huggingface or HF_HOME)")
 	cmd.Flags().StringVarP(&revision, "revision", "b", "", "Branch, tag or commit to export (default: main)")
-	cmd.Flags().StringVar(&mode, "mode", "auto", "auto (hardlink, else copy), hardlink, copy, or symlink")
+	cmd.Flags().StringVar(&mode, "mode", "copy", "copy (independent files), hardlink (shares the cache's disk space; same drive only), or symlink")
 	cmd.Flags().BoolVar(&isDataset, "dataset", false, "The repo is a dataset")
 	cmd.Flags().StringSliceVarP(&filters, "filters", "F", nil, "Export only matching weight/data files (exact match, like download -F --exact); other files are always exported")
 	return cmd

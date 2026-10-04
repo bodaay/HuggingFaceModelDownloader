@@ -1501,8 +1501,7 @@
     if (btn) { btn.disabled = true; btn.dataset.label = btn.textContent; }
     try {
       const res = await api('POST', '/cache/export', { repo, type });
-      const how = res.hardlinked && !res.copied ? 'hardlinked, no extra disk space'
-        : res.copied ? `${res.copied} copied` : 'up to date';
+      const how = res.copied ? `${res.copied} copied` : 'already up to date';
       showToast(`Exported ${res.files} files to ${res.dest} (${how})`, 'success');
     } catch (e) {
       showToast(`Export failed: ${e.message}`, 'error');
@@ -1638,7 +1637,7 @@
 
           <div class="cache-detail-actions">
             <button class="btn btn-primary" onclick="exportCacheRepo('${escapeHtml(data.repo)}', '${escapeHtml(data.type)}', this)"
-              title="Write the repo as plain files (hardlinked from the cache, no extra disk space when on the same drive)">
+              title="Copy the repo as plain files into the server's export folder">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
               </svg>
