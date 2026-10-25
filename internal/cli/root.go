@@ -100,6 +100,7 @@ func newDownloadCmd(ctx context.Context, ro *RootOpts) *cobra.Command {
 	var legacy bool
 	var legacyOutput string
 	var localDir string
+	var includes, excludes []string
 
 	// Proxy settings
 	var proxyURL string
@@ -112,6 +113,15 @@ func newDownloadCmd(ctx context.Context, ro *RootOpts) *cobra.Command {
 		Short: "Download a model or dataset from the Hugging Face Hub",
 		Args:  cobra.MaximumNArgs(1),
 		PreRunE: func(cmd *cobra.Command, args []string) error {
+			var err error
+			job.Includes, err = parsePathPatterns(includes, job.Regex)
+			if err != nil {
+				return fmt.Errorf("invalid --include: %w", err)
+			}
+			job.Excludes, err = parsePathPatterns(excludes, job.Regex)
+			if err != nil {
+				return fmt.Errorf("invalid --exclude: %w", err)
+			}
 			return applySettingsDefaults(cmd, ro, cfg)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -171,7 +181,11 @@ func newDownloadCmd(ctx context.Context, ro *RootOpts) *cobra.Command {
 	cmd.Flags().BoolVar(&job.IsDataset, "dataset", false, "Treat repo as a dataset")
 	cmd.Flags().StringVarP(&job.Revision, "revision", "b", "main", "Revision/branch to download (e.g. main, refs/pr/1)")
 	cmd.Flags().StringSliceVarP(&job.Filters, "filters", "F", nil, "Comma-separated filters to match LFS artifacts (e.g. q4_0,q5_0)")
-	cmd.Flags().StringSliceVarP(&job.Excludes, "exclude", "E", nil, "Comma-separated patterns to exclude (e.g. .md,fp16)")
+	// Keep raw occurrences until --regex is known, so regex commas survive
+	// and flag order does not affect parsing.
+	cmd.Flags().StringArrayVarP(&includes, "include", "i", nil, "Relative-path `patterns` to include: comma-separated substrings, or regex with --regex")
+	cmd.Flags().StringArrayVarP(&excludes, "exclude", "E", nil, "Relative-path `patterns` to exclude: comma-separated substrings, or regex with --regex")
+	cmd.Flags().BoolVar(&job.Regex, "regex", false, "Interpret each -i/-E value as a case-insensitive regular expression instead of a comma-separated list")
 	cmd.Flags().BoolVar(&job.AppendFilterSubdir, "append-filter-subdir", false, "Append each filter as a subdirectory")
 	cmd.Flags().StringVar(&job.Shards, "shards", "", "Only these shards of split files, e.g. 1-100 or 1-50,120-185 (download a large model in batches)")
 	cmd.Flags().BoolVar(&job.ExactMatch, "exact", false, "Match filters against whole name segments instead of substrings (e.g. -F q6_k matches Q6_K but not Q6_K_XL)")
@@ -303,6 +317,10 @@ func finalize(cmd *cobra.Command, ro *RootOpts, args []string, job *hfdownloader
 
 // buildCommandString reconstructs the CLI command from flags, excluding sensitive data.
 func buildCommandString(cmd *cobra.Command, job hfdownloader.Job, cfg hfdownloader.Settings) string {
+	return buildCommandStringForShell(cmd, job, cfg, pathPatternShell())
+}
+
+func buildCommandStringForShell(cmd *cobra.Command, job hfdownloader.Job, cfg hfdownloader.Settings, shell commandShell) string {
 	var parts []string
 	parts = append(parts, "hfdownloader", "download", job.Repo)
 
@@ -315,8 +333,14 @@ func buildCommandString(cmd *cobra.Command, job hfdownloader.Job, cfg hfdownload
 	for _, f := range job.Filters {
 		parts = append(parts, "-F", f)
 	}
+	if job.Regex {
+		parts = append(parts, "--regex")
+	}
+	for _, include := range job.Includes {
+		parts = append(parts, "-i", pathPatternArgumentForShell(include, job.Regex, shell))
+	}
 	for _, e := range job.Excludes {
-		parts = append(parts, "-E", e)
+		parts = append(parts, "-E", pathPatternArgumentForShell(e, job.Regex, shell))
 	}
 	if job.AppendFilterSubdir {
 		parts = append(parts, "--append-filter-subdir")

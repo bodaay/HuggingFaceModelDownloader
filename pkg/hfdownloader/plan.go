@@ -74,6 +74,15 @@ func PlanRepo(ctx context.Context, job Job, cfg Settings) (*Plan, error) {
 
 // scanRepo walks the repo tree and builds a download plan.
 func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cfg Settings) (*Plan, error) {
+	include, err := compilePathMatcher(job.Includes, job.Regex)
+	if err != nil {
+		return nil, fmt.Errorf("invalid include regex %w", err)
+	}
+	exclude, err := compilePathMatcher(job.Excludes, job.Regex)
+	if err != nil {
+		return nil, fmt.Errorf("invalid exclude regex %w", err)
+	}
+
 	var items []PlanItem
 	seen := make(map[string]struct{}) // ensure each relative path appears once in the plan
 
@@ -115,18 +124,12 @@ func scanRepo(ctx context.Context, httpc *http.Client, token string, job Job, cf
 		}
 		seen[rel] = struct{}{}
 
-		name := filepath.Base(rel)
-		nameLower := strings.ToLower(name)
-		relLower := strings.ToLower(rel)
 		isLFS := n.LFS != nil
 
-		// Check excludes first - if file matches any exclude pattern, skip it
-		// Credits: Exclude feature suggested by jeroenkroese (#41)
-		for _, ex := range job.Excludes {
-			exLower := strings.ToLower(ex)
-			if strings.Contains(nameLower, exLower) || strings.Contains(relLower, exLower) {
-				return nil // excluded
-			}
+		// Path selection applies to every file, without the supporting-file
+		// exemptions of the legacy weight filters. Exclusion always wins.
+		if (len(job.Includes) > 0 && !include(rel)) || exclude(rel) {
+			return nil
 		}
 
 		// Build URL and file size

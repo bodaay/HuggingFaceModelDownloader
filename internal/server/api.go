@@ -1402,7 +1402,7 @@ func parseCommandFilters(command string) (bool, string) {
 		return false, ""
 	}
 
-	// Look for filter flags: -f, -F, --filters
+	// Look for legacy weight filters and strict path includes.
 	// Format examples:
 	//   -f "q4_k_m,q5_k_m"
 	//   -F q4_k_m
@@ -1415,14 +1415,14 @@ func parseCommandFilters(command string) (bool, string) {
 
 	for i := 0; i < len(parts); i++ {
 		part := parts[i]
-		if part == "-f" || part == "-F" || part == "--filters" || part == "--include" {
+		if part == "-f" || part == "-F" || part == "--filters" || part == "-i" || part == "--include" {
 			isFiltered = true
 			// Next part is the filter value
 			if i+1 < len(parts) {
 				filters = parts[i+1]
 				i++
 			}
-		} else if strings.HasPrefix(part, "-f=") || strings.HasPrefix(part, "-F=") || strings.HasPrefix(part, "--filters=") || strings.HasPrefix(part, "--include=") {
+		} else if strings.HasPrefix(part, "-f=") || strings.HasPrefix(part, "-F=") || strings.HasPrefix(part, "--filters=") || strings.HasPrefix(part, "-i=") || strings.HasPrefix(part, "--include=") {
 			isFiltered = true
 			// Filter value is after =
 			idx := strings.Index(part, "=")

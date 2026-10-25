@@ -118,9 +118,52 @@ The `download` subcommand is required: `hfdownloader owner/name` fails with
 | `--dataset` | | bool | `false` | Treat as dataset |
 | `--revision` | `-b` | string | `main` | Branch, tag, or commit |
 | `--filters` | `-F` | strings | | Comma-separated LFS filters |
-| `--exclude` | `-E` | strings | | Patterns to exclude |
+| `--include` | `-i` | strings | | Strict path inclusion: comma-separated substrings, or regex with `--regex` |
+| `--exclude` | `-E` | strings | | Path exclusion: comma-separated substrings, or regex with `--regex` |
+| `--regex` | | bool | `false` | Interpret each `-i`/`-E` value as a case-insensitive regex instead of a comma-separated list |
 | `--exact` | | bool | `false` | Match filters against whole name segments, not substrings (e.g. `-F q6_k` matches `Q6_K` but not `Q6_K_XL`) |
 | `--append-filter-subdir` | | bool | `false` | Create subdirs per filter |
+
+#### Path Selection
+
+`-i` and `-E` match the full repo-relative file path, including directories.
+By default they use case-insensitive **literal substrings**, not globs or
+regexes. Each flag accepts a comma-separated list (CSV quoting is supported),
+and can be repeated. Include patterns combine with OR; exclude patterns also
+combine with OR.
+
+`-i` is a strict allowlist: configs, tokenizers, non-LFS files and unknown
+weight formats must match it too. Without `-i`, there is no inclusion
+restriction. If combined with `-F`, a file must pass both selection rules;
+`-F` retains its existing supporting-file behavior within the allowed paths.
+Exclusions always win, even over an explicit inclusion.
+
+With `--regex`, **each flag value is one complete Go regular expression**;
+commas are no longer separators, so quantifiers such as `{1,3}` work. Repeat
+`-i` or `-E` for multiple expressions. Regexes search the full relative path;
+use `^` and `$` to anchor them. Matching is case-insensitive by default;
+`(?-i)` opts into case sensitivity. Invalid expressions fail before any
+network request. Quote expressions to protect them from the shell.
+
+`--regex` is specific to `download` and affects only `-i`/`-E`, not `-F`.
+`--exact` continues to affect only `-F`.
+
+Saved commands use quoting for the calling shell: POSIX shells, `cmd.exe`,
+or PowerShell. When the caller cannot be identified, quoting defaults to
+POSIX on Unix and `cmd.exe` on Windows.
+
+```bash
+# Only the named files, using literal path substrings
+hfdownloader download owner/repo -i 'GGUF/model-Q8_0.gguf,GGUF/mmproj-Q8_0.gguf'
+
+# Anchored directory and quant selection; exclude projector files
+hfdownloader download owner/repo --regex \
+  -i '^GGUF/.*(Q4_K_M|Q8_0).*\.gguf$' -E '/mmproj-' --dry-run
+
+# Repeated regexes are ORed; --regex may appear before or after them
+hfdownloader download owner/repo \
+  -i '^GGUF/model-Q8_0\.gguf$' -i '^GGUF/mmproj-Q8_0\.gguf$' --regex
+```
 
 #### Performance
 

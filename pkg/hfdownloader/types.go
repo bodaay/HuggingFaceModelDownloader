@@ -56,9 +56,17 @@ type Job struct {
 	//   - []string{"gguf"} matches all GGUF files
 	Filters []string
 
-	// Excludes specify patterns to exclude from download, matched case-insensitively.
-	// Files matching any exclude pattern will be skipped, even if they match a filter.
-	// Excludes are applied after filters.
+	// Includes strictly limit downloads to matching repo-relative paths. Unlike
+	// Filters, they apply to every file, including configs, tokenizers and files
+	// with unknown extensions. An empty list imposes no inclusion restriction.
+	// Each element is a case-insensitive substring, or a regular expression
+	// when Regex is true. Multiple elements are combined with OR. Combines with
+	// Filters; a file must satisfy both selection rules.
+	Includes []string
+
+	// Excludes specify case-insensitive substrings of repo-relative paths,
+	// or regular expressions when Regex is true. Files matching any exclude
+	// are skipped, even if they match Includes or Filters.
 	//
 	// Examples:
 	//   - []string{".md"} excludes all markdown files
@@ -68,6 +76,12 @@ type Job struct {
 	// Credits: Feature suggested by jeroenkroese (#41)
 	Excludes []string
 
+	// Regex interprets each Includes and Excludes element as a complete Go
+	// regular expression instead of a literal substring. Matching is
+	// case-insensitive by default; expressions may override this with (?-i).
+	// Regex does not affect Filters or ExactMatch.
+	Regex bool
+
 	// ExactMatch controls how Filters are matched. When false (the default),
 	// each filter is matched as a case-insensitive substring (see Filters).
 	// When true, a filter matches only when it equals a whole delimiter-bounded
@@ -75,7 +89,7 @@ type Job struct {
 	// underscores stay within a segment). This lets a filter like "q6_k" select
 	// "model-Q6_K.gguf" without also matching "model-UD-Q6_K_XL.gguf".
 	//
-	// Excludes are always matched as substrings, regardless of this setting.
+	// Includes and Excludes are unaffected by this setting.
 	ExactMatch bool
 
 	// Shards limits split files ("model-00042-of-00185.safetensors") to the

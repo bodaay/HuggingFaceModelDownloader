@@ -180,6 +180,27 @@ hfdownloader download TheBloke/Mistral-7B-Instruct-v0.2-GGUF:q4_k_m,q5_k_m
 hfdownloader download TheBloke/Mistral-7B-Instruct-v0.2-GGUF -F q4_k_m -E ".md,fp16"
 ```
 
+### Strict Path Selection
+
+Use `-i, --include` to select files by their full repo-relative paths.
+Unlike `-F`, it does not automatically retain configs, tokenizers, or unknown
+weight formats. Include and exclude patterns are case-insensitive substrings
+by default; comma-separated values and repeated flags are combined with OR.
+
+```bash
+# Only these filenames (substring matches), without unrelated supporting files
+hfdownloader download owner/repo -i 'GGUF/model-Q8_0.gguf,GGUF/mmproj-Q8_0.gguf'
+
+# Only Q4_K_M and Q8_0 GGUF files inside GGUF/
+hfdownloader download owner/repo --regex -i '^GGUF/.*(Q4_K_M|Q8_0).*\.gguf$' --dry-run
+```
+
+`--regex` treats each `-i` and `-E` value as one complete, case-insensitive
+regular expression, preserving commas such as `{1,3}`. Repeat the flags for
+multiple expressions. Exclusions always win; when combined with `-F`, files
+must satisfy both inclusion and weight selection. `-F` and `--exact` are
+unaffected by `--regex`. See [the CLI reference](docs/CLI.md#path-selection).
+
 ### Resume & Verify
 
 ```bash
@@ -206,7 +227,9 @@ hfdownloader download owner/repo -c 16 --max-active 8
 | `-c, --connections` | 8 | Connections per file |
 | `--max-active` | 3 | Concurrent file downloads |
 | `-F, --filters` | | Include patterns |
+| `-i, --include` | | Strict repo-relative path inclusion |
 | `-E, --exclude` | | Exclude patterns |
+| `--regex` | false | Use regexes for `-i` and `-E` instead of comma-separated substrings |
 | `-b, --revision` | main | Branch, tag, or commit |
 
 ---

@@ -26,7 +26,9 @@ func TestNewDownloadCmd(t *testing.T) {
 		"dataset",
 		"revision",
 		"filters", // Not "filter"
+		"include",
 		"exclude",
+		"regex",
 		"connections", // Not "concurrency"
 		"cache-dir",
 		"endpoint",
