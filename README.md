@@ -205,6 +205,7 @@ hfdownloader download owner/repo -c 16 --max-active 8
 |------|---------|-------------|
 | `-c, --connections` | 8 | Connections per file |
 | `--max-active` | 3 | Concurrent file downloads |
+| `--force-http1` | off | One TCP connection per range request (HTTP/1.1). Helps when a CDN shapes bandwidth **per connection**: with HTTP/2 all streams share one connection, so raising `-c` stops increasing throughput ([#98](https://github.com/bodaay/HuggingFaceModelDownloader/issues/98)) |
 | `-F, --filters` | | Include patterns |
 | `-E, --exclude` | | Exclude patterns |
 | `-b, --revision` | main | Branch, tag, or commit |

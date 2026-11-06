@@ -128,6 +128,7 @@ The `download` subcommand is required: `hfdownloader owner/name` fails with
 |------|-------|------|---------|-------------|
 | `--connections` | `-c` | int | `8` | Connections per file |
 | `--max-active` | | int | `3` | Max concurrent downloads |
+| `--force-http1` | | bool | `false` | Use HTTP/1.1 so each range request gets its own TCP connection (helps on CDNs that shape per connection) |
 | `--multipart-threshold` | | string | `32MiB` | Min size for multipart |
 
 #### Reliability
@@ -265,6 +266,7 @@ hfdownloader serve [flags]
 | `--local-dir` | | string | | Put the whole server in flat-file mode: every download writes real files into `<local-dir>/<owner>/<name>` instead of the HF cache |
 | `--connections` | `-c` | int | `8` | Connections per file |
 | `--max-active` | | int | `3` | Max concurrent file downloads (per job) |
+| `--force-http1` | | bool | `false` | Use HTTP/1.1 for transfers: one TCP connection per range request (raises throughput on CDNs that shape per connection). Also settable via `POST /api/settings` (`forceHTTP1`) and config key `force-http1` |
 | `--multipart-threshold` | | string | `32MiB` | Min size for multipart |
 | `--verify` | | string | `size` | Verification mode for files without a known SHA256: `none`, `size`, `etag`, `sha256` |
 | `--retries` | | int | `4` | Retry attempts (the count resets whenever an attempt makes progress) |

@@ -34,10 +34,13 @@ type Config struct {
 	LocalDir           string
 	Concurrency        int
 	MaxActive          int
-	MultipartThreshold string   // Minimum size for multipart download
-	Verify             string   // Verification mode: none, size, sha256
-	Retries            int      // Number of retry attempts
-	AllowedOrigins     []string // CORS origins
+	MultipartThreshold string // Minimum size for multipart download
+	Verify             string // Verification mode: none, size, sha256
+	Retries            int    // Number of retry attempts
+	// ForceHTTP1 negotiates HTTP/1.1 for transfers so parallel range
+	// requests ride separate TCP connections (see hfdownloader.Settings).
+	ForceHTTP1     bool
+	AllowedOrigins []string // CORS origins
 	// LinkMode is how HF cache entries refer to downloaded data (see
 	// hfdownloader.LinkMode); empty = auto.
 	LinkMode string

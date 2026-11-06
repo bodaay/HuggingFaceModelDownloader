@@ -174,6 +174,14 @@ type Settings struct {
 	// If <= 0, defaults to 4.
 	Retries int
 
+	// ForceHTTP1 negotiates HTTP/1.1 instead of HTTP/2 for transfers, so
+	// every concurrent range request rides its own TCP connection. Use it
+	// when the CDN shapes bandwidth per connection (not per IP): with
+	// HTTP/2 all parallel streams share one connection and the per-file
+	// connection count no longer increases throughput (issue #98).
+	// Default false (HTTP/2 as before).
+	ForceHTTP1 bool
+
 	// BackoffInitial is the initial delay before the first retry.
 	// Accepts duration strings: "400ms", "1s", "2s", etc.
 	// If empty, defaults to "400ms".

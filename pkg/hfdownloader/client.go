@@ -45,11 +45,11 @@ type hfLfsInfo struct {
 }
 
 // buildHTTPClientWithProxy creates an HTTP client with proxy support.
-func buildHTTPClientWithProxy(proxy *ProxyConfig) *http.Client {
-	client, err := BuildHTTPClient(proxy)
+func buildHTTPClientWithProxy(proxy *ProxyConfig, forceHTTP1 bool) *http.Client {
+	client, err := BuildHTTPClientOpts(proxy, forceHTTP1)
 	if err != nil {
 		// Fallback to no proxy on error
-		client, _ = BuildHTTPClient(&ProxyConfig{NoEnvProxy: true})
+		client, _ = BuildHTTPClientOpts(&ProxyConfig{NoEnvProxy: true}, forceHTTP1)
 	}
 	return client
 }
