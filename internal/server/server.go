@@ -50,6 +50,13 @@ type Config struct {
 	// Authentication
 	AuthUser string // Basic auth username (empty = no auth)
 	AuthPass string // Basic auth password
+	// AuthCookieTTL, when > 0, issues a signed HttpOnly cookie after a
+	// successful Basic login so the browser does not re-prompt until it
+	// expires (Basic credentials die with the browser session). Requests
+	// are still authenticated on every call — by cookie instead of the
+	// Authorization header. Changing AuthUser/AuthPass invalidates all
+	// outstanding cookies. 0 (default) = classic Basic auth only.
+	AuthCookieTTL time.Duration
 
 	// Proxy configuration
 	Proxy *hfdownloader.ProxyConfig
@@ -318,6 +325,15 @@ func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		// Remember-me cookie path: a valid cookie authenticates without an
+		// Authorization header (browsers drop Basic credentials on restart).
+		if s.config.AuthCookieTTL > 0 {
+			if c, err := r.Cookie(authCookieName); err == nil && s.verifyAuthCookie(c.Value) {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+
 		user, pass, ok := r.BasicAuth()
 		// Constant-time comparison avoids leaking the configured credentials
 		// through response-timing differences. Both comparisons always run.
@@ -327,6 +343,9 @@ func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 			w.Header().Set("WWW-Authenticate", `Basic realm="HF Downloader"`)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
+		}
+		if s.config.AuthCookieTTL > 0 {
+			s.issueAuthCookie(w, r, s.config.AuthCookieTTL)
 		}
 
 		next.ServeHTTP(w, r)
