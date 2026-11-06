@@ -273,6 +273,7 @@ hfdownloader serve [flags]
 | `--endpoint` | | string | | Custom HF endpoint |
 | `--auth-user` | | string | | Basic auth username (must be used with `--auth-pass`) |
 | `--auth-pass` | | string | | Basic auth password (must be used with `--auth-user`) |
+| `--auth-cookie-ttl` | | duration | `0` | After a successful Basic login, issue a signed HttpOnly cookie valid for this duration (e.g. `720h` = 30 days) so the browser stops re-prompting. Every request is still authenticated; changing the credentials invalidates outstanding cookies. `0` = classic Basic auth only |
 | `--allow-origin` | | strings | | Extra browser origin allowed to call the API (repeatable; `*` allows any). Other origins get 403 |
 | `--export-dir` | | string | | Enable "Export as real files" in the web UI, writing to `<export-dir>/<owner>/<name>` |
 | `--link-mode` | | string | config `link-mode`, else `auto` | Link mode for downloads: `auto`, `symlink`, `hardlink`, `copy` (see `download`) |

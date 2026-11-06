@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/bodaay/HuggingFaceModelDownloader/pkg/hfdownloader"
 	"gopkg.in/yaml.v3"
@@ -26,6 +27,7 @@ type ConfigFile struct {
 	Verify             string       `json:"verify,omitempty" yaml:"verify,omitempty"`
 	Retries            int          `json:"retries,omitempty" yaml:"retries,omitempty"`
 	ForceHTTP1         bool         `json:"force-http1,omitempty" yaml:"force-http1,omitempty"`
+	AuthCookieTTL      string       `json:"auth-cookie-ttl,omitempty" yaml:"auth-cookie-ttl,omitempty"`
 	Endpoint           string       `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
 	BackoffInitial     string       `json:"backoff-initial,omitempty" yaml:"backoff-initial,omitempty"`
 	BackoffMax         string       `json:"backoff-max,omitempty" yaml:"backoff-max,omitempty"`
@@ -234,6 +236,11 @@ func ApplyConfigToServer(serverCfg *Config) error {
 	}
 	if !serverCfg.ForceHTTP1 && fileCfg.ForceHTTP1 {
 		serverCfg.ForceHTTP1 = fileCfg.ForceHTTP1
+	}
+	if serverCfg.AuthCookieTTL == 0 && fileCfg.AuthCookieTTL != "" {
+		if d, err := time.ParseDuration(fileCfg.AuthCookieTTL); err == nil && d > 0 {
+			serverCfg.AuthCookieTTL = d
+		}
 	}
 	if serverCfg.Endpoint == "" && fileCfg.Endpoint != "" {
 		serverCfg.Endpoint = fileCfg.Endpoint

@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -31,6 +32,7 @@ func newServeCmd(ro *RootOpts) *cobra.Command {
 		verify             string
 		retries            int
 		forceHTTP1         bool
+		authCookieTTL      time.Duration
 		endpoint           string
 		authUser           string
 		authPass           string
@@ -120,6 +122,9 @@ web app on a different origin needs to call the API.`,
 			if cmd.Flags().Changed("force-http1") {
 				cfg.ForceHTTP1 = forceHTTP1
 			}
+			if cmd.Flags().Changed("auth-cookie-ttl") {
+				cfg.AuthCookieTTL = authCookieTTL
+			}
 			if cmd.Flags().Changed("endpoint") {
 				cfg.Endpoint = endpoint
 			}
@@ -163,6 +168,7 @@ web app on a different origin needs to call the API.`,
 	cmd.Flags().StringVar(&verify, "verify", "size", "Verification for files without a known SHA256: none|size|etag|sha256")
 	cmd.Flags().IntVar(&retries, "retries", 4, "Max retry attempts per HTTP request")
 	cmd.Flags().BoolVar(&forceHTTP1, "force-http1", false, "Use HTTP/1.1 for transfers: one TCP connection per range request (raises throughput on CDNs that shape per connection)")
+	cmd.Flags().DurationVar(&authCookieTTL, "auth-cookie-ttl", 0, "After a Basic login, issue a signed HttpOnly cookie valid for this duration (e.g. 720h) so the browser stops re-prompting; 0 = off")
 	cmd.Flags().StringVar(&endpoint, "endpoint", "", "Custom HuggingFace endpoint URL (e.g., https://hf-mirror.com)")
 
 	// Authentication
