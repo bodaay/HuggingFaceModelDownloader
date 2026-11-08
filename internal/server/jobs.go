@@ -594,6 +594,7 @@ func (m *JobManager) runJob(job *Job) {
 		MultipartThreshold: cfg.MultipartThreshold,
 		Verify:             cfg.Verify,
 		Retries:            cfg.Retries,
+		ForceHTTP1:         cfg.ForceHTTP1,
 		BackoffInitial:     "400ms",
 		BackoffMax:         "10s",
 		Endpoint:           cfg.Endpoint,

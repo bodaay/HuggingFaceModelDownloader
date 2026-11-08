@@ -128,6 +128,7 @@ The `download` subcommand is required: `hfdownloader owner/name` fails with
 |------|-------|------|---------|-------------|
 | `--connections` | `-c` | int | `8` | Connections per file |
 | `--max-active` | | int | `3` | Max concurrent downloads |
+| `--force-http1` | | bool | `false` | Use HTTP/1.1 so each range request gets its own TCP connection (helps on CDNs that shape per connection) |
 | `--multipart-threshold` | | string | `32MiB` | Min size for multipart |
 
 #### Reliability
@@ -265,12 +266,14 @@ hfdownloader serve [flags]
 | `--local-dir` | | string | | Put the whole server in flat-file mode: every download writes real files into `<local-dir>/<owner>/<name>` instead of the HF cache |
 | `--connections` | `-c` | int | `8` | Connections per file |
 | `--max-active` | | int | `3` | Max concurrent file downloads (per job) |
+| `--force-http1` | | bool | `false` | Use HTTP/1.1 for transfers: one TCP connection per range request (raises throughput on CDNs that shape per connection). Also settable via `POST /api/settings` (`forceHTTP1`) and config key `force-http1` |
 | `--multipart-threshold` | | string | `32MiB` | Min size for multipart |
 | `--verify` | | string | `size` | Verification mode for files without a known SHA256: `none`, `size`, `etag`, `sha256` |
 | `--retries` | | int | `4` | Retry attempts (the count resets whenever an attempt makes progress) |
 | `--endpoint` | | string | | Custom HF endpoint |
 | `--auth-user` | | string | | Basic auth username (must be used with `--auth-pass`) |
 | `--auth-pass` | | string | | Basic auth password (must be used with `--auth-user`) |
+| `--auth-cookie-ttl` | | duration | `0` | After a successful Basic login, issue a signed HttpOnly cookie valid for this duration (e.g. `720h` = 30 days) so the browser stops re-prompting. Every request is still authenticated; changing the credentials invalidates outstanding cookies. `0` = classic Basic auth only |
 | `--allow-origin` | | strings | | Extra browser origin allowed to call the API (repeatable; `*` allows any). Other origins get 403 |
 | `--export-dir` | | string | | Enable "Export as real files" in the web UI, writing to `<export-dir>/<owner>/<name>` |
 | `--link-mode` | | string | config `link-mode`, else `auto` | Link mode for downloads: `auto`, `symlink`, `hardlink`, `copy` (see `download`) |

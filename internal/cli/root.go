@@ -184,6 +184,7 @@ func newDownloadCmd(ctx context.Context, ro *RootOpts) *cobra.Command {
 	cmd.Flags().StringVar(&cfg.MultipartThreshold, "multipart-threshold", "32MiB", "Use multipart/range downloads only for files >= this size")
 	cmd.Flags().StringVar(&cfg.Verify, "verify", "size", "Verification for non-LFS files: none|size|etag|sha256")
 	cmd.Flags().IntVar(&cfg.Retries, "retries", 4, "Max retry attempts per HTTP request/part")
+	cmd.Flags().BoolVar(&cfg.ForceHTTP1, "force-http1", false, "Use HTTP/1.1 for transfers: one TCP connection per range request (raises throughput on CDNs that shape per connection)")
 	cmd.Flags().StringVar(&cfg.BackoffInitial, "backoff-initial", "400ms", "Initial retry backoff duration")
 	cmd.Flags().StringVar(&cfg.BackoffMax, "backoff-max", "10s", "Maximum retry backoff duration")
 	cmd.Flags().StringVar(&cfg.StallTimeout, "stall-timeout", "60s", "Retry a transfer that receives no data for this long (0 disables)")
@@ -344,6 +345,9 @@ func buildCommandString(cmd *cobra.Command, job hfdownloader.Job, cfg hfdownload
 	if cfg.Verify != "size" && cfg.Verify != "" {
 		parts = append(parts, "--verify", cfg.Verify)
 	}
+	if cfg.ForceHTTP1 {
+		parts = append(parts, "--force-http1")
+	}
 	// Proxy (URL only, credentials intentionally omitted for security)
 	if cfg.Proxy != nil && cfg.Proxy.URL != "" {
 		parts = append(parts, "--proxy", cfg.Proxy.URL)
@@ -453,6 +457,16 @@ func applySettingsDefaults(cmd *cobra.Command, ro *RootOpts, dst *hfdownloader.S
 			set(x)
 		}
 	}
+	setBool := func(flagName string, set func(bool)) {
+		if cmd.Flags().Changed(flagName) {
+			return
+		}
+		if v, ok := cfg[flagName]; ok && v != nil {
+			if b, ok := v.(bool); ok {
+				set(b)
+			}
+		}
+	}
 
 	// Load cache-dir from config (v3 replaces the old "output" setting)
 	setStr("cache-dir", func(v string) { dst.CacheDir = v })
@@ -461,6 +475,7 @@ func applySettingsDefaults(cmd *cobra.Command, ro *RootOpts, dst *hfdownloader.S
 	setStr("multipart-threshold", func(v string) { dst.MultipartThreshold = v })
 	setStr("verify", func(v string) { dst.Verify = v })
 	setInt("retries", func(v int) { dst.Retries = v })
+	setBool("force-http1", func(v bool) { dst.ForceHTTP1 = v })
 	setStr("backoff-initial", func(v string) { dst.BackoffInitial = v })
 	setStr("backoff-max", func(v string) { dst.BackoffMax = v })
 	setStr("stall-timeout", func(v string) { dst.StallTimeout = v })

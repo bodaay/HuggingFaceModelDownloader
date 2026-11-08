@@ -101,18 +101,30 @@ func (p *ProxyConfig) IsSocks() bool {
 // BuildHTTPClient creates an HTTP client with proxy support.
 // If proxy is nil or not configured, falls back to environment proxy settings.
 func BuildHTTPClient(proxy *ProxyConfig) (*http.Client, error) {
+	return BuildHTTPClientOpts(proxy, false)
+}
+
+// BuildHTTPClientOpts is BuildHTTPClient with transport options. When
+// forceHTTP1 is true the transport negotiates HTTP/1.1 only, so each
+// concurrent range request rides its own TCP connection. This matters on
+// CDNs that shape bandwidth per connection rather than per IP: multiplexing
+// every stream over one HTTP/2 connection pins total throughput to the
+// per-connection cap (see issue #98).
+func BuildHTTPClientOpts(proxy *ProxyConfig, forceHTTP1 bool) (*http.Client, error) {
 	if proxy != nil && proxy.IsSocks() {
-		return buildSOCKS5Client(proxy)
+		return buildSOCKS5Client(proxy, forceHTTP1)
 	}
-	return buildHTTPProxyClient(proxy)
+	return buildHTTPProxyClient(proxy, forceHTTP1)
 }
 
 // newBaseTransport returns a transport with timeouts on every phase that can
 // otherwise block forever: dialing, waiting for response headers, and silent
 // HTTP/2 connections (detected with pings). Body reads are guarded separately
 // by the downloader's stall watchdog (github issues #87, #88).
-func newBaseTransport() *http.Transport {
-	return &http.Transport{
+// When forceHTTP1 is set, ALPN is pinned to http/1.1 so Go cannot silently
+// upgrade to HTTP/2 and collapse all parallel requests onto one connection.
+func newBaseTransport(forceHTTP1 bool) *http.Transport {
+	tr := &http.Transport{
 		DialContext:           baseDialer().DialContext,
 		ForceAttemptHTTP2:     true, // a custom DialContext would otherwise disable HTTP/2
 		MaxIdleConns:          64,
@@ -125,6 +137,31 @@ func newBaseTransport() *http.Transport {
 			PingTimeout:     15 * time.Second,
 		},
 	}
+	if forceHTTP1 {
+		tr.ForceAttemptHTTP2 = false
+		tr.HTTP2 = nil
+		tr.TLSClientConfig = &tls.Config{NextProtos: []string{"http/1.1"}}
+	}
+	return tr
+}
+
+// mergeTLS applies InsecureSkipVerify and/or the http/1.1 ALPN pin to a
+// transport, preserving whichever options were already configured.
+func mergeTLS(tr *http.Transport, insecureSkipVerify, forceHTTP1 bool) {
+	if !insecureSkipVerify && !forceHTTP1 {
+		return
+	}
+	if tr.TLSClientConfig == nil {
+		tr.TLSClientConfig = &tls.Config{}
+	}
+	if insecureSkipVerify {
+		tr.TLSClientConfig.InsecureSkipVerify = true
+	}
+	if forceHTTP1 {
+		tr.TLSClientConfig.NextProtos = []string{"http/1.1"}
+	}
+	tr.ForceAttemptHTTP2 = false
+	tr.HTTP2 = nil
 }
 
 func baseDialer() *net.Dialer {
@@ -132,8 +169,8 @@ func baseDialer() *net.Dialer {
 }
 
 // buildHTTPProxyClient creates a client for HTTP/HTTPS proxies.
-func buildHTTPProxyClient(proxyCfg *ProxyConfig) (*http.Client, error) {
-	tr := newBaseTransport()
+func buildHTTPProxyClient(proxyCfg *ProxyConfig, forceHTTP1 bool) (*http.Client, error) {
+	tr := newBaseTransport(forceHTTP1)
 
 	// Configure proxy
 	if proxyCfg != nil && proxyCfg.URL != "" {
@@ -159,9 +196,7 @@ func buildHTTPProxyClient(proxyCfg *ProxyConfig) (*http.Client, error) {
 		}
 
 		// Handle TLS settings for HTTPS proxy
-		if proxyCfg.InsecureSkipVerify {
-			tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-		}
+		mergeTLS(tr, proxyCfg.InsecureSkipVerify, forceHTTP1)
 	} else if proxyCfg != nil && proxyCfg.NoEnvProxy {
 		// Explicit no proxy
 		tr.Proxy = nil
@@ -174,7 +209,7 @@ func buildHTTPProxyClient(proxyCfg *ProxyConfig) (*http.Client, error) {
 }
 
 // buildSOCKS5Client creates a client for SOCKS5 proxies.
-func buildSOCKS5Client(proxyCfg *ProxyConfig) (*http.Client, error) {
+func buildSOCKS5Client(proxyCfg *ProxyConfig, forceHTTP1 bool) (*http.Client, error) {
 	proxyURL, err := proxyCfg.GetProxyURL()
 	if err != nil {
 		return nil, err
@@ -213,7 +248,7 @@ func buildSOCKS5Client(proxyCfg *ProxyConfig) (*http.Client, error) {
 
 	// Create transport with SOCKS5 dialer. HTTP/2 stays off here (as before):
 	// ForceAttemptHTTP2 is deliberately not set for proxied connections.
-	tr := newBaseTransport()
+	tr := newBaseTransport(false)
 	tr.ForceAttemptHTTP2 = false
 	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		// Check if we should bypass proxy
@@ -231,9 +266,7 @@ func buildSOCKS5Client(proxyCfg *ProxyConfig) (*http.Client, error) {
 		return dialer.Dial(network, addr)
 	}
 
-	if proxyCfg.InsecureSkipVerify {
-		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	}
+	mergeTLS(tr, proxyCfg.InsecureSkipVerify, forceHTTP1)
 
 	return &http.Client{Transport: tr}, nil
 }

@@ -61,6 +61,7 @@ type SettingsResponse struct {
 	MultipartThreshold string `json:"multipartThreshold"`
 	Verify             string `json:"verify"`
 	Retries            int    `json:"retries"`
+	ForceHTTP1         bool   `json:"forceHTTP1"`
 	Endpoint           string `json:"endpoint,omitempty"`
 	// StorageMode is "local" when the server writes real files into LocalDir,
 	// or "cache" when it uses the HF cache layout. Set at startup, read-only.
@@ -236,10 +237,11 @@ func (s *Server) handlePlanInternal(w http.ResponseWriter, req DownloadRequest) 
 	}
 
 	settings := hfdownloader.Settings{
-		OutputDir: outputDir,
-		Token:     cfg.Token,
-		Endpoint:  cfg.Endpoint,
-		Proxy:     cfg.Proxy,
+		OutputDir:  outputDir,
+		Token:      cfg.Token,
+		Endpoint:   cfg.Endpoint,
+		Proxy:      cfg.Proxy,
+		ForceHTTP1: cfg.ForceHTTP1,
 	}
 
 	// Collect plan items
@@ -413,6 +415,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		MultipartThreshold: cfg.MultipartThreshold,
 		Verify:             cfg.Verify,
 		Retries:            cfg.Retries,
+		ForceHTTP1:         cfg.ForceHTTP1,
 		Endpoint:           cfg.Endpoint,
 		StorageMode:        storageMode,
 		LocalDir:           cfg.LocalDir,
@@ -446,6 +449,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		MultipartThreshold *string `json:"multipartThreshold,omitempty"`
 		Verify             *string `json:"verify,omitempty"`
 		Retries            *int    `json:"retries,omitempty"`
+		ForceHTTP1         *bool   `json:"forceHTTP1,omitempty"`
 		Endpoint           *string `json:"endpoint,omitempty"`
 		// Proxy settings
 		Proxy *struct {
@@ -503,6 +507,9 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Retries != nil && *req.Retries >= 0 { // 0 = no retries (validated above)
 		s.config.Retries = *req.Retries
+	}
+	if req.ForceHTTP1 != nil {
+		s.config.ForceHTTP1 = *req.ForceHTTP1
 	}
 	if req.Endpoint != nil {
 		s.config.Endpoint = *req.Endpoint
@@ -564,6 +571,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		"multipart-threshold": orNil(updated.MultipartThreshold, updated.MultipartThreshold == ""),
 		"verify":              orNil(updated.Verify, updated.Verify == ""),
 		"retries":             orNil(updated.Retries, updated.Retries == 0),
+		"force-http1":         orNil(updated.ForceHTTP1, !updated.ForceHTTP1),
 		"endpoint":            orNil(updated.Endpoint, updated.Endpoint == ""),
 		"proxy":               nil,
 	}

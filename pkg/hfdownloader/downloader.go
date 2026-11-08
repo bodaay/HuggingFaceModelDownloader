@@ -127,7 +127,7 @@ func Download(ctx context.Context, job Job, cfg Settings, progress ProgressFunc)
 		return fmt.Errorf("invalid multipart-threshold: %w", err)
 	}
 
-	httpc := buildHTTPClientWithProxy(cfg.Proxy)
+	httpc := buildHTTPClientWithProxy(cfg.Proxy, cfg.ForceHTTP1)
 
 	emit := func(ev ProgressEvent) {
 		if progress != nil {
